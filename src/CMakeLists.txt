@@ -100,7 +100,7 @@ if(WIN32)
         list(APPEND MC_SOURCES resources/app.rc)
     else()
         message(STATUS "MediaCurator: app_icon.ico not found — exe will have no embedded icon. "
-                       "Run scripts/generate_icon.ps1 to create it.")
+                       "Place app_icon.ico in src/resources/icons/ to enable it.")
     endif()
 endif()
 
@@ -113,7 +113,7 @@ qt_add_executable(MediaCurator
 
 set_target_properties(MediaCurator PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME        "MediaCurator"
-    MACOSX_BUNDLE_GUI_IDENTIFIER     "com.lasernetgroup.mediacurator"
+    MACOSX_BUNDLE_GUI_IDENTIFIER     "dk.bleze.mediacurator"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION       "${PROJECT_VERSION}"
     MACOSX_BUNDLE_COPYRIGHT          "© 2024 Jacob Pedersen / Bleze Software"

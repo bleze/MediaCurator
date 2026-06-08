@@ -26,9 +26,19 @@ if(WIN32)
     set(CPACK_NSIS_CONTACT             "mediacurator@bleze.dk")
     set(CPACK_NSIS_MODIFY_PATH         ON)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
-    set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
-    # Desktop shortcut (the installer will offer a checkbox; this sets the default)
-    set(CPACK_CREATE_DESKTOP_LINKS     "MediaCurator")
+
+    # Explicit NSIS script commands — more reliable than CPACK_PACKAGE_EXECUTABLES
+    # when the exe lives in the install root rather than a bin/ subdirectory.
+    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
+      CreateDirectory '$SMPROGRAMS\\\\MediaCurator'
+      CreateShortCut  '$SMPROGRAMS\\\\MediaCurator\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'
+      CreateShortCut  '$DESKTOP\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'
+    ")
+    set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "
+      Delete '$SMPROGRAMS\\\\MediaCurator\\\\MediaCurator.lnk'
+      RMDir  '$SMPROGRAMS\\\\MediaCurator'
+      Delete '$DESKTOP\\\\MediaCurator.lnk'
+    ")
 
 # ── macOS — DragNDrop (.dmg) ───────────────────────────────────────────────────
 elseif(APPLE)

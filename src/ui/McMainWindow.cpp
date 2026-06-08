@@ -1268,7 +1268,10 @@ void McMainWindow::startLibraryLoader()
 
 	// ── Background thread: meta + remaining files + full queue refresh ────────
 	auto* thread = new QThread(this);
-	auto* loader = new LibraryLoader(kFirstPageSize);
+	// Use the actual number of files loaded synchronously as the start offset —
+	// not kFirstPageSize — so LibraryLoader's total count is correct when the
+	// DB has fewer files than one full page (e.g. empty DB → offset 0, total 0).
+	auto* loader = new LibraryLoader(qMin(kFirstPageSize, dbTotal));
 	loader->moveToThread(thread);
 
 	connect(thread, &QThread::started,        loader, &LibraryLoader::run);

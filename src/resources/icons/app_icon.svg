@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <!-- Background -->
-  <rect width="128" height="128" rx="22" fill="#1565C0"/>
+  <rect width="128" height="128" fill="#1565C0"/>
   <!-- Film frame outline -->
   <rect x="16" y="16" width="96" height="96" rx="8" fill="none" stroke="white" stroke-width="5" opacity="0.9"/>
   <!-- Film perforations left (cutouts that reveal background) -->
