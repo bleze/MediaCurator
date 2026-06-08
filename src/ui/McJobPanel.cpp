@@ -321,6 +321,9 @@ void McJobPanel::setupUi()
 			item->setEnabled(false);
 	m_statusFilter->setCurrentIndex(1);   // "All"
 	m_statusFilter->setItemDelegate(new McStatusComboDelegate(m_statusFilter));
+	m_statusFilter->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	m_statusFilter->setMinimumWidth(m_statusFilter->sizeHint().width() + 31);
+	m_statusFilter->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
 
 	m_chkAutoTrack = new QCheckBox(tr("Track running"), this);
 	m_chkAutoTrack->setChecked(QSettings().value("jobPanel/followRunning", true).toBool());

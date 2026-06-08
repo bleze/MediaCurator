@@ -108,6 +108,9 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		if (auto* item = m->item(0))
 			item->setEnabled(false);
 	m_statusCombo->setCurrentIndex(1);
+	m_statusCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	m_statusCombo->setMinimumWidth(m_statusCombo->sizeHint().width() + 15);
+	m_statusCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
 	lay->addWidget(m_statusCombo);
 	connect(m_statusCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
 	        this, [this](int i) {
