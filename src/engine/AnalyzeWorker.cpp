@@ -6,6 +6,7 @@
 #include "core/DatabaseManager.h"
 #include "core/UserProfile.h"
 
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -122,10 +123,18 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 		descLines << line;
 	}
 
-	const QString     outputPath = file.path + QLatin1String(".tmp");
+	// Non-MKV / ISO files output to a new .mkv file; MKV files overwrite in place.
+	const QFileInfo   fi(file.path);
+	const QString     ext = fi.suffix().toLower();
+	const bool        isMkv = (ext == QLatin1String("mkv") || ext == QLatin1String("mka") || ext == QLatin1String("mks"));
+	const QString     outputPath = isMkv
+		? file.path + QLatin1String(".tmp")
+		: fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QLatin1String(".mkv.tmp");
 	const QStringList args       = actions.buildCommand(decision, outputPath);
 	QJsonArray        arr;
 	for (const QString& a : args) arr.append(a);
+
+	if (db.hasActiveJobForFile(file.id)) return false;
 
 	JobRecord job;
 	job.fileId          = file.id;

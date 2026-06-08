@@ -1,5 +1,6 @@
 #include "ui/McBulkSummaryDialog.h"
 #include "ui/McJobListModel.h"
+#include "ui/McJobStatsBar.h"
 #include "core/DatabaseManager.h"
 
 #include <algorithm>
@@ -16,6 +17,76 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <QWidget>
+
+namespace {
+
+static bool isLosslessAudio(const Mc::StreamRecord& s)
+{
+	if (s.codecType != QLatin1String("audio")) return false;
+	const QString cn = s.codecName.toLower();
+	if (cn == QLatin1String("flac")   || cn == QLatin1String("alac")
+	 || cn == QLatin1String("truehd") || cn == QLatin1String("mlp")
+	 || cn == QLatin1String("tta")    || cn == QLatin1String("wavpack")
+	 || cn.startsWith(QLatin1String("pcm_")))
+		return true;
+	if (cn == QLatin1String("dts")) {
+		const QString cp = s.codecProfile.toUpper();
+		return cp.contains(QLatin1String("MA")) || cp.contains(QLatin1String("HRA"));
+	}
+	return false;
+}
+
+static int pcmBitDepth(const QString& cn)
+{
+	const int u = cn.indexOf('_');
+	if (u < 0 || u + 2 >= cn.size()) return 0;
+	int i = u + 1;
+	if (!cn[i].isLetter()) return 0;
+	++i;
+	const int start = i;
+	while (i < cn.size() && cn[i].isDigit()) ++i;
+	return (i > start) ? cn.mid(start, i - start).toInt() : 0;
+}
+
+static qint64 losslessBytesPerSecPerChannel(const Mc::StreamRecord& s)
+{
+	const QString cn = s.codecName.toLower();
+	if (cn.startsWith(QLatin1String("pcm_"))) {
+		if (s.sampleRate <= 0) return -1;
+		const int depth = pcmBitDepth(cn);
+		return (depth > 0) ? static_cast<qint64>(s.sampleRate) * depth / 8 : -1;
+	}
+	if (cn == QLatin1String("truehd") || cn == QLatin1String("mlp")) return 87'500;
+	if (cn == QLatin1String("flac"))    return 56'250;
+	if (cn == QLatin1String("alac"))    return 50'000;
+	if (cn == QLatin1String("tta") || cn == QLatin1String("wavpack")) return 56'250;
+	if (cn == QLatin1String("dts")) {
+		const QString cp = s.codecProfile.toUpper();
+		if (cp.contains(QLatin1String("MA")))  return 87'500;
+		if (cp.contains(QLatin1String("HRA"))) return 62'500;
+	}
+	return -1;
+}
+
+static qint64 estimateStreamBytes(const Mc::StreamRecord& s,
+                                   const QList<Mc::StreamRecord>&,
+                                   qint64,
+                                   double fileDurationSec)
+{
+	if (fileDurationSec <= 0) return -1;
+	if (!isLosslessAudio(s)) {
+		if (s.bitRate > 0)
+			return static_cast<qint64>(s.bitRate / 8.0 * fileDurationSec);
+		if (s.codecType == QLatin1String("subtitle"))
+			return 256LL * 1024;
+		return 0;
+	}
+	const qint64 bpsPerChannel = losslessBytesPerSecPerChannel(s);
+	if (bpsPerChannel < 0) return -1;
+	return static_cast<qint64>(bpsPerChannel * qMax(s.channels, 1) * fileDurationSec);
+}
+
+} // anonymous namespace
 
 namespace Mc {
 
@@ -122,15 +193,6 @@ struct BulkStats {
 	QMap<QString, int> subtitleByLang;
 };
 
-static QString formatSize(qint64 bytes)
-{
-	if (bytes <= 0) return QStringLiteral("0 B");
-	if (bytes >= qint64(1024) * 1024 * 1024)
-		return QStringLiteral("%1 GB").arg(bytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
-	if (bytes >= 1024 * 1024)
-		return QStringLiteral("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
-	return QStringLiteral("%1 KB").arg(bytes / 1024.0, 0, 'f', 0);
-}
 
 static QString langDisplayName(const QString& code)
 {
@@ -183,12 +245,10 @@ static BulkStats computeStats()
 				++s.videoRemoved;
 			}
 
-			// Estimate bytes freed: bitRate is in bits/sec; subtitle streams
-			// rarely carry a bitrate, so fall back to a 256 KB flat estimate.
-			if (sr.bitRate > 0 && durationSec > 0.0)
-				s.estimatedSavedBytes += qint64(sr.bitRate / 8.0 * durationSec);
-			else if (sr.codecType == QStringLiteral("subtitle"))
-				s.estimatedSavedBytes += 256 * 1024;
+			const qint64 est = estimateStreamBytes(
+			    sr, allStreams,
+			    fileOpt ? fileOpt->sizeBytes : 0LL, durationSec);
+			if (est > 0) s.estimatedSavedBytes += est;
 		}
 
 		// Bucket removal reasons from description text
@@ -230,64 +290,6 @@ static QFrame* separator(QWidget* parent)
 	return f;
 }
 
-static QWidget* savingsCell(const QString& number, const QString& label, QWidget* parent)
-{
-	auto* w      = new QWidget(parent);
-	auto* layout = new QVBoxLayout(w);
-	layout->setContentsMargins(12, 8, 12, 8);
-	layout->setSpacing(2);
-
-	auto* numLbl = new QLabel(number, w);
-	QFont f = numLbl->font();
-	f.setPointSizeF(f.pointSizeF() * 2.8);
-	f.setBold(true);
-	numLbl->setFont(f);
-	numLbl->setAlignment(Qt::AlignHCenter);
-	QPalette np = numLbl->palette();
-	np.setColor(QPalette::WindowText, np.color(QPalette::Highlight));
-	numLbl->setPalette(np);
-
-	auto* txtLbl = new QLabel(label, w);
-	txtLbl->setAlignment(Qt::AlignHCenter);
-	QFont sf = txtLbl->font();
-	sf.setPointSizeF(sf.pointSizeF() * 0.88);
-	txtLbl->setFont(sf);
-	QPalette pal = txtLbl->palette();
-	pal.setColor(QPalette::WindowText, pal.color(QPalette::WindowText).darker(130));
-	txtLbl->setPalette(pal);
-
-	layout->addWidget(numLbl);
-	layout->addWidget(txtLbl);
-	return w;
-}
-
-static QWidget* statCell(const QString& number, const QString& label, QWidget* parent)
-{
-	auto* w      = new QWidget(parent);
-	auto* layout = new QVBoxLayout(w);
-	layout->setContentsMargins(12, 8, 12, 8);
-	layout->setSpacing(2);
-
-	auto* numLbl = new QLabel(number, w);
-	QFont f = numLbl->font();
-	f.setPointSizeF(f.pointSizeF() * 2.2);
-	f.setBold(true);
-	numLbl->setFont(f);
-	numLbl->setAlignment(Qt::AlignHCenter);
-
-	auto* txtLbl = new QLabel(label, w);
-	txtLbl->setAlignment(Qt::AlignHCenter);
-	QFont sf = txtLbl->font();
-	sf.setPointSizeF(sf.pointSizeF() * 0.88);
-	txtLbl->setFont(sf);
-	QPalette pal = txtLbl->palette();
-	pal.setColor(QPalette::WindowText, pal.color(QPalette::WindowText).darker(130));
-	txtLbl->setPalette(pal);
-
-	layout->addWidget(numLbl);
-	layout->addWidget(txtLbl);
-	return w;
-}
 
 static void addBarRow(QVBoxLayout* layout, const QString& label, int value, int max,
                       const QColor& color, QWidget* parent)
@@ -345,41 +347,16 @@ McBulkSummaryDialog::McBulkSummaryDialog(QWidget* parent)
 		layout->addWidget(new QLabel(tr("No proposed jobs found — run Analyze Library first."), body));
 		layout->addStretch();
 	} else {
-		auto* statRow    = new QWidget(body);
-		auto* statLayout = new QHBoxLayout(statRow);
-		statLayout->setContentsMargins(0, 0, 0, 0);
-		statLayout->setSpacing(0);
-
-		statLayout->addWidget(statCell(QString::number(s.filesAffected), tr("files\naffected"),  statRow));
-		statLayout->addWidget(statCell(QString::number(totalTracks),     tr("tracks\nremoved"),  statRow));
+		QList<McJobStatsBar::StatItem> statItems;
+		statItems << McJobStatsBar::StatItem{QString::number(s.filesAffected), tr("files\naffected")};
+		statItems << McJobStatsBar::StatItem{QString::number(totalTracks),     tr("tracks\nremoved")};
 		if (s.audioRemoved > 0)
-			statLayout->addWidget(statCell(QString::number(s.audioRemoved),    tr("audio\nremoved"),    statRow));
+			statItems << McJobStatsBar::StatItem{QString::number(s.audioRemoved),    tr("audio\nremoved")};
 		if (s.subtitleRemoved > 0)
-			statLayout->addWidget(statCell(QString::number(s.subtitleRemoved), tr("subtitle\nremoved"), statRow));
+			statItems << McJobStatsBar::StatItem{QString::number(s.subtitleRemoved), tr("subtitle\nremoved")};
 		if (s.videoRemoved > 0)
-			statLayout->addWidget(statCell(QString::number(s.videoRemoved),    tr("MJPEG\nremoved"),    statRow));
-
-		// Stretch pushes the savings to the far right so it reads like an equation:
-		//   [remove these tracks]  ——  =  ——  [est. savings]
-		statLayout->addStretch(1);
-
-		if (s.estimatedSavedBytes > 0) {
-			auto* eqLbl = new QLabel(QStringLiteral("="), statRow);
-			QFont eqFont = eqLbl->font();
-			eqFont.setPointSizeF(eqFont.pointSizeF() * 2.2);
-			eqFont.setBold(true);
-			eqLbl->setFont(eqFont);
-			eqLbl->setAlignment(Qt::AlignVCenter | Qt::AlignHCenter);
-			eqLbl->setContentsMargins(8, 0, 8, 0);
-			QPalette eqPal = eqLbl->palette();
-			eqPal.setColor(QPalette::WindowText, eqPal.color(QPalette::PlaceholderText));
-			eqLbl->setPalette(eqPal);
-			statLayout->addWidget(eqLbl);
-
-			statLayout->addWidget(savingsCell(formatSize(s.estimatedSavedBytes), tr("est.\nsavings"), statRow));
-		}
-
-		layout->addWidget(statRow);
+			statItems << McJobStatsBar::StatItem{QString::number(s.videoRemoved),    tr("MJPEG\nremoved")};
+		layout->addWidget(new McJobStatsBar(statItems, s.estimatedSavedBytes, body));
 		layout->addWidget(separator(body));
 
 		// ── Removal reasons ───────────────────────────────────────────────────

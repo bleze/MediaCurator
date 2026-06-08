@@ -9,6 +9,27 @@
 
 #include <filesystem>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+// Preserve the filesystem creation timestamp of an original file on the output file.
+// Called after rename so the new file doesn't show today as its creation date.
+static void preserveCreationTime(const QString& target, const QDateTime& origCreated)
+{
+	if (!origCreated.isValid()) return;
+	// QDateTime → FILETIME (100-ns intervals since 1601-01-01 UTC)
+	const qint64 ns100 = (origCreated.toMSecsSinceEpoch() + Q_INT64_C(11644473600000)) * 10000;
+	FILETIME ft;
+	ft.dwLowDateTime  = static_cast<DWORD>(ns100 & 0xFFFFFFFF);
+	ft.dwHighDateTime = static_cast<DWORD>((ns100 >> 32) & 0xFFFFFFFF);
+	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(target.utf16()),
+	                       FILE_WRITE_ATTRIBUTES, 0, nullptr, OPEN_EXISTING,
+	                       FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	SetFileTime(h, &ft, nullptr, nullptr);
+	CloseHandle(h);
+}
+#endif
+
 namespace Mc {
 
 RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
@@ -23,11 +44,26 @@ RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
 	, m_descriptionText(descriptionText)
 	, m_writeLog(writeLog)
 {
-	// Extract output path (args[1] when args[0] == "-o") and input path (last arg)
-	if (args.size() >= 2 && args.first() == "-o")
+	// Extract temp output path (args[1] when args[0] == "-o")
+	if (args.size() >= 2 && args.first() == QLatin1String("-o"))
 		m_outputPath = args.at(1);
-	if (!args.isEmpty())
-		m_inputPath = args.last();
+
+	// Strip .tmp suffix to get the final destination path
+	m_finalOutputPath = m_outputPath.endsWith(QLatin1String(".tmp"))
+		? m_outputPath.left(m_outputPath.length() - 4)
+		: m_outputPath;
+
+	// Real input filesystem path — ISO files have a "bluray://" or "dvd://" prefix
+	// that mkvmerge needs but the filesystem does not understand.
+	if (!args.isEmpty()) {
+		const QString last = args.last();
+		if (last.startsWith(QLatin1String("bluray://")))
+			m_inputPath = last.mid(9);
+		else if (last.startsWith(QLatin1String("dvd://")))
+			m_inputPath = last.mid(6);
+		else
+			m_inputPath = last;
+	}
 }
 
 RemuxJob::~RemuxJob()
@@ -96,9 +132,23 @@ void RemuxJob::onProcessFinished(int exitCode)
 
 	if (exitCode == 0 && !m_outputPath.isEmpty() && !m_inputPath.isEmpty()) {
 		const qint64 outputSize = QFileInfo(m_outputPath).size();
+
+		// Capture the original file's creation timestamp before we rename/delete it
+		const QDateTime origCreated = QFileInfo(m_inputPath).birthTime();
+
+		const bool isInPlace = (m_finalOutputPath == m_inputPath);
 		try {
+			// Rename temp file to final destination (same as input for MKV in-place)
 			std::filesystem::rename(m_outputPath.toStdWString(),
-			                        m_inputPath.toStdWString());
+			                        m_finalOutputPath.toStdWString());
+			// Restore the original file's creation date on the new output
+#ifdef Q_OS_WIN
+			preserveCreationTime(m_finalOutputPath, origCreated);
+#endif
+			if (!isInPlace) {
+				// Non-MKV conversion (mp4/avi/iso → mkv): delete the original
+				QFile::remove(m_inputPath);
+			}
 			savedBytes = qMax(0LL, m_originalSize - outputSize);
 		} catch (const std::filesystem::filesystem_error& e) {
 			m_log += QStringLiteral("\nRename failed: %1").arg(e.what());
@@ -106,11 +156,11 @@ void RemuxJob::onProcessFinished(int exitCode)
 		}
 
 		if (exitCode == 0 && m_writeLog) {
-			const QString logPath = m_inputPath + QStringLiteral(".mc-log");
+			const QString logPath = m_finalOutputPath + QStringLiteral(".mc-log");
 			QFile logFile(logPath);
 			if (logFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
 				QTextStream ts(&logFile);
-				const QFileInfo fi(m_inputPath);
+				const QFileInfo fi(m_finalOutputPath);
 				ts << "MediaCurator Processing Report\n";
 				ts << "==============================\n\n";
 				ts << "File:    " << fi.fileName() << "\n";
@@ -121,7 +171,7 @@ void RemuxJob::onProcessFinished(int exitCode)
 				ts << "After:   " << QString::number(outputSize) << " bytes ("
 				   << QString::number(outputSize / 1048576.0, 'f', 1) << " MB)\n";
 				if (savedBytes > 0)
-					ts << "Saved:   " << QString::number(savedBytes) << " bytes ("
+					ts << "Reclaimed: " << QString::number(savedBytes) << " bytes ("
 					   << QString::number(savedBytes / 1048576.0, 'f', 1) << " MB)\n";
 				ts << "\n";
 				if (!m_descriptionText.isEmpty()) {

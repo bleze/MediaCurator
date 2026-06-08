@@ -60,10 +60,15 @@ public slots:
 
 	void enqueueFile(qint64 fileId)
 	{
-		if (m_stopping || m_tmdbApiKey.isEmpty()) return;
-		if (fileId > 0 && !m_queue.contains(fileId))
+		if (m_stopping) return;
+		if (fileId == -1) {
+			// Triggered when the TMDB key is set for the first time — load every
+			// file that is still pending or was previously marked "no_poster".
+			loadPending();
+		} else if (fileId > 0 && !m_queue.contains(fileId)) {
 			m_queue.prepend(fileId);
-		if (m_timer && !m_timer->isActive())
+		}
+		if (m_timer && !m_timer->isActive() && !m_queue.isEmpty())
 			m_timer->start();
 	}
 
@@ -73,7 +78,7 @@ signals:
 private slots:
 	void processNext()
 	{
-		if (m_stopping || m_tmdbApiKey.isEmpty()) { m_timer->stop(); return; }
+		if (m_stopping) { m_timer->stop(); return; }
 
 		if (m_queue.isEmpty()) {
 			loadPending();
@@ -97,13 +102,8 @@ private:
 		if (!fileOpt) return;
 
 		const QString filePath  = fileOpt->path;
-		const QString imdbId    = findNfoImdbId(filePath);
+		QString       imdbId    = findNfoImdbId(filePath);
 		const QString baseStem  = QFileInfo(filePath).completeBaseName();
-
-		PosterRecord rec;
-		rec.fileId    = fileId;
-		rec.imdbId    = imdbId;
-		rec.fetchedAt = QDateTime::currentMSecsSinceEpoch();
 
 		// Skip files that are already done (e.g. enqueued again after a rescan).
 		const auto existing = DatabaseManager::instance().posterForFile(fileId);
@@ -111,6 +111,16 @@ private:
 		    && !existing->imagePath.isEmpty()
 		    && QFile::exists(existing->imagePath))
 			return;
+
+		// Fall back to the DB-stored IMDb ID if the NFO file doesn't have one
+		// (e.g. when the user pasted an ID directly without a TMDB search result).
+		if (imdbId.isEmpty() && existing && !existing->imdbId.isEmpty())
+			imdbId = existing->imdbId;
+
+		PosterRecord rec;
+		rec.fileId    = fileId;
+		rec.imdbId    = imdbId;
+		rec.fetchedAt = QDateTime::currentMSecsSinceEpoch();
 
 		// If the DB was deleted but the posters folder still exists, reuse
 		// whatever file is already on disk rather than re-downloading.
@@ -128,7 +138,16 @@ private:
 			return;
 		}
 
-		// Nothing cached — fetch from TMDB.
+		// Nothing cached — fetch from TMDB if we have an API key.
+		// Without a key, mark as "no_poster" so the queue drains cleanly;
+		// setTmdbApiKey() calls resetNoPosterRecords() which resets these to
+		// "pending" when the user later adds a key.
+		if (m_tmdbApiKey.isEmpty()) {
+			rec.status = "no_poster";
+			DatabaseManager::instance().upsertPosterRecord(rec);
+			return;
+		}
+
 		QString imagePath;
 		if (!imdbId.isEmpty()) {
 			QString posterPath = fetchTmdbPosterPath(imdbId);
@@ -299,7 +318,6 @@ void PosterManager::setTmdbApiKey(const QString& key)
 
 void PosterManager::enqueue(qint64 fileId)
 {
-	if (m_tmdbApiKey.isEmpty()) return;
 	emit workerEnqueueFile(fileId);
 }
 

@@ -1,5 +1,7 @@
 ﻿#include "engine/ActionEngine.h"
 
+#include <QString>
+
 namespace Mc {
 
 ActionEngine::ActionEngine(const QString& mkvmergePath, QObject* parent)
@@ -48,7 +50,15 @@ QStringList ActionEngine::buildCommand(const FileDecision& decision, const QStri
 			args << "--no-subtitles";
 	}
 
-	args << decision.file.path;
+	// ISO files need a protocol prefix for mkvmerge (different from ffprobe's prefix)
+	const QString& cont = decision.file.container;
+	QString mkvInput = decision.file.path;
+	if (cont == QLatin1String("iso-bluray"))
+		mkvInput = QStringLiteral("bluray://") + decision.file.path;
+	else if (cont == QLatin1String("iso-dvd"))
+		mkvInput = QStringLiteral("dvd://") + decision.file.path;
+
+	args << mkvInput;
 	return args;
 }
 

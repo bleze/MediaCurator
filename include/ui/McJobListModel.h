@@ -31,6 +31,7 @@ public:
 		FileSizeRole   = Qt::UserRole + 11,  // qint64 original file size in bytes
 		FilePathRole   = Qt::UserRole + 12,  // QString absolute file path
 		ImdbIdRole     = Qt::UserRole + 13,  // QString IMDb tt-id, empty if not linked
+		DurationRole   = Qt::UserRole + 14,  // double duration in seconds
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -67,6 +68,7 @@ public:
 public slots:
 	void setFilterText(const QString& text);
 	void setFilterStatus(const QString& status);   // empty string = show all
+	void setQuickFilters(quint32 flags);           // McFilterPanel::QF_* bitmask
 	void updateProgress(qint64 jobId, int percent);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void updateImdbId(qint64 fileId, const QString& imdbId);
@@ -86,6 +88,7 @@ private:
 	QHash<qint64, QString> m_posterPaths;    // fileId → local image path
 	QString                m_filterText;
 	QString                m_filterStatus;
+	quint32                m_quickFilters = 0;
 };
 
 } // namespace Mc

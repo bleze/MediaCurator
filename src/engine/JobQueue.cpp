@@ -148,6 +148,10 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	if (ok && savedBytes > 0)
 		db.updateJobSavedBytes(jobId, savedBytes);
 
+	// Capture paths before deleteLater invalidates the job object
+	const QString finalOutput   = m_currentJob->finalOutputPath();
+	const QString originalInput = m_currentJob->inputFilePath();
+
 	emit jobFinished(jobId, ok, savedBytes);
 
 	m_currentJob->deleteLater();
@@ -155,9 +159,16 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	m_currentJobId  = -1;
 	m_currentFileId = -1;
 
-	// Re-scan the file so the card reflects the new track layout
-	if (ok && fileId > 0)
+	// Re-scan the file so the card reflects the new track layout.
+	// For non-MKV / ISO jobs the output path differs from the input — update the
+	// DB path first so rescanFile() reads the correct (new) file location.
+	if (ok && fileId > 0) {
+		if (!finalOutput.isEmpty() && finalOutput != originalInput) {
+			const QFileInfo fi(finalOutput);
+			db.updateFilePath(fileId, finalOutput, fi.fileName());
+		}
 		rescanFile(fileId);
+	}
 
 	if (m_running && !m_paused) {
 		runNext();

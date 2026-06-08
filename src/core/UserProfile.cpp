@@ -1,12 +1,21 @@
 ﻿#include "core/UserProfile.h"
 #include "core/DatabaseManager.h"
 
+#include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QStandardPaths>
 
 namespace Mc {
 
-static const char* PREF_KEY = "user_profile_json";
+static const char* PREF_KEY = "user_profile_json";   // legacy DB key — read once for migration
+
+static QString settingsFilePath()
+{
+	return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+	       + QStringLiteral("/settings.json");
+}
 
 UserProfile::UserProfile(QObject* parent)
 	: QObject(parent)
@@ -286,20 +295,36 @@ bool UserProfile::fromJson(const QJsonObject& json)
 
 void UserProfile::save()
 {
-	const QJsonDocument doc(toJson());
-	DatabaseManager::instance().setPref(PREF_KEY, QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+	const QString path = settingsFilePath();
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	QFile f(path);
+	if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+		f.write(QJsonDocument(toJson()).toJson(QJsonDocument::Indented));
 }
 
 bool UserProfile::load()
 {
+	// Primary: JSON file in AppData (survives DB deletion).
+	const QString path = settingsFilePath();
+	QFile f(path);
+	if (f.exists() && f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+		if (!doc.isNull() && fromJson(doc.object()))
+			return true;
+	}
+
+	// Migration fallback: if the old DB entry exists, read it and re-save to the
+	// new location so subsequent launches no longer need the DB.
 	const QString stored = DatabaseManager::instance().getPref(PREF_KEY);
-	if (stored.isEmpty()) return false;
+	if (!stored.isEmpty()) {
+		const QJsonDocument doc = QJsonDocument::fromJson(stored.toUtf8());
+		if (!doc.isNull() && fromJson(doc.object())) {
+			save();
+			return true;
+		}
+	}
 
-	QJsonParseError err;
-	const QJsonDocument doc = QJsonDocument::fromJson(stored.toUtf8(), &err);
-	if (doc.isNull()) return false;
-
-	return fromJson(doc.object());
+	return false;
 }
 
 } // namespace Mc

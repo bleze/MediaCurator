@@ -89,9 +89,27 @@ bool RuleEngine::isAudioFormatDisabled(const StreamRecord& s) const
 
 bool RuleEngine::isRedundantAudio(const StreamRecord& s, const QList<StreamRecord>& siblings) const
 {
-	// A default-flagged track is the author's explicit choice for this file.
-	// Codec redundancy rules must not override that — only language policy may remove it.
-	if (s.isDefault) return false;
+	// A default-flagged track is the author's explicit choice for this file — protect it
+	// from codec-redundancy removal, UNLESS a higher-quality default track also exists for
+	// the same language.  MP4 files routinely set default=1 on all audio tracks, making the
+	// guard meaningless if applied unconditionally; MKV files typically have only one default
+	// per language so the guard still holds there.
+	if (s.isDefault) {
+		const int myTier = audioQualityTier(s);
+		bool hasBetterDefault = false;
+		for (const StreamRecord& sib : siblings) {
+			if (sib.id == s.id || sib.codecType != "audio") continue;
+			if (sib.language != s.language)                 continue;
+			if (!sib.isDefault)                             continue;
+			if (isAudioFormatDisabled(sib))                 continue;
+			// Fewer channels = spatial downgrade — not a "better" default.
+			if (s.channels > 0 && sib.channels > 0 && sib.channels < s.channels) continue;
+			if (audioQualityTier(sib) > myTier) { hasBetterDefault = true; break; }
+		}
+		if (!hasBetterDefault) return false;
+		// A higher-quality default exists in the same language — fall through to the
+		// standard redundancy check so lower-quality defaults can be removed.
+	}
 
 	const int  myTier     = audioQualityTier(s);
 	const bool myDisabled = isAudioFormatDisabled(s);
@@ -111,7 +129,16 @@ bool RuleEngine::isRedundantAudio(const StreamRecord& s, const QList<StreamRecor
 		if (myCh > 0 && sib.channels > 0 && sib.channels < myCh) continue;
 
 		hasEnabledAlt = true;
-		if (audioQualityTier(sib) > myTier) hasBetterEnabled = true;
+		if (audioQualityTier(sib) > myTier) {
+			hasBetterEnabled = true;
+		} else if (audioQualityTier(sib) == myTier && audioFormatId(sib) == audioFormatId(s)) {
+			// Equal-tier duplicate of the same format: keep the default-flagged one,
+			// or the earlier stream index when both are non-default.
+			if (!s.isDefault && sib.isDefault)
+				hasBetterEnabled = true;
+			else if (!s.isDefault && !sib.isDefault && sib.streamIndex < s.streamIndex)
+				hasBetterEnabled = true;
+		}
 	}
 
 	// Disabled format: remove whenever any enabled alternative with >= channels exists.

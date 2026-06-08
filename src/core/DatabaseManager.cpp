@@ -252,6 +252,7 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE jobs ADD COLUMN summary TEXT DEFAULT ''");
 		m.exec("ALTER TABLE jobs ADD COLUMN saved_bytes INTEGER DEFAULT 0");
 		m.exec("ALTER TABLE files ADD COLUMN mtime_ms INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE files ADD COLUMN created_ms INTEGER DEFAULT 0");
 		m.exec("ALTER TABLE jobs ADD COLUMN description_text TEXT DEFAULT ''");
 		m.exec("ALTER TABLE jobs ADD COLUMN original_streams_json TEXT DEFAULT ''");
 		// Ignore errors — they just mean the column already exists
@@ -261,6 +262,18 @@ bool DatabaseManager::initSchema()
 	{
 		QSqlQuery m(connection());
 		m.exec("UPDATE jobs SET status='queued' WHERE status='pending'");
+	}
+
+	// Migration: enforce at-most-one active (proposed) job per file.
+	// Delete older duplicates first, then create the partial unique index.
+	{
+		QSqlQuery m(connection());
+		m.exec(R"(
+			DELETE FROM jobs WHERE id NOT IN (
+				SELECT MAX(id) FROM jobs WHERE status='proposed' GROUP BY file_id
+			) AND status='proposed'
+		)");
+		m.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_file_proposed ON jobs(file_id) WHERE status='proposed'");
 	}
 
 	// One-time migration: reset 'no_poster' records to 'pending' so that newly
@@ -315,13 +328,14 @@ std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO files(path, filename, size_bytes, mtime_ms, container, duration_s,
+		INSERT INTO files(path, filename, size_bytes, mtime_ms, created_ms, container, duration_s,
 						  overall_bitrate, original_language, scan_time, scan_run_id, needs_rescan)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(path) DO UPDATE SET
 			filename=excluded.filename,
 			size_bytes=excluded.size_bytes,
 			mtime_ms=excluded.mtime_ms,
+			created_ms=excluded.created_ms,
 			container=excluded.container,
 			duration_s=excluded.duration_s,
 			overall_bitrate=excluded.overall_bitrate,
@@ -334,6 +348,7 @@ std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 	q.addBindValue(rec.filename);
 	q.addBindValue(rec.sizeBytes);
 	q.addBindValue(rec.mtimeMs);
+	q.addBindValue(rec.createdMs);
 	q.addBindValue(rec.container);
 	q.addBindValue(rec.durationSec);
 	q.addBindValue(rec.overallBitrate);
@@ -381,6 +396,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.filename         = q.value("filename").toString();
 	r.sizeBytes        = q.value("size_bytes").toLongLong();
 	r.mtimeMs          = q.value("mtime_ms").toLongLong();
+	r.createdMs        = q.value("created_ms").toLongLong();
 	r.container        = q.value("container").toString();
 	r.durationSec      = q.value("duration_s").toDouble();
 	r.overallBitrate   = q.value("overall_bitrate").toLongLong();
@@ -405,6 +421,7 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 	r.filename         = q.value("filename").toString();
 	r.sizeBytes        = q.value("size_bytes").toLongLong();
 	r.mtimeMs          = q.value("mtime_ms").toLongLong();
+	r.createdMs        = q.value("created_ms").toLongLong();
 	r.container        = q.value("container").toString();
 	r.durationSec      = q.value("duration_s").toDouble();
 	r.overallBitrate   = q.value("overall_bitrate").toLongLong();
@@ -425,6 +442,7 @@ QList<FileRecord> DatabaseManager::allFiles() const
 		r.filename         = q.value("filename").toString();
 		r.sizeBytes        = q.value("size_bytes").toLongLong();
 		r.mtimeMs          = q.value("mtime_ms").toLongLong();
+		r.createdMs        = q.value("created_ms").toLongLong();
 		r.container        = q.value("container").toString();
 		r.durationSec      = q.value("duration_s").toDouble();
 		r.overallBitrate   = q.value("overall_bitrate").toLongLong();
@@ -440,7 +458,8 @@ QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
 {
 	QList<FileRecord> result;
 	QSqlQuery q(connection());
-	const QString prefix = (rootPath.endsWith('/') ? rootPath : rootPath + '/') + '%';
+	const QString norm   = QDir::fromNativeSeparators(rootPath);
+	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
 	q.prepare("SELECT id, path FROM files WHERE path LIKE ?");
 	q.addBindValue(prefix);
 	if (!q.exec()) return result;
@@ -456,7 +475,8 @@ QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
 int DatabaseManager::fileCountUnderPath(const QString& rootPath) const
 {
 	QSqlQuery q(connection());
-	const QString prefix = (rootPath.endsWith('/') ? rootPath : rootPath + '/') + '%';
+	const QString norm   = QDir::fromNativeSeparators(rootPath);
+	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
 	q.prepare("SELECT COUNT(*) FROM files WHERE path LIKE ?");
 	q.addBindValue(prefix);
 	if (q.exec() && q.next())
@@ -467,7 +487,8 @@ int DatabaseManager::fileCountUnderPath(const QString& rootPath) const
 int DatabaseManager::removeFilesUnderPath(const QString& rootPath)
 {
 	QSqlQuery q(connection());
-	const QString prefix = (rootPath.endsWith('/') ? rootPath : rootPath + '/') + '%';
+	const QString norm   = QDir::fromNativeSeparators(rootPath);
+	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
 	q.prepare("DELETE FROM files WHERE path LIKE ?");
 	q.addBindValue(prefix);
 	if (!q.exec()) return 0;
@@ -483,6 +504,17 @@ bool DatabaseManager::deleteFile(qint64 fileId)
 	if (ok)
 		emit fileDeleted(fileId);
 	return ok;
+}
+
+void DatabaseManager::updateFilePath(qint64 fileId, const QString& newPath, const QString& newFilename)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET path=?, filename=? WHERE id=?");
+	q.addBindValue(newPath);
+	q.addBindValue(newFilename);
+	q.addBindValue(fileId);
+	if (!q.exec())
+		qWarning() << "updateFilePath failed:" << q.lastError().text();
 }
 
 // ── Streams ───────────────────────────────────────────────────────────────────
@@ -620,6 +652,14 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
 }
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
+
+bool DatabaseManager::hasActiveJobForFile(qint64 fileId) const
+{
+	QSqlQuery q(connection());
+	q.prepare("SELECT 1 FROM jobs WHERE file_id=? AND status IN ('proposed','queued') LIMIT 1");
+	q.addBindValue(fileId);
+	return q.exec() && q.next();
+}
 
 qint64 DatabaseManager::insertJob(const JobRecord& job)
 {
@@ -794,24 +834,28 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel() const
 	q.exec(R"(
 		SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,
 			   f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,
-			   COALESCE(pc.imdb_id, '') AS imdb_id
+			   COALESCE(pc.imdb_id, '') AS imdb_id,
+			   COALESCE(f.duration_s, 0.0) AS duration_s
 		FROM jobs j
 		LEFT JOIN files f ON j.file_id = f.id
 		LEFT JOIN poster_cache pc ON j.file_id = pc.file_id
 		ORDER BY size_bytes ASC, j.created_at ASC
 	)");
+	if (!q.isActive())
+		qWarning() << "allJobsForPanel query failed:" << q.lastError().text();
 	while (q.next()) {
 		JobDisplayRecord r;
-		r.jobId     = q.value(0).toLongLong();
-		r.fileId    = q.value(1).toLongLong();
-		r.summary   = q.value(2).toString();
-		r.status    = q.value(3).toString();
-		r.savedBytes= q.value(4).toLongLong();
-		r.createdAt = q.value(5).toLongLong();
-		r.filename  = q.value(6).toString();
-		r.filePath  = q.value(7).toString();
-		r.sizeBytes = q.value(8).toLongLong();
-		r.imdbId    = q.value(9).toString();
+		r.jobId      = q.value(0).toLongLong();
+		r.fileId     = q.value(1).toLongLong();
+		r.summary    = q.value(2).toString();
+		r.status     = q.value(3).toString();
+		r.savedBytes = q.value(4).toLongLong();
+		r.createdAt  = q.value(5).toLongLong();
+		r.filename   = q.value(6).toString();
+		r.filePath   = q.value(7).toString();
+		r.sizeBytes  = q.value(8).toLongLong();
+		r.imdbId     = q.value(9).toString();
+		r.durationSec = q.value("duration_s").toDouble();
 		result.append(r);
 	}
 	return result;
@@ -934,6 +978,16 @@ QHash<qint64, QString> DatabaseManager::allDonePosterPaths() const
 {
 	QSqlQuery q(connection());
 	q.exec("SELECT file_id, image_path FROM poster_cache WHERE status='done' AND image_path != ''");
+	QHash<qint64, QString> result;
+	while (q.next())
+		result.insert(q.value(0).toLongLong(), q.value(1).toString());
+	return result;
+}
+
+QHash<qint64, QString> DatabaseManager::allKnownImdbIds() const
+{
+	QSqlQuery q(connection());
+	q.exec("SELECT file_id, imdb_id FROM poster_cache WHERE imdb_id != ''");
 	QHash<qint64, QString> result;
 	while (q.next())
 		result.insert(q.value(0).toLongLong(), q.value(1).toString());

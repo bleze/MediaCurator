@@ -19,6 +19,7 @@ struct FileRecord {
 	QString     filename;
 	qint64      sizeBytes = 0;
 	qint64      mtimeMs = 0;
+	qint64      createdMs = 0;  // filesystem birth time (creation date) in ms since epoch
 	QString     container;
 	double      durationSec = 0.0;
 	qint64      overallBitrate = 0;
@@ -87,14 +88,15 @@ struct PosterRecord {
 
 // For display in McJobPanel (jobs JOIN files JOIN poster_cache)
 struct JobDisplayRecord {
-	qint64  jobId    = -1;
-	qint64  fileId   = -1;
+	qint64  jobId      = -1;
+	qint64  fileId     = -1;
 	QString filename;
 	QString filePath;
 	QString summary;
 	QString status;
 	qint64  savedBytes = 0;
 	qint64  sizeBytes  = 0;
+	double  durationSec = 0.0;
 	qint64  createdAt  = 0;
 	QString imdbId;   // from poster_cache; empty if no IMDb link yet
 };
@@ -131,6 +133,7 @@ public:
 	int fileCountUnderPath(const QString& rootPath) const;
 	int removeFilesUnderPath(const QString& rootPath);
 	bool deleteFile(qint64 fileId);
+	void updateFilePath(qint64 fileId, const QString& newPath, const QString& newFilename);
 
 	// ── Streams ──────────────────────────────────────────────────────────────
 	bool insertStreams(qint64 fileId, const QList<StreamRecord>& streams);
@@ -140,6 +143,7 @@ public:
 	QHash<qint64, QList<StreamRecord>> allStreamsGrouped() const;
 
 	// ── Jobs ─────────────────────────────────────────────────────────────────
+	[[nodiscard]] bool   hasActiveJobForFile(qint64 fileId) const;
 	[[nodiscard]] qint64 insertJob(const JobRecord& job);
 	bool updateJobStatus(qint64 jobId, const QString& status, int resultCode = -1, const QString& log = {});
 	bool updateJobSavedBytes(qint64 jobId, qint64 savedBytes);
@@ -157,6 +161,7 @@ public:
 	std::optional<PosterRecord> posterForFile(qint64 fileId) const;
 	QList<qint64>               fileIdsNeedingPosters() const;
 	QHash<qint64, QString>      allDonePosterPaths() const;
+	QHash<qint64, QString>      allKnownImdbIds() const;
 	void                        resetPosterForFile(qint64 fileId);
 	void                        updateImdbId(qint64 fileId, const QString& imdbId);
 	void                        resetNoPosterRecords();

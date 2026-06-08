@@ -21,7 +21,9 @@ public:
 	void run();
 	void cancel();
 
-	qint64 jobId() const { return m_jobId; }
+	qint64 jobId()            const { return m_jobId; }
+	QString finalOutputPath() const { return m_finalOutputPath; }
+	QString inputFilePath()   const { return m_inputPath; }
 
 signals:
 	void progressChanged(int percent);
@@ -35,8 +37,9 @@ private:
 	qint64      m_jobId;
 	QString     m_mkvmergePath;
 	QStringList m_args;
-	QString     m_outputPath;       // value after -o in args
-	QString     m_inputPath;        // last arg (source file)
+	QString     m_outputPath;        // temp file path (value after -o in args)
+	QString     m_finalOutputPath;   // final destination (m_outputPath with .tmp stripped)
+	QString     m_inputPath;         // real source file path (ISO prefix stripped)
 	qint64      m_originalSize = 0;
 	QByteArray  m_readBuf;          // partial line accumulator — mkvmerge uses \r not \n
 	QString     m_log;

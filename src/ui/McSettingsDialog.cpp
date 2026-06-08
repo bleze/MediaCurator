@@ -266,7 +266,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkWriteLog = new QCheckBox(tr("Write .mc-log file alongside each processed file"), analysisGroup);
 	m_chkWriteLog->setToolTip(tr(
 		"After each successful remux, writes a plain-text report next to the output file. "
-		"Contains the filename, date, size saved, removed tracks, and the exact mkvmerge command."));
+		"Contains the filename, date, space reclaimed, removed tracks, and the exact mkvmerge command."));
 	m_chkWriteLog->setChecked(profile->writeJobLog());
 	analysisLayout->addWidget(m_chkWriteLog);
 	right->addWidget(analysisGroup);

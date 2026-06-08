@@ -35,13 +35,39 @@ QString FfprobeScanner::validateFfprobe() const
 
 FfprobeScanner::ScanResult FfprobeScanner::scanFile(const QString& filePath, qint64 scanRunId) const
 {
-	const QByteArray json = invokeFfprobe(filePath);
-	if (json.isEmpty()) {
-		return {{}, {}, QStringLiteral("ffprobe produced no output for: ") + filePath, false};
+	const QFileInfo fi(filePath);
+	const QString ext = fi.suffix().toLower();
+
+	QByteArray json;
+	QString isoType;
+
+	if (ext == QLatin1String("iso")) {
+		// Blu-ray disc images use "bluray:" prefix for ffprobe; DVD uses "dvd://"
+		json = invokeFfprobe(QStringLiteral("bluray:") + filePath);
+		if (!json.isEmpty()) {
+			isoType = QStringLiteral("iso-bluray");
+		} else {
+			json = invokeFfprobe(QStringLiteral("dvd://") + filePath);
+			if (!json.isEmpty())
+				isoType = QStringLiteral("iso-dvd");
+		}
+		if (json.isEmpty())
+			return {{}, {}, QStringLiteral("ffprobe could not read ISO (tried bluray: and dvd://): ") + filePath, false};
+	} else {
+		json = invokeFfprobe(filePath);
+		if (json.isEmpty())
+			return {{}, {}, QStringLiteral("ffprobe produced no output for: ") + filePath, false};
 	}
+
 	auto result = parseJsonOutput(json, filePath, scanRunId);
-	if (result.success)
-		result.file.mtimeMs = QFileInfo(filePath).lastModified().toMSecsSinceEpoch();
+	if (result.success) {
+		result.file.mtimeMs   = fi.lastModified().toMSecsSinceEpoch();
+		result.file.createdMs = fi.birthTime().toMSecsSinceEpoch();
+		if (!isoType.isEmpty()) {
+			result.file.container  = isoType;
+			result.file.sizeBytes  = fi.size(); // use actual ISO file size, not parsed content size
+		}
+	}
 	return result;
 }
 

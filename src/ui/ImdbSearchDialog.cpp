@@ -1,6 +1,9 @@
 ﻿#include "ui/ImdbSearchDialog.h"
 
 #include <QDialogButtonBox>
+#include <QFileInfo>
+#include <QSettings>
+#include <QString>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -112,9 +115,20 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	, m_tmdbApiKey(tmdbApiKey)
 	, m_nam([] { static QNetworkAccessManager* s = new QNetworkAccessManager; return s; }())
 {
-	setWindowTitle(tr("Edit IMDb Link"));
-	setMinimumWidth(500);
-	resize(560, 540);
+	const QString fname = QFileInfo(videoPath).fileName();
+	setWindowTitle(fname.isEmpty() ? tr("Edit IMDb Link")
+	                               : tr("Edit IMDb Link — %1").arg(fname));
+	setSizeGripEnabled(true);
+	setMinimumWidth(480);
+
+	{
+		QSettings s;
+		const QByteArray geo = s.value("imdbSearchDialog/geometry").toByteArray();
+		if (!geo.isEmpty())
+			restoreGeometry(geo);
+		else
+			resize(840, 600);
+	}
 
 	auto* mainLayout = new QVBoxLayout(this);
 	mainLayout->setSpacing(10);
@@ -160,13 +174,13 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	mainLayout->addLayout(idRow);
 
 	// Dialog buttons
-	auto* btnBox = new QDialogButtonBox(this);
+	m_btnBox = new QDialogButtonBox(this);
 	m_btnSave = new QPushButton(tr("Save"), this);
 	static const QRegularExpression validId(R"(^tt\d{7,8}$)");
 	m_btnSave->setEnabled(validId.match(existingImdbId).hasMatch());
-	btnBox->addButton(m_btnSave, QDialogButtonBox::AcceptRole);
-	btnBox->addButton(QDialogButtonBox::Cancel);
-	mainLayout->addWidget(btnBox);
+	m_btnBox->addButton(m_btnSave, QDialogButtonBox::AcceptRole);
+	m_btnBox->addButton(QDialogButtonBox::Cancel);
+	mainLayout->addWidget(m_btnBox);
 
 	if (tmdbApiKey.isEmpty()) {
 		m_searchEdit->setEnabled(false);
@@ -174,10 +188,14 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 		setStatusText(tr("Configure a TMDB API key in Settings to enable search."), true);
 	}
 
-	connect(m_btnSearch,  &QPushButton::clicked,
-	        this, &ImdbSearchDialog::onSearch);
-	connect(m_searchEdit, &QLineEdit::returnPressed,
-	        this, &ImdbSearchDialog::onSearch);
+	connect(m_btnSearch,  &QPushButton::clicked, this, [this]() {
+		m_userHasSearched = true;
+		onSearch();
+	});
+	connect(m_searchEdit, &QLineEdit::returnPressed, this, [this]() {
+		m_userHasSearched = true;
+		onSearch();
+	});
 	connect(m_resultsList, &QListWidget::currentRowChanged,
 	        this, &ImdbSearchDialog::onResultSelectionChanged);
 	connect(m_resultsList, &QListWidget::doubleClicked,
@@ -192,8 +210,8 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 		static const QRegularExpression re(R"(^tt\d{7,8}$)");
 		m_btnSave->setEnabled(re.match(t.trimmed()).hasMatch());
 	});
-	connect(m_btnSave, &QPushButton::clicked,  this, &QDialog::accept);
-	connect(btnBox,    &QDialogButtonBox::rejected, this, &QDialog::reject);
+	connect(m_btnSave, &QPushButton::clicked,      this, &QDialog::accept);
+	connect(m_btnBox,  &QDialogButtonBox::rejected, this, &QDialog::reject);
 
 	// Auto-search when the dialog opens (if key and title are both available)
 	if (!tmdbApiKey.isEmpty() && !suggestedTitle.isEmpty())
@@ -217,6 +235,37 @@ ImdbSearchDialog::~ImdbSearchDialog()
 	// m_nam is a shared static — never destroyed.
 }
 
+void ImdbSearchDialog::done(int result)
+{
+	QSettings().setValue("imdbSearchDialog/geometry", saveGeometry());
+	QDialog::done(result);
+}
+
+void ImdbSearchDialog::closeEvent(QCloseEvent* event)
+{
+	QDialog::closeEvent(event);
+}
+
+
+void ImdbSearchDialog::setBatchMode(int current, int total)
+{
+	m_batchMode = true;
+	const QString fname = QFileInfo(m_videoPath).fileName();
+	if (fname.isEmpty())
+		setWindowTitle(tr("Edit IMDb Link — %1 of %2").arg(current).arg(total));
+	else
+		setWindowTitle(tr("Edit IMDb Link — %1 — %2 of %3").arg(fname).arg(current).arg(total));
+	if (!m_btnBox) return;
+
+	// Relabel the standard "Cancel" button to "Skip" so it's clear what it does
+	// in a multi-file flow (skips this file, continues with the next one).
+	if (auto* cancelBtn = m_btnBox->button(QDialogButtonBox::Cancel))
+		cancelBtn->setText(tr("Skip"));
+
+	// "Cancel all" — aborts the entire batch loop.
+	auto* cancelAllBtn = m_btnBox->addButton(tr("Cancel all"), QDialogButtonBox::DestructiveRole);
+	connect(cancelAllBtn, &QPushButton::clicked, this, [this]() { done(CancelBatch); });
+}
 
 QString    ImdbSearchDialog::selectedImdbId()     const { return m_imdbIdEdit->text().trimmed(); }
 QString    ImdbSearchDialog::selectedTitle()      const { return m_selectedTitle; }
@@ -226,6 +275,12 @@ QByteArray ImdbSearchDialog::selectedImageData()  const
 {
 	if (!m_resultsList) return {};
 	return m_thumbDataByRow.value(m_resultsList->currentRow());
+}
+QString ImdbSearchDialog::selectedOriginalLanguage() const
+{
+	if (!m_resultsList) return {};
+	const QListWidgetItem* item = m_resultsList->currentItem();
+	return item ? item->data(Qt::UserRole + 5).toString() : QString{};
 }
 
 void ImdbSearchDialog::setStatusText(const QString& text, bool isError)
@@ -291,6 +346,7 @@ void ImdbSearchDialog::onSearch()
 		if (reply->error() != QNetworkReply::NoError) {
 			if (reply->error() != QNetworkReply::OperationCanceledError)
 				setStatusText(tr("Network error: %1").arg(reply->errorString()), true);
+			if (m_autoSelectSingle) { setWindowOpacity(1.0); raise(); activateWindow(); }
 			reply->deleteLater();
 			return;
 		}
@@ -301,6 +357,7 @@ void ImdbSearchDialog::onSearch()
 
 		if (results.isEmpty()) {
 			setStatusText(tr("No results found."));
+			if (m_autoSelectSingle) { setWindowOpacity(1.0); raise(); activateWindow(); }
 			return;
 		}
 
@@ -310,6 +367,7 @@ void ImdbSearchDialog::onSearch()
 			const int         year       = obj["release_date"].toString().left(4).toInt();
 			const int         tmdbId     = obj["id"].toInt();
 			const QString     posterPath = obj["poster_path"].toString();
+			const QString     origLang   = obj["original_language"].toString();
 
 			const QString display = year > 0
 				? QStringLiteral("%1  (%2)").arg(title).arg(year)
@@ -319,6 +377,7 @@ void ImdbSearchDialog::onSearch()
 			item->setData(Qt::UserRole,     tmdbId);
 			item->setData(Qt::UserRole + 1, title);
 			item->setData(Qt::UserRole + 2, year);
+			item->setData(Qt::UserRole + 5, origLang);  // ISO 639-1 original language from TMDB
 			item->setData(Qt::UserRole + 3, posterPath);
 
 			// Fetch thumbnail asynchronously
@@ -392,6 +451,23 @@ void ImdbSearchDialog::onSearch()
 				}
 			}
 			m_resultsList->setCurrentRow(bestRow);
+
+			if (m_autoSelectSingle) {
+				if (m_resultsList->count() == 1) {
+					// Exactly one result — silently accept without showing the dialog.
+					m_acceptAfterFetch = true;
+					if (!m_imdbIdByRow.value(bestRow).isEmpty()) {
+						m_imdbIdEdit->setText(m_imdbIdByRow.value(bestRow));
+						m_acceptAfterFetch = false;
+						accept();
+					}
+				} else {
+					// Multiple results, or user manually searched — show the dialog.
+					setWindowOpacity(1.0);
+					raise();
+					activateWindow();
+				}
+			}
 		}
 	});
 }

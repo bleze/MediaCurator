@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <QElapsedTimer>
+#include <QList>
 #include <QWidget>
 
 class QCheckBox;
@@ -24,14 +25,20 @@ public:
 	void setJobQueue(JobQueue* queue);
 	void refresh();
 
+	// After analyzeSingleFile creates a proposed job, call this to switch the
+	// filter to Proposed, select the new row and scroll it into view.
+	void scrollToFileJob(qint64 fileId);
+
 public slots:
 	void onJobStatusChanged(qint64 jobId, const QString& status);
 	void repaintCards();
 
 signals:
+	void jobsChanged(int count);   // emitted after any load/remove; count = total visible rows
 	void previewRequested(qint64 fileId);
 	void playRequested(const QString& filePath);
 	void editImdbLinkRequested(qint64 fileId);
+	void editImdbLinksRequested(const QList<qint64>& fileIds);  // batch: multiple selected
 	void refreshPosterRequested(qint64 fileId);
 
 private slots:
@@ -67,6 +74,7 @@ private:
 	QLineEdit*      m_filterEdit          = nullptr;
 	QComboBox*      m_statusFilter        = nullptr;
 	QCheckBox*      m_chkAutoTrack        = nullptr;
+	quint32         m_qfFlags             = 0;      // active quick-filter bitmask
 	JobQueue*       m_queue               = nullptr;
 	QElapsedTimer   m_jobTimer;
 	QTimer*         m_etaTimer            = nullptr;

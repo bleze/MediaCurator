@@ -1,5 +1,8 @@
-﻿#include "ui/McJobListModel.h"
+#include "ui/McJobListModel.h"
+#include "ui/McFilterPanel.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -99,6 +102,13 @@ void McJobListModel::setFilterStatus(const QString& status)
 	applyFilter();
 }
 
+void McJobListModel::setQuickFilters(quint32 flags)
+{
+	if (m_quickFilters == flags) return;
+	m_quickFilters = flags;
+	applyFilter();
+}
+
 QHash<QString, int> McJobListModel::countsByStatus() const
 {
 	QHash<QString, int> counts;
@@ -150,16 +160,97 @@ void McJobListModel::updateProgress(qint64 jobId, int percent)
 
 void McJobListModel::applyFilter()
 {
+	using QF = McFilterPanel;
+
 	beginResetModel();
 	m_entries.clear();
 	m_checkStates.clear();
+
 	for (int i = 0; i < m_allEntries.size(); ++i) {
 		const JobCardEntry& e = m_allEntries[i];
-		if (!m_filterText.isEmpty() &&
-		    !e.job.filename.contains(m_filterText, Qt::CaseInsensitive))
-			continue;
+
+		// ── Text search ──────────────────────────────────────────────────────────
+		if (!m_filterText.isEmpty()) {
+			const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+			bool hit = e.job.filename.contains(m_filterText, cs)
+			        || e.job.summary.contains(m_filterText, cs);
+			if (!hit) {
+				const QString folder = QFileInfo(e.job.filePath).dir().dirName();
+				hit = folder.contains(m_filterText, cs);
+			}
+			if (!hit) {
+				for (const StreamRecord& s : e.allStreams) {
+					if (s.language.contains(m_filterText, cs)
+					 || s.title.contains(m_filterText, cs)
+					 || s.codecName.contains(m_filterText, cs)
+					 || s.codecProfile.contains(m_filterText, cs)
+					 || s.hdrFormat.contains(m_filterText, cs)) {
+						hit = true;
+						break;
+					}
+				}
+			}
+			if (!hit) continue;
+		}
+
+		// ── Status filter ────────────────────────────────────────────────────────
 		if (!m_filterStatus.isEmpty() && e.job.status != m_filterStatus)
 			continue;
+
+		// ── Quick filters ────────────────────────────────────────────────────────
+		if (m_quickFilters != 0) {
+			if (m_quickFilters & QF::QF_4K) {
+				bool ok = false;
+				for (const StreamRecord& s : e.allStreams)
+					if (s.codecType == QLatin1String("video") && (s.width >= 3840 || s.height >= 2160))
+						{ ok = true; break; }
+				if (!ok) continue;
+			}
+			if (m_quickFilters & QF::QF_DV) {
+				bool ok = false;
+				for (const StreamRecord& s : e.allStreams) {
+					if (s.codecType != QLatin1String("video")) continue;
+					if (s.hdrFormat == QLatin1String("DolbyVision")
+					 || s.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive)
+					 || s.codecProfile.startsWith(QLatin1String("dvav"), Qt::CaseInsensitive))
+						{ ok = true; break; }
+				}
+				if (!ok) continue;
+			}
+			if (m_quickFilters & QF::QF_HDR) {
+				bool ok = false;
+				for (const StreamRecord& s : e.allStreams) {
+					if (s.codecType != QLatin1String("video")) continue;
+					if (!s.hdrFormat.isEmpty() && s.hdrFormat != QLatin1String("DolbyVision"))
+						{ ok = true; break; }
+				}
+				if (!ok) continue;
+			}
+			if (m_quickFilters & (QF::QF_Atmos | QF::QF_TrueHD | QF::QF_DtsHD | QF::QF_DtsX)) {
+				bool ok = false;
+				for (const StreamRecord& s : e.allStreams) {
+					if (s.codecType != QLatin1String("audio")) continue;
+					const QString cn = s.codecName.toLower();
+					const QString cp = s.codecProfile.toLower();
+					const QString ct = s.title.toLower();
+					if ((m_quickFilters & QF::QF_Atmos) &&
+					    ((cn == QLatin1String("truehd") || cn == QLatin1String("eac3")) &&
+					     (cp.contains(QLatin1String("atmos")) || ct.contains(QLatin1String("atmos")))))
+						{ ok = true; break; }
+					if ((m_quickFilters & QF::QF_TrueHD) && cn == QLatin1String("truehd"))
+						{ ok = true; break; }
+					if ((m_quickFilters & QF::QF_DtsHD) && cn == QLatin1String("dts") &&
+					    (cp.contains(QLatin1String("ma")) || ct.contains(QLatin1String("dts-hd")) || ct.contains(QLatin1String("dts:x"))))
+						{ ok = true; break; }
+					if ((m_quickFilters & QF::QF_DtsX) && cn == QLatin1String("dts") &&
+					    (cp.contains(QLatin1String("dts:x")) || cp.contains(QLatin1String("dts-x")) ||
+					     ct.contains(QLatin1String("dts:x")) || ct.contains(QLatin1String("dts-x"))))
+						{ ok = true; break; }
+				}
+				if (!ok) continue;
+			}
+		}
+
 		m_entries.append(e);
 		m_checkStates.append(m_allCheckStates[i]);
 	}
@@ -215,6 +306,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case FileSizeRole:      return e.job.sizeBytes;
 	case FilePathRole:      return e.job.filePath;
 	case ImdbIdRole:        return e.job.imdbId;
+	case DurationRole:      return e.job.durationSec;
 	default:                return {};
 	}
 }

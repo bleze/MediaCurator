@@ -6,6 +6,7 @@
 
 #include <QAction>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QItemSelectionModel>
@@ -126,10 +127,11 @@ void McManageFoldersDialog::onAddFolder()
 	QStringList roots = s.value("scan/roots").toStringList();
 	const QString hint = roots.isEmpty() ? QString() : roots.last();
 
-	const QString folder = QFileDialog::getExistingDirectory(
+	const QString raw    = QFileDialog::getExistingDirectory(
 		this, tr("Add Media Folder"), hint,
 		QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-	if (folder.isEmpty()) return;
+	if (raw.isEmpty()) return;
+	const QString folder = QDir::fromNativeSeparators(raw);
 
 	if (roots.contains(folder)) {
 		QMessageBox::information(this, tr("Already Added"),

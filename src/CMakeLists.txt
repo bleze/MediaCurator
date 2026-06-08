@@ -17,14 +17,14 @@ set(MC_SOURCES
     ui/McMainWindow.cpp
     ui/McTrackTableModel.cpp
     ui/McFileListModel.cpp
-    ui/McFileCardDelegate.cpp
+    ui/McCardDelegate.cpp
     ui/McSettingsDialog.cpp
     ui/McJobPanel.cpp
     ui/McJobListModel.cpp
-    ui/McJobCardDelegate.cpp
     ui/McManageFoldersDialog.cpp
     ui/McPreviewDialog.cpp
     ui/McBulkSummaryDialog.cpp
+    ui/McJobStatsBar.cpp
     ui/ImdbSearchDialog.cpp
     ui/SvgIcon.cpp
 
@@ -75,15 +75,17 @@ set(MC_HEADERS
     ../include/ui/McMainWindow.h
     ../include/ui/McTrackTableModel.h
     ../include/ui/McFileListModel.h
+    ../include/ui/McCardDelegate.h
     ../include/ui/McFileCardDelegate.h
+    ../include/ui/McJobCardDelegate.h
     ../include/ui/McLibraryPanel.h
     ../include/ui/McFilterPanel.h
     ../include/ui/McJobPanel.h
     ../include/ui/McJobListModel.h
-    ../include/ui/McJobCardDelegate.h
     ../include/ui/McManageFoldersDialog.h
     ../include/ui/McPreviewDialog.h
     ../include/ui/McBulkSummaryDialog.h
+    ../include/ui/McJobStatsBar.h
     ../include/ui/McSettingsDialog.h
     ../include/ui/ImdbSearchDialog.h
     ../include/ui/SvgIcon.h

@@ -1,5 +1,6 @@
 ﻿#include "ui/McMainWindow.h"
 #include "ui/ImdbSearchDialog.h"
+#include "ui/McFilterPanel.h"
 #include "ui/McManageFoldersDialog.h"
 #include "ui/SvgIcon.h"
 #include "ui/McFileCardDelegate.h"
@@ -25,7 +26,9 @@
 #endif
 
 #include <QAbstractItemView>
+#include <QShowEvent>
 #include <QTimer>
+#include <functional>
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
@@ -54,9 +57,118 @@
 #include <QDialogButtonBox>
 #include <QPushButton>
 #include <QStatusBar>
+#include <QColor>
+#include <QPainter>
+#include <QPalette>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUrl>
+#include <QWidgetAction>
 #include <QVBoxLayout>
+
+namespace {
+
+// Convert TMDB's ISO 639-1 two-letter code to the ISO 639-2/T three-letter code
+// used in media file stream tags.  Falls back to the input if unknown.
+static QString tmdbLangToIso6392(const QString& iso1)
+{
+	static const QHash<QString, QString> m = {
+		{"en","eng"}, {"fr","fra"}, {"de","deu"}, {"es","spa"}, {"it","ita"},
+		{"pt","por"}, {"ja","jpn"}, {"zh","zho"}, {"ko","kor"}, {"ru","rus"},
+		{"ar","ara"}, {"nl","nld"}, {"pl","pol"}, {"sv","swe"}, {"nb","nor"},
+		{"da","dan"}, {"fi","fin"}, {"tr","tur"}, {"cs","ces"}, {"sk","slk"},
+		{"hu","hun"}, {"ro","ron"}, {"el","ell"}, {"he","heb"}, {"th","tha"},
+		{"id","ind"}, {"vi","vie"}, {"uk","ukr"}, {"hi","hin"}, {"bn","ben"},
+	};
+	const QString lc = iso1.toLower();
+	return (lc.length() == 2) ? m.value(lc, lc) : lc;  // pass 3-letter codes through unchanged
+}
+
+// Menu toggle widget that draws its own hover (full row) and checked indicator (inset pill).
+// Not Q_OBJECT — uses std::function callback instead of signals.
+class McQueueToggle final : public QWidget
+{
+public:
+	std::function<void(bool)> onToggled;
+
+	McQueueToggle(const QIcon& icon, const QString& text,
+	              QColor hoverColor, QColor checkedColor, QColor checkedHoverColor,
+	              QWidget* parent = nullptr)
+	    : QWidget(parent)
+	    , m_icon(icon), m_text(text)
+	    , m_hoverColor(hoverColor)
+	    , m_checkedColor(checkedColor)
+	    , m_checkedHoverColor(checkedHoverColor)
+	{
+		setAutoFillBackground(true);
+		setAttribute(Qt::WA_Hover);
+		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	}
+
+	void setChecked(bool on) { if (m_checked != on) { m_checked = on; update(); } }
+	bool isChecked() const { return m_checked; }
+
+protected:
+	void paintEvent(QPaintEvent*) override
+	{
+		QPainter p(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		const QRect r = rect();
+
+		// Full-row hover fill — always drawn first so the pill sits on top of it
+		if (m_hovered)
+			p.fillRect(r, m_hoverColor);
+
+		// Checked pill: inset 1px top/bottom, 2px left/right — brighter when hovered
+		if (m_checked) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(m_hovered ? m_checkedHoverColor : m_checkedColor);
+			p.drawRoundedRect(QRectF(r).adjusted(2.0, 1.0, -2.0, -1.0), 3.0, 3.0);
+		}
+
+		// Icon (16×16, left-aligned with 8px left padding)
+		constexpr int kIconW   = 16;
+		constexpr int kLeftPad = 8;
+		constexpr int kGap     = 5;
+		const QRect iconRect(kLeftPad, (r.height() - kIconW) / 2, kIconW, kIconW);
+		m_icon.paint(&p, iconRect);
+
+		// Text
+		p.setPen(palette().color(QPalette::Text));
+		p.setFont(font());
+		const QRect textRect = r.adjusted(kLeftPad + kIconW + kGap, 0, -kLeftPad, 0);
+		p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, m_text);
+	}
+
+	void enterEvent(QEnterEvent*) override { m_hovered = true;  update(); }
+	void leaveEvent(QEvent*)      override { m_hovered = false; update(); }
+
+	void mousePressEvent(QMouseEvent* e) override
+	{
+		if (e->button() == Qt::LeftButton) {
+			m_checked = !m_checked;
+			update();
+			if (onToggled) onToggled(m_checked);
+		}
+	}
+
+	QSize sizeHint() const override
+	{
+		const int w = 8 + 16 + 5 + fontMetrics().horizontalAdvance(m_text) + 8;
+		return { w, fontMetrics().height() + 8 };
+	}
+
+private:
+	QIcon    m_icon;
+	QString  m_text;
+	QColor   m_hoverColor;
+	QColor   m_checkedColor;
+	QColor   m_checkedHoverColor;
+	bool     m_hovered = false;
+	bool     m_checked = false;
+};
+
+} // anonymous namespace
 
 namespace Mc {
 
@@ -85,12 +197,18 @@ McMainWindow::McMainWindow(QWidget* parent)
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 	});
 
+	m_savedJobPanelHeight = s.value("mainWindow/jobPanelHeight", 0).toInt();
+	m_jobPanelPinned     = s.value("mainWindow/queueHidden",    false).toBool();
+
 	setupActions();
 	setupUi();
-	if (const QByteArray sp = s.value("mainWindow/splitter").toByteArray(); !sp.isEmpty())
+	m_jobPanel->setVisible(false);   // hidden until we know there are jobs
+	if (const QByteArray sp = s.value("mainWindow/splitter").toByteArray(); !sp.isEmpty()) {
 		m_splitter->restoreState(sp);
-	else
+		m_splitterRestored = true;
+	} else {
 		m_splitter->setSizes({ 600, 600 });
+	}
 
 	if (firstLaunch) {
 		if (QScreen* screen = QGuiApplication::primaryScreen()) {
@@ -193,6 +311,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	pm.start(m_profile->tmdbApiKey());
 	connect(&pm, &PosterManager::posterReady,
 	        m_listModel, &McFileListModel::onPosterReady);
+	connect(&pm, &PosterManager::imdbIdSaved,
+	        m_listModel, &McFileListModel::onImdbIdSaved);
 
 	onRefreshView();
 }
@@ -220,6 +340,12 @@ void McMainWindow::setupUi()
 	        this, [this](const QModelIndex& idx) {
 		launchInVlc(idx.data(McFileListModel::FileRole).value<FileRecord>().path);
 	});
+	connect(fileDelegate, &McFileCardDelegate::imdbPageRequested,
+	        this, [this](const QModelIndex& idx) {
+		const QString id = idx.data(McFileListModel::ImdbRole).toString();
+		if (!id.isEmpty())
+			QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.imdb.com/title/%1/").arg(id)));
+	});
 
 	// Library is a static/informational view — badge toggle is handled in the job queue.
 	// pressed still fires so handlePress can route play-button clicks.
@@ -242,11 +368,15 @@ void McMainWindow::setupUi()
 		const QString    suggested = NfoParser::titleFromFilename(file.filename);
 		const QString    existing  = NfoParser::readImdbId(file.path);
 		ImdbSearchDialog dlg(file.path, suggested, existing, m_profile->tmdbApiKey(), this);
+		if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
 				NfoParser::writeMovieNfo(file.path, id, dlg.selectedTitle(), dlg.selectedYear());
 				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id);
+				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				if (!origLang.isEmpty())
+					DatabaseManager::instance().updateFileOriginalLanguage(file.id, origLang);
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -270,21 +400,25 @@ void McMainWindow::setupUi()
 
 		QMenu menu(this);
 
-		auto* previewAction = menu.addAction(svgIcon(":/icons/visibility.svg"),
-		                                      tr("&Preview Tracks…"));
-		connect(previewAction, &QAction::triggered,
-		        this, [this, file] { onShowPreview(file.id); });
-
 		auto* analyzeAction = menu.addAction(svgIcon(":/icons/manage_search.svg"),
 		                                      tr("&Analyze File"));
 		connect(analyzeAction, &QAction::triggered, this, [this, file] {
 			const bool created = analyzeSingleFile(file.id);
 			m_jobPanel->refresh();
 			m_listModel->refreshJobFilter();
+			if (created) {
+				updateJobPanelVisibility(/*forceShow=*/true);
+				m_jobPanel->scrollToFileJob(file.id);
+			}
 			m_statusLabel->setText(created
 			    ? tr("Proposed job for %1").arg(file.filename)
 			    : tr("No removals found for %1").arg(file.filename));
 		});
+
+		auto* previewAction = menu.addAction(svgIcon(":/icons/visibility.svg"),
+		                                      tr("&Preview Tracks…"));
+		connect(previewAction, &QAction::triggered,
+		        this, [this, file] { onShowPreview(file.id); });
 
 		menu.addSeparator();
 
@@ -294,19 +428,46 @@ void McMainWindow::setupUi()
 			PosterManager::instance().refresh(file.id);
 		});
 
-		auto* imdbAction = menu.addAction(svgIcon(":/icons/link.svg"),
-		                                   tr("Edit &IMDb Link…"));
-		connect(imdbAction, &QAction::triggered, this, [this, file] {
-			const QString suggested = NfoParser::titleFromFilename(file.filename);
-			const QString existing  = NfoParser::readImdbId(file.path);
-			ImdbSearchDialog dlg(file.path, suggested, existing,
-			                      m_profile->tmdbApiKey(), this);
-			if (dlg.exec() != QDialog::Accepted) return;
-			const QString imdbId = dlg.selectedImdbId();
-			if (imdbId.isEmpty()) return;
-			NfoParser::writeMovieNfo(file.path, imdbId,
-			                          dlg.selectedTitle(), dlg.selectedYear());
-			PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId);
+		// Collect selected files so right-clicking on a multi-selection gives a batch action.
+		QList<FileRecord> imdbFiles;
+		{
+			QSet<int> seen;
+			for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes()) {
+				if (seen.contains(si.row())) continue;
+				seen.insert(si.row());
+				imdbFiles << si.data(McFileListModel::FileRole).value<FileRecord>();
+			}
+			bool alreadyIn = false;
+			for (const auto& f : imdbFiles) if (f.id == file.id) { alreadyIn = true; break; }
+			if (!alreadyIn) imdbFiles.prepend(file);
+		}
+		const QString imdbLabel = imdbFiles.size() > 1
+		    ? tr("Edit &IMDb Links (%1 files)…").arg(imdbFiles.size())
+		    : tr("Edit &IMDb Link…");
+		auto* imdbAction = menu.addAction(svgIcon(":/icons/link.svg"), imdbLabel);
+		connect(imdbAction, &QAction::triggered, this, [this, imdbFiles] {
+			const int total = imdbFiles.size();
+			for (int i = 0; i < total; ++i) {
+				const FileRecord& f = imdbFiles[i];
+				const QString suggested = NfoParser::titleFromFilename(f.filename);
+				QString existing;
+				if (const auto pr = DatabaseManager::instance().posterForFile(f.id))
+					existing = pr->imdbId;
+				if (existing.isEmpty()) existing = NfoParser::readImdbId(f.path);
+				ImdbSearchDialog dlg(f.path, suggested, existing, m_profile->tmdbApiKey(), this);
+				if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
+				if (total > 1) dlg.setBatchMode(i + 1, total);
+				const int result = dlg.exec();
+				if (result == ImdbSearchDialog::CancelBatch) break;
+				if (result != QDialog::Accepted) continue;
+				const QString imdbId = dlg.selectedImdbId();
+				if (imdbId.isEmpty()) continue;
+				NfoParser::writeMovieNfo(f.path, imdbId, dlg.selectedTitle(), dlg.selectedYear());
+				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId);
+				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				if (!origLang.isEmpty())
+					DatabaseManager::instance().updateFileOriginalLanguage(f.id, origLang);
+			}
 			m_listView->viewport()->repaint();
 		});
 
@@ -319,36 +480,15 @@ void McMainWindow::setupUi()
 				QUrl::fromLocalFile(QFileInfo(file.path).absolutePath()));
 		});
 
-		auto* playAction = menu.addAction(svgIcon(":/icons/play_arrow.svg"),
-		                                   tr("Play in &VLC"));
-		connect(playAction, &QAction::triggered,
-		        this, [this, file] { launchInVlc(file.path); });
-
 		menu.exec(m_listView->viewport()->mapToGlobal(pos));
 	});
 
 	// ── Filter bar ────────────────────────────────────────────────────────────
-	m_filterEdit = new QLineEdit(this);
-	m_filterEdit->setPlaceholderText(tr("Filter by filename…"));
-	m_filterEdit->setClearButtonEnabled(true);
+	m_filterPanel = new McFilterPanel(this);
 
-	m_btnFilterRemovals = new QPushButton(tr("With removals"), this);
-	m_btnFilterRemovals->setCheckable(true);
-	m_btnFilterRemovals->setToolTip(tr("Show only files with proposed track removals"));
-
-	m_btnFilterMissingImdb = new QPushButton(tr("Missing poster"), this);
-	m_btnFilterMissingImdb->setCheckable(true);
-	m_btnFilterMissingImdb->setToolTip(tr("Show only files without a poster (no IMDb link set)"));
-
-	auto* filterBar    = new QWidget(this);
-	auto* filterLayout = new QHBoxLayout(filterBar);
-	filterLayout->setContentsMargins(4, 4, 4, 2);
-	filterLayout->setSpacing(6);
-	filterLayout->addWidget(m_filterEdit, 1);
-	filterLayout->addWidget(m_btnFilterRemovals);
-	filterLayout->addWidget(m_btnFilterMissingImdb);
-
-	connect(m_filterEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+	connect(m_filterPanel, &McFilterPanel::filterTextChanged,
+	        this, [this](const QString& text) {
+		// When clearing, remember the selected card so we can scroll back to it
 		qint64 anchorId = -1;
 		if (text.isEmpty()) {
 			const auto sel = m_listView->selectionModel()->selectedIndexes();
@@ -367,16 +507,21 @@ void McMainWindow::setupUi()
 			}
 		}
 	});
-	connect(m_btnFilterRemovals, &QPushButton::toggled,
-	        m_listModel,         &McFileListModel::setFilterHasRemovals);
-	connect(m_btnFilterMissingImdb, &QPushButton::toggled,
-	        m_listModel,            &McFileListModel::setFilterMissingImdb);
+	connect(m_filterPanel, &McFilterPanel::filterStatusChanged,
+	        this, [this](int status) {
+		m_listModel->setFilterHasRemovals(status == 1);
+		m_listModel->setFilterMissingImdb(status == 2);
+	});
+	connect(m_filterPanel, &McFilterPanel::quickFiltersChanged,
+	        m_listModel, &McFileListModel::setQuickFilters);
+	connect(m_filterPanel, &McFilterPanel::sortOrderChanged,
+	        m_listModel, &McFileListModel::setSortOrder);
 
 	auto* topWidget = new QWidget(this);
 	auto* topLayout = new QVBoxLayout(topWidget);
 	topLayout->setContentsMargins(0, 0, 0, 0);
 	topLayout->setSpacing(0);
-	topLayout->addWidget(filterBar);
+	topLayout->addWidget(m_filterPanel);
 	topLayout->addWidget(m_listView, 1);
 
 	splitter->addWidget(topWidget);
@@ -386,6 +531,9 @@ void McMainWindow::setupUi()
 	m_jobPanel->setJobQueue(m_jobQueue);
 	m_jobPanel->setMinimumHeight(120);
 	splitter->addWidget(m_jobPanel);
+
+	connect(m_jobPanel, &McJobPanel::jobsChanged,
+	        this, [this](int) { updateJobPanelVisibility(); });
 
 	connect(m_jobPanel, &McJobPanel::previewRequested,
 	        this, &McMainWindow::onShowPreview);
@@ -408,15 +556,61 @@ void McMainWindow::setupUi()
 		                     NfoParser::titleFromFilename(fileOpt->filename),
 		                     existingId,
 		                     m_profile->tmdbApiKey(), this);
+		if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
 				NfoParser::writeMovieNfo(fileOpt->path, id,
 				                        dlg.selectedTitle(), dlg.selectedYear());
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id);
+				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				if (!origLang.isEmpty())
+					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
 				m_listView->viewport()->repaint();
 			}
 		}
+	});
+
+	// Batch IMDb link editing: process all selected files in order.
+	// Files with 1 search result auto-accept silently; ambiguous files show the
+	// dialog with Skip / Cancel-all buttons so the user can exit the loop at any time.
+	connect(m_jobPanel, &McJobPanel::editImdbLinksRequested,
+	        this, [this](const QList<qint64>& fileIds) {
+		const int total = fileIds.size();
+		for (int i = 0; i < total; ++i) {
+			const qint64 fileId = fileIds[i];
+			const auto fileOpt = DatabaseManager::instance().fileById(fileId);
+			if (!fileOpt) continue;
+
+			QString existingId;
+			if (const auto pr = DatabaseManager::instance().posterForFile(fileId))
+				existingId = pr->imdbId;
+			if (existingId.isEmpty())
+				existingId = NfoParser::readImdbId(fileOpt->path);
+
+			ImdbSearchDialog dlg(fileOpt->path,
+			                     NfoParser::titleFromFilename(fileOpt->filename),
+			                     existingId,
+			                     m_profile->tmdbApiKey(), this);
+			if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
+			dlg.setBatchMode(i + 1, total);
+
+			const int result = dlg.exec();
+			if (result == ImdbSearchDialog::CancelBatch) break;
+			if (result != QDialog::Accepted) continue;  // Skip or user cancelled
+
+			const QString id = dlg.selectedImdbId();
+			if (!id.isEmpty()) {
+				NfoParser::writeMovieNfo(fileOpt->path, id,
+				                        dlg.selectedTitle(), dlg.selectedYear());
+				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id);
+				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				if (!origLang.isEmpty())
+					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
+			}
+		}
+		m_listView->viewport()->repaint();
+		m_jobPanel->repaintCards();
 	});
 
 	connect(m_jobPanel, &McJobPanel::refreshPosterRequested,
@@ -466,6 +660,16 @@ void McMainWindow::setupActions()
 	m_actRefresh->setToolTip(tr("Reload library from database (F5)"));
 	m_actRefresh->setIcon(svgIcon(":/icons/refresh.svg"));
 	connect(m_actRefresh, &QAction::triggered, this, &McMainWindow::onRefreshView);
+
+	m_actToggleQueue = new QAction(tr("Job Queue"), this);
+	m_actToggleQueue->setCheckable(true);
+	m_actToggleQueue->setToolTip(tr("Show / hide the job queue panel"));
+	m_actToggleQueue->setIcon(svgIcon(":/icons/playlist_add_check.svg"));
+	connect(m_actToggleQueue, &QAction::toggled, this, [this](bool checked) {
+		m_jobPanelPinned = !checked;
+		QSettings().setValue("mainWindow/queueHidden", m_jobPanelPinned);
+		updateJobPanelVisibility();
+	});
 }
 
 void McMainWindow::setupToolBar()
@@ -476,22 +680,31 @@ void McMainWindow::setupToolBar()
 	tb->setIconSize({ 24, 24 });
 	tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
-	tb->setStyleSheet(
-	    "QToolButton {"
-	    "  padding: 4px 8px;"
-	    "  border-radius: 4px;"
-	    "  border: none;"
-	    "}"
-	    "QToolButton:hover {"
-	    "  background: rgba(128,128,128,50);"
-	    "}"
-	    "QToolButton:pressed {"
-	    "  background: rgba(128,128,128,90);"
-	    "}");
+	{
+		const QColor h = tb->palette().color(QPalette::Highlight);
+		const auto rgbaStr = [&](int alpha) {
+			return QStringLiteral("rgba(%1,%2,%3,%4)").arg(h.red()).arg(h.green()).arg(h.blue()).arg(alpha);
+		};
+		tb->setStyleSheet(
+		    "QToolButton {"
+		    "  padding: 4px 8px;"
+		    "  border-radius: 4px;"
+		    "  border: none;"
+		    "}"
+		    "QToolButton:hover {"
+		    "  background: rgba(128,128,128,50);"
+		    "}"
+		    "QToolButton:pressed {"
+		    "  background: rgba(128,128,128,90);"
+		    "}"
+		    "QToolButton:checked { background: " + rgbaStr(140) + "; }"
+		    "QToolButton:checked:hover { background: " + rgbaStr(170) + "; }");
+	}
 
 	tb->addAction(m_actScanFolder);
 	tb->addAction(m_actScanLibrary);
 	tb->addAction(m_actAnalyze);
+	tb->addAction(m_actToggleQueue);
 	tb->addSeparator();
 	tb->addAction(m_actRefresh);
 
@@ -518,6 +731,33 @@ void McMainWindow::setupMenuBar()
 	// View menu
 	QMenu* viewMenu = menuBar()->addMenu(tr("&View"));
 	viewMenu->addAction(m_actRefresh);
+	viewMenu->addSeparator();
+
+	// Job Queue toggle — custom widget draws full-row hover + inset pill when checked,
+	// matching the toolbar toggle style without native platform checkmark rendering.
+	{
+		const QColor h   = palette().color(QPalette::Highlight);
+		const QColor hov = h.lighter(175);
+
+		auto* wa     = new QWidgetAction(viewMenu);
+		auto* toggle = new McQueueToggle(
+		    svgIcon(":/icons/playlist_add_check.svg"),
+		    tr("Job Queue"),
+		    hov,
+		    QColor(h.red(), h.green(), h.blue(), 140),
+		    QColor(h.red(), h.green(), h.blue(), 180),
+		    viewMenu);
+		toggle->setChecked(m_actToggleQueue->isChecked());
+
+		toggle->onToggled = [this, viewMenu](bool on) {
+			m_actToggleQueue->setChecked(on);
+			viewMenu->hide();
+		};
+
+		m_menuQueueBtn = toggle;
+		wa->setDefaultWidget(toggle);
+		viewMenu->addAction(wa);
+	}
 
 	// Tools menu
 	QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
@@ -535,6 +775,15 @@ void McMainWindow::setupMenuBar()
 	aboutAction->setIcon(QApplication::windowIcon());
 	connect(aboutAction, &QAction::triggered, this, &McMainWindow::onAbout);
 	helpMenu->addAction(aboutAction);
+
+	// Flat hover on all menus — matches the combobox dropdown hover colour.
+	const QColor hov = palette().color(QPalette::Highlight).lighter(175);
+	const QString baseMenuStyle = QStringLiteral(
+	    "QMenu::item:selected { background: %1; }").arg(hov.name());
+	fileMenu->setStyleSheet(baseMenuStyle);
+	viewMenu->setStyleSheet(baseMenuStyle);
+	toolsMenu->setStyleSheet(baseMenuStyle);
+	helpMenu->setStyleSheet(baseMenuStyle);
 
 	// Donate button — far right corner of the menu bar
 	auto* donateBtn = new QPushButton(svgIcon(":/icons/dollar.svg"), tr("Donate"), this);
@@ -605,11 +854,33 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 
 	PosterManager::instance().stop();
 
+	if (m_jobPanel->isVisible()) {
+		const QList<int> sz = m_splitter->sizes();
+		if (sz.size() > 1 && sz[1] > 0)
+			m_savedJobPanelHeight = sz[1];
+	}
+
 	QSettings s;
-	s.setValue("mainWindow/geometry",     saveGeometry());
-	s.setValue("mainWindow/state",        saveState());
-	s.setValue("mainWindow/splitter",     m_splitter->saveState());
+	s.setValue("mainWindow/geometry",        saveGeometry());
+	s.setValue("mainWindow/state",           saveState());
+	s.setValue("mainWindow/splitter",        m_splitter->saveState());
+	s.setValue("mainWindow/jobPanelHeight",  m_savedJobPanelHeight);
+	s.setValue("mainWindow/queueHidden",     m_jobPanelPinned);
 	event->accept();
+}
+
+void McMainWindow::showEvent(QShowEvent* event)
+{
+	QMainWindow::showEvent(event);
+	if (!m_firstShowDone) {
+		m_firstShowDone = true;
+		// First show: always reveal the queue if jobs exist — the "pinned hidden"
+		// setting is a within-session preference, not a permanent preference.
+		updateJobPanelVisibility(/*forceShow=*/true);
+	} else {
+		// Un-minimise / screen restore: just sync state, don't override user's choice.
+		updateJobPanelVisibility();
+	}
 }
 
 // ── Slots ─────────────────────────────────────────────────────────────────────
@@ -631,11 +902,12 @@ void McMainWindow::onScanFolder()
 	}
 	const QString hint = roots.isEmpty() ? QString() : roots.last();
 
-	const QString folder = QFileDialog::getExistingDirectory(
+	const QString raw = QFileDialog::getExistingDirectory(
 		this, tr("Add Media Folder"), hint,
 		QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
 	);
-	if (folder.isEmpty()) return;
+	if (raw.isEmpty()) return;
+	const QString folder = QDir::fromNativeSeparators(raw);
 
 	if (!roots.contains(folder))
 		roots << folder;
@@ -718,6 +990,7 @@ void McMainWindow::createScanWorker(const QString& folderPath)
 	connect(m_scanWorker, &ScanWorker::progress,       this,        &McMainWindow::onScanProgress);
 	connect(m_scanWorker, &ScanWorker::finished,       this,        &McMainWindow::onScanFinished);
 	connect(m_scanWorker, &ScanWorker::fileProcessed,  m_listModel, &McFileListModel::applyFileUpdate);
+	connect(m_scanWorker, &ScanWorker::imdbIdFound,    m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(m_scanWorker, &ScanWorker::fileRemoved,    m_listModel, &McFileListModel::removeEntry);
 
 	setScanningState(true);
@@ -772,15 +1045,20 @@ void McMainWindow::onScanFinished(int scanned, int added, int updated, int faile
 void McMainWindow::onRefreshView()
 {
 	m_listModel->reload();
-	m_jobPanel->refresh();
+	m_jobPanel->refresh();          // emits jobsChanged → updateJobPanelVisibility
 	updateSavedLabel();
+	updateActionStates();
 	if (m_progressBar->isVisible()) return;
-	const int shown = m_listModel->fileCount();
-	const int total = m_listModel->totalCount();
-	if (shown < total)
-		m_statusLabel->setText(tr("%1 of %2 files").arg(shown).arg(total));
-	else
-		m_statusLabel->setText(tr("%1 files in library").arg(total));
+	const int shown    = m_listModel->fileCount();
+	const int total    = m_listModel->totalCount();
+	const int jobCount = DatabaseManager::instance().allJobsForPanel().size();
+
+	QString text = shown < total
+	    ? tr("%1 of %2 files").arg(shown).arg(total)
+	    : tr("%1 files in library").arg(total);
+	if (jobCount > 0)
+		text += tr(", %1 in queue").arg(jobCount);
+	m_statusLabel->setText(text);
 }
 
 bool McMainWindow::analyzeSingleFile(qint64 fileId)
@@ -853,6 +1131,8 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 	const QStringList args            = actions.buildCommand(decision, outputPath);
 	QJsonArray        arr;
 	for (const QString& a : args) arr.append(a);
+
+	if (db.hasActiveJobForFile(f.id)) return false;
 
 	JobRecord job;
 	job.fileId          = f.id;
@@ -937,11 +1217,13 @@ void McMainWindow::onAnalyzeFinished(int /*analyzed*/, int created)
 	m_progressBar->setVisible(false);
 	m_btnCancelAnalyze->setVisible(false);
 	m_actScanFolder->setEnabled(true);
-	m_actAnalyze->setEnabled(true);
+	updateActionStates();
 
 	m_jobPanel->refresh();
 	m_listModel->refreshJobFilter();
 	updateSavedLabel();
+	if (created > 0)
+		updateJobPanelVisibility(/*forceShow=*/true);
 	m_statusLabel->setText(tr("Analyze complete — %1 job(s) proposed").arg(created));
 }
 
@@ -955,9 +1237,14 @@ void McMainWindow::setScanningState(bool scanning)
 	} else {
 		m_progressBar->setValue(0);
 	}
-	// Disable scan/analyze actions while scanning
+	// Disable scan/analyze actions while scanning; restore proper conditional state when done
 	m_actScanFolder->setEnabled(!scanning);
-	m_actAnalyze->setEnabled(!scanning);
+	if (scanning) {
+		m_actScanLibrary->setEnabled(false);
+		m_actAnalyze->setEnabled(false);
+	} else {
+		updateActionStates();
+	}
 }
 
 void McMainWindow::updateSavedLabel()
@@ -970,12 +1257,64 @@ void McMainWindow::updateSavedLabel()
 	if (total > 0) {
 		const double gb = total / 1073741824.0;
 		const QString text = gb >= 1.0
-		    ? tr("Saved: %1 GB").arg(gb, 0, 'f', 2)
-		    : tr("Saved: %1 MB").arg(total / 1048576.0, 0, 'f', 1);
+		    ? tr("Reclaimed: %1 GB").arg(gb, 0, 'f', 2)
+		    : tr("Reclaimed: %1 MB").arg(total / 1048576.0, 0, 'f', 1);
 		m_savedLabel->setText(text);
 		m_savedLabel->setVisible(true);
 	} else {
 		m_savedLabel->setVisible(false);
+	}
+}
+
+void McMainWindow::updateActionStates()
+{
+	QSettings s;
+	const bool hasRoots = !s.value("scan/roots").toStringList().isEmpty();
+	const bool hasFiles = m_listModel->totalCount() > 0;
+	m_actScanLibrary->setEnabled(hasRoots);
+	m_actAnalyze->setEnabled(hasFiles);
+}
+
+void McMainWindow::updateJobPanelVisibility(bool forceShow)
+{
+	const bool hasJobs = !DatabaseManager::instance().allJobsForPanel().isEmpty();
+
+	if (forceShow && hasJobs) {
+		m_jobPanelPinned = false;
+		QSettings().setValue("mainWindow/queueHidden", false);
+	}
+
+	const bool shouldShow = hasJobs && !m_jobPanelPinned;
+
+	if (m_actToggleQueue) {
+		QSignalBlocker blocker(m_actToggleQueue);
+		m_actToggleQueue->setChecked(shouldShow);
+	}
+	if (m_menuQueueBtn)
+		static_cast<McQueueToggle*>(m_menuQueueBtn)->setChecked(shouldShow);
+
+	if (shouldShow) {
+		const int total = m_splitter->height();
+		if (total <= 0) return;   // window not yet laid out — showEvent will call us again
+
+		const bool wasHidden = !m_jobPanel->isVisible();
+		m_jobPanel->setVisible(true);
+		if (wasHidden) {
+			if (m_splitterRestored) {
+				// restoreState already captured the correct sizes — don't overwrite.
+				m_splitterRestored = false;
+			} else {
+				const int bottom = m_savedJobPanelHeight > 0
+				                 ? m_savedJobPanelHeight
+				                 : qMax(160, total / 4);
+				m_splitter->setSizes({ total - bottom, bottom });
+			}
+		}
+	} else if (!shouldShow && m_jobPanel->isVisible()) {
+		const QList<int> sz = m_splitter->sizes();
+		if (sz.size() > 1 && sz[1] > 0)
+			m_savedJobPanelHeight = sz[1];
+		m_jobPanel->setVisible(false);
 	}
 }
 

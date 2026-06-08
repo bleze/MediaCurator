@@ -1,6 +1,7 @@
 ﻿#include "scanner/ScanWorker.h"
 #include "core/DatabaseManager.h"
 #include "engine/PosterManager.h"
+#include "scanner/NfoParser.h"
 
 #include <QDateTime>
 #include <QDirIterator>
@@ -25,6 +26,7 @@ const QStringList& ScanWorker::videoExtensions()
 		"mov", "qt",               // QuickTime
 		"webm",                     // WebM
 		"divx",                     // DivX
+		"iso",                      // Blu-ray / DVD disc image
 	};
 	return exts;
 }
@@ -104,6 +106,14 @@ void ScanWorker::run()
 
 		if (existed) ++updated;
 		else         ++added;
+
+		// Store the IMDb ID from the .nfo sidecar immediately — visible in the UI
+		// without waiting for the poster worker to process the file.
+		const QString imdbId = NfoParser::readImdbId(path);
+		if (!imdbId.isEmpty()) {
+			db.updateImdbId(*fileId, imdbId);
+			emit imdbIdFound(*fileId, imdbId);
+		}
 
 		// Emit the data we already have in memory — no DB round-trip needed on the UI side.
 		FileRecord fileWithId = result.file;

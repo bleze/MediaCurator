@@ -42,6 +42,7 @@ public slots:
 signals:
 	void progress(int current, int total, const QString& currentFile);
 	void fileProcessed(Mc::FileRecord file, QList<Mc::StreamRecord> streams);
+	void imdbIdFound(qint64 fileId, QString imdbId);
 	void fileRemoved(qint64 fileId);
 	void finished(int scanned, int added, int updated, int failed, int skipped, int removed);
 	void error(const QString& message);

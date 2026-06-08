@@ -1,5 +1,6 @@
 ﻿#include "ui/McJobPanel.h"
 #include "ui/McBulkSummaryDialog.h"
+#include "ui/McFilterPanel.h"
 #include "ui/McJobCardDelegate.h"
 #include "ui/McJobListModel.h"
 #include "ui/SvgIcon.h"
@@ -9,7 +10,10 @@
 #include "core/ExternalTools.h"
 
 #include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
+#include <QFrame>
+#include <QToolButton>
 #include <QSettings>
 #include <QTimer>
 #include <QStyleOptionComboBox>
@@ -33,6 +37,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSet>
+#include <QStandardItemModel>
 #include <QStyledItemDelegate>
 #include <QTextOption>
 #include <QToolBar>
@@ -42,7 +47,7 @@
 // ── Status pill helpers ───────────────────────────────────────────────────────
 namespace {
 
-constexpr int kPillH = 17;
+constexpr int kPillH = 18;
 constexpr int kPadH  = 6;
 
 static QColor pillColorForStatus(const QString& status)
@@ -83,6 +88,17 @@ public:
 	void paint(QPainter* p, const QStyleOptionViewItem& opt,
 	           const QModelIndex& idx) const override
 	{
+		// Row 0 is always the header label regardless of model enabled state.
+		if (idx.row() == 0) {
+			p->fillRect(opt.rect, opt.palette.base().color());
+			p->setFont(opt.font);
+			p->setPen(opt.palette.placeholderText().color());
+			p->drawText(opt.rect.adjusted(8, 0, -8, 0), Qt::AlignLeft | Qt::AlignVCenter,
+			            idx.data(Qt::DisplayRole).toString());
+			p->setPen(QPen(opt.palette.mid().color(), 1));
+			p->drawLine(opt.rect.bottomLeft(), opt.rect.bottomRight());
+			return;
+		}
 		const QString status = idx.data(Qt::UserRole).toString();
 		const QString text   = idx.data(Qt::DisplayRole).toString();
 
@@ -122,16 +138,20 @@ protected:
 		const QRect cr = style()->subControlRect(
 		    QStyle::CC_ComboBox, &opt, QStyle::SC_ComboBoxEditField, this);
 
+		const QModelIndex cur = model()->index(currentIndex(), 0);
+		if (!(model()->flags(cur) & Qt::ItemIsEnabled)) return;
 		const QString status  = currentData().toString();
 		const QString display = QComboBox::currentText();
 		if (display.isEmpty()) return;
 
-		// Center the pill horizontally in the content rect
 		QFont font = this->font();
 		font.setPointSizeF(font.pointSizeF() * 0.82);
 		const QFontMetrics fm(font);
-		const int pillW = fm.horizontalAdvance(display) + 2 * kPadH;
-		const int leftPad = (cr.width() - pillW) / 2;
+		const int pillW   = fm.horizontalAdvance(display) + 2 * kPadH;
+		// Match the open dropdown: items draw at opt.rect.left()+8 where the popup
+		// list has a 1px frame, so effective offset = popup_left+1+8. Compensate by
+		// using kPadH-1 (5) instead of kPadH (6) to land on the same pixel.
+		const int leftPad = kPadH - 1;
 
 		sp.setRenderHint(QPainter::Antialiasing);
 		sp.setPen(Qt::NoPen);
@@ -146,6 +166,32 @@ protected:
 		    Qt::AlignCenter, display);
 	}
 };
+
+static QFrame* vSep(QWidget* parent)
+{
+	auto* f = new QFrame(parent);
+	f->setFrameShape(QFrame::VLine);
+	f->setFrameShadow(QFrame::Sunken);
+	return f;
+}
+
+static QToolButton* makePill(const QString& text, const QColor& color, QWidget* parent)
+{
+	auto* btn = new QToolButton(parent);
+	btn->setText(text);
+	btn->setCheckable(true);
+	btn->setAutoRaise(true);
+	const QString full  = color.name();
+	const QString muted = QString("rgba(%1,%2,%3,80)")
+	    .arg(color.red()).arg(color.green()).arg(color.blue());
+	btn->setStyleSheet(QString(
+		"QToolButton { border: none; border-radius: 4px;"
+		"              padding: 2px 7px; background: %2;"
+		"              color: white; font-weight: 600; }"
+		"QToolButton:checked { background: %1; }"
+	).arg(full, muted));
+	return btn;
+}
 
 } // anonymous namespace
 
@@ -231,10 +277,14 @@ void McJobPanel::setupUi()
 	m_btnSummary->setToolTip(tr("Show aggregate statistics for all proposed jobs"));
 
 	toolbar->addWidget(m_btnQueueSelected);
-	toolbar->addWidget(m_btnUnqueue);
 	toolbar->addWidget(m_btnQueueAll);
+	toolbar->addSeparator();
+	toolbar->addWidget(m_btnUnqueue);
+	toolbar->addSeparator();
 	toolbar->addWidget(m_btnRemove);
+	toolbar->addSeparator();
 	toolbar->addWidget(m_btnPreviewCmd);
+	toolbar->addSeparator();
 	toolbar->addWidget(m_btnSummary);
 
 	// Spacer pushes playback controls to the right side of the toolbar
@@ -254,16 +304,22 @@ void McJobPanel::setupUi()
 
 	// ── Filter bar ────────────────────────────────────────────────────────────
 	m_filterEdit = new QLineEdit(this);
-	m_filterEdit->setPlaceholderText(tr("Filter by filename…"));
+	m_filterEdit->setPlaceholderText(tr("Search title, folder, codec…"));
 	m_filterEdit->setClearButtonEnabled(true);
 
 	m_statusFilter = new McStatusComboBox(this);
-	m_statusFilter->addItem(tr("All"),      QStringLiteral(""));
-	m_statusFilter->addItem(tr("Proposed"), QStringLiteral("proposed"));
-	m_statusFilter->addItem(tr("Queued"),   QStringLiteral("queued"));
-	m_statusFilter->addItem(tr("Running"),  QStringLiteral("running"));
-	m_statusFilter->addItem(tr("Done"),     QStringLiteral("done"));
-	m_statusFilter->addItem(tr("Failed"),   QStringLiteral("failed"));
+	// Row 0 is always the header; add it first so updateStatusCombo() offsets remain stable.
+	m_statusFilter->addItem(tr("Status"),   QVariant());               // 0: header
+	m_statusFilter->addItem(tr("All"),      QStringLiteral(""));       // 1
+	m_statusFilter->addItem(tr("Proposed"), QStringLiteral("proposed")); // 2
+	m_statusFilter->addItem(tr("Queued"),   QStringLiteral("queued"));   // 3
+	m_statusFilter->addItem(tr("Running"),  QStringLiteral("running"));  // 4
+	m_statusFilter->addItem(tr("Done"),     QStringLiteral("done"));     // 5
+	m_statusFilter->addItem(tr("Failed"),   QStringLiteral("failed"));   // 6
+	if (auto* m = qobject_cast<QStandardItemModel*>(m_statusFilter->model()))
+		if (auto* item = m->item(0))
+			item->setEnabled(false);
+	m_statusFilter->setCurrentIndex(1);   // "All"
 	m_statusFilter->setItemDelegate(new McStatusComboDelegate(m_statusFilter));
 
 	m_chkAutoTrack = new QCheckBox(tr("Track running"), this);
@@ -275,12 +331,41 @@ void McJobPanel::setupUi()
 		QSettings().setValue("jobPanel/followRunning", on);
 	});
 
+	// ── Quick-filter pills (same codec/quality set as the library panel) ──────
+	using QF = McFilterPanel;
+	const QColor videoColor { 0xa0, 0x50, 0x00 };
+	const QColor hdrColor   { 0x70, 0x30, 0xa0 };
+	const QColor audioColor { 0x10, 0x6a, 0xc0 };
+
 	auto* filterBar    = new QWidget(this);
 	auto* filterLayout = new QHBoxLayout(filterBar);
 	filterLayout->setContentsMargins(4, 2, 4, 2);
-	filterLayout->setSpacing(6);
+	filterLayout->setSpacing(4);
 	filterLayout->addWidget(m_filterEdit, 1);
 	filterLayout->addWidget(m_statusFilter);
+
+	const auto addPill = [&](const char* label, const QColor& color, const char* tip, quint32 flag) {
+		auto* btn = makePill(QLatin1String(label), color, filterBar);
+		btn->setToolTip(QLatin1String(tip));
+		connect(btn, &QToolButton::toggled, this, [this, flag](bool on) {
+			m_qfFlags = on ? (m_qfFlags | flag) : (m_qfFlags & ~flag);
+			m_model->setQuickFilters(m_qfFlags);
+		});
+		filterLayout->addWidget(btn);
+	};
+
+	filterLayout->addWidget(vSep(filterBar));
+	addPill("4K",     videoColor, "4K files only (width \xe2\x89\xa5 3840)", QF::QF_4K);
+	filterLayout->addWidget(vSep(filterBar));
+	addPill("DV",     hdrColor,   "Dolby Vision only",                       QF::QF_DV);
+	addPill("HDR",    hdrColor,   "HDR10 / HLG / HDR10+ only",              QF::QF_HDR);
+	filterLayout->addWidget(vSep(filterBar));
+	addPill("Atmos",  audioColor, "Dolby Atmos only",                        QF::QF_Atmos);
+	addPill("TrueHD", audioColor, "Dolby TrueHD only",                      QF::QF_TrueHD);
+	addPill("DTS-HD", audioColor, "DTS-HD MA only",                         QF::QF_DtsHD);
+	addPill("DTS:X",  audioColor, "DTS:X only",                              QF::QF_DtsX);
+
+	filterLayout->addWidget(vSep(filterBar));
 	filterLayout->addWidget(m_chkAutoTrack);
 	root->addWidget(filterBar);
 
@@ -337,6 +422,11 @@ void McJobPanel::setupUi()
 		jobDelegate->handlePress(pos, m_listView->visualRect(idx), m_listView->font(), idx);
 	});
 
+	// Stale size cache: the cache is keyed by row number. After a model reset the
+	// row-to-data mapping changes, so old entries would return wrong heights.
+	connect(m_model, &QAbstractListModel::modelReset,
+	        jobDelegate, &McCardDelegate::clearSizeCache);
+
 	connect(m_model, &QAbstractListModel::modelReset, this, [this]() {
 		// selectionModel()->reset() is called on model reset but does NOT emit
 		// selectionChanged, so we must disable selection-dependent buttons manually.
@@ -386,8 +476,28 @@ void McJobPanel::setupUi()
 	});
 	connect(m_statusFilter, &QComboBox::currentIndexChanged,
 	        this, [this](int i) {
-		m_model->setFilterStatus(m_statusFilter->itemData(i).toString());
+		if (i <= 0) return;   // skip header row
+		const QString v = m_statusFilter->itemData(i).toString();
+		QSettings().setValue("jobPanel/statusFilter", v);
+		m_model->setFilterStatus(v);
 	});
+
+	// Restore the previously saved status filter (block signals so the save slot
+	// does not fire again, then apply the filter to the model manually).
+	{
+		const QString saved = QSettings().value("jobPanel/statusFilter").toString();
+		if (!saved.isEmpty()) {
+			m_statusFilter->blockSignals(true);
+			for (int i = 0; i < m_statusFilter->count(); ++i) {
+				if (m_statusFilter->itemData(i).toString() == saved) {
+					m_statusFilter->setCurrentIndex(i);
+					break;
+				}
+			}
+			m_statusFilter->blockSignals(false);
+			m_model->setFilterStatus(m_statusFilter->currentData().toString());
+		}
+	}
 
 	// Double-click: poster column → IMDb dialog; elsewhere → preview
 	connect(m_listView, &QListView::doubleClicked, this, [this](const QModelIndex& idx) {
@@ -447,10 +557,31 @@ void McJobPanel::setupUi()
 			emit refreshPosterRequested(fileId);
 		});
 
-		auto* imdbAct = menu.addAction(svgIcon(":/icons/link.svg"),
-		                               tr("Edit &IMDb Link…"));
-		connect(imdbAct, &QAction::triggered, this, [this, fileId] {
-			emit editImdbLinkRequested(fileId);
+		// Collect all selected file IDs so the context menu can trigger a batch flow.
+		QList<qint64> selectedFileIds;
+		{
+			QSet<int> seen;
+			for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes()) {
+				if (seen.contains(si.row())) continue;
+				seen.insert(si.row());
+				const qint64 fid = si.data(McJobListModel::FileIdRole).toLongLong();
+				if (fid > 0) selectedFileIds << fid;
+			}
+			// Ensure the right-clicked file is in the list even if it wasn't in the selection.
+			if (!selectedFileIds.contains(fileId)) {
+				selectedFileIds.prepend(fileId);
+			}
+		}
+
+		const QString imdbLabel = selectedFileIds.size() > 1
+		    ? tr("Edit &IMDb Links (%1 files)…").arg(selectedFileIds.size())
+		    : tr("Edit &IMDb Link…");
+		auto* imdbAct = menu.addAction(svgIcon(":/icons/link.svg"), imdbLabel);
+		connect(imdbAct, &QAction::triggered, this, [this, fileId, selectedFileIds] {
+			if (selectedFileIds.size() > 1)
+				emit editImdbLinksRequested(selectedFileIds);
+			else
+				emit editImdbLinkRequested(fileId);
 		});
 
 		menu.addSeparator();
@@ -463,14 +594,6 @@ void McJobPanel::setupUi()
 				QDesktopServices::openUrl(
 					QUrl::fromLocalFile(QFileInfo(fileOpt->path).absolutePath()));
 		});
-
-		if (!filePath.isEmpty()) {
-			auto* playAct = menu.addAction(svgIcon(":/icons/play_arrow.svg"),
-			                               tr("P&lay in VLC"));
-			connect(playAct, &QAction::triggered, this, [this, filePath] {
-				emit playRequested(filePath);
-			});
-		}
 
 		menu.exec(m_listView->viewport()->mapToGlobal(pos));
 	});
@@ -553,6 +676,27 @@ void McJobPanel::refresh()
 {
 	m_model->reload();
 	updateFooter();
+	emit jobsChanged(m_model->rowCount());
+}
+
+void McJobPanel::scrollToFileJob(qint64 fileId)
+{
+	// Switch to the "Proposed" filter so the new job is visible.
+	for (int i = 0; i < m_statusFilter->count(); ++i) {
+		if (m_statusFilter->itemData(i).toString() == QLatin1String("proposed")) {
+			m_statusFilter->setCurrentIndex(i);
+			break;
+		}
+	}
+
+	for (int row = 0; row < m_model->rowCount(); ++row) {
+		const QModelIndex idx = m_model->index(row);
+		if (idx.data(McJobListModel::FileIdRole).toLongLong() == fileId) {
+			m_listView->setCurrentIndex(idx);
+			m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+			break;
+		}
+	}
 }
 
 void McJobPanel::onJobStatusChanged(qint64 jobId, const QString& status)
@@ -767,7 +911,7 @@ void McJobPanel::updateStatusCombo()
 	const int total = m_model->totalCount();
 	const auto counts = m_model->countsByStatus();
 
-	// Item 0 is "All" — always the total
+	// Item 1 is "All" — always the total (item 0 is the "Status" header label)
 	const QString allLabel = total > 0
 	    ? tr("All (%1)").arg(total)
 	    : tr("All");
@@ -777,9 +921,9 @@ void McJobPanel::updateStatusCombo()
 
 	m_statusFilter->blockSignals(true);
 
-	m_statusFilter->setItemText(0, allLabel);
+	m_statusFilter->setItemText(1, allLabel);
 
-	// Remaining items map to specific statuses
+	// Remaining items map to specific statuses (offset +2 to skip header + "All")
 	const QList<QPair<QString,QString>> items = {
 	    { QStringLiteral("proposed"), tr("Proposed") },
 	    { QStringLiteral("queued"),   tr("Queued")   },
@@ -792,7 +936,7 @@ void McJobPanel::updateStatusCombo()
 		const QString& label = items[i].second;
 		const int n = counts.value(key, 0);
 		const QString text = n > 0 ? QStringLiteral("%1 (%2)").arg(label).arg(n) : label;
-		m_statusFilter->setItemText(i + 1, text);
+		m_statusFilter->setItemText(i + 2, text);
 	}
 
 	// Restore selection
@@ -833,7 +977,7 @@ void McJobPanel::updateFooter()
 	if (queued > 0)     text += tr(" · %1 queued").arg(queued);
 	if (running > 0)    text += tr(" · %1 running").arg(running);
 	if (done    > 0)    text += tr(" · %1 done").arg(done);
-	if (savedTotal > 0) text += tr(" · %1 saved").arg(formatSaved(savedTotal));
+	if (savedTotal > 0) text += tr(" · %1 reclaimed").arg(formatSaved(savedTotal));
 
 	// ETA — computed from elapsed time and current progress % while a job is running
 	if (running > 0 && m_jobTimer.isValid() && m_model) {
