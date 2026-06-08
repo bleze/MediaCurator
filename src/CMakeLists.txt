@@ -116,7 +116,7 @@ set_target_properties(MediaCurator PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER     "com.lasernetgroup.mediacurator"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION       "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_COPYRIGHT          "© 2024 Jacob Pedersen / Lasernet Group"
+    MACOSX_BUNDLE_COPYRIGHT          "© 2024 Jacob Pedersen / Bleze Software"
 )
 
 target_include_directories(MediaCurator PRIVATE

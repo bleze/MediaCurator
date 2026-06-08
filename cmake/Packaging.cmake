@@ -1,7 +1,7 @@
 # cmake/Packaging.cmake — CPack installer configuration
 
 set(CPACK_PACKAGE_NAME            "MediaCurator")
-set(CPACK_PACKAGE_VENDOR          "Lasernet Group")
+set(CPACK_PACKAGE_VENDOR          "Bleze Software")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
     "Smart media library curator — scan, filter, and clean your video collection")
 set(CPACK_PACKAGE_VERSION         "${PROJECT_VERSION}")
@@ -23,7 +23,7 @@ if(WIN32)
     set(CPACK_NSIS_DISPLAY_NAME        "MediaCurator ${PROJECT_VERSION}")
     set(CPACK_NSIS_PACKAGE_NAME        "MediaCurator")
     set(CPACK_NSIS_URL_INFO_ABOUT      "https://github.com/bleze/MediaCurator")
-    set(CPACK_NSIS_CONTACT             "jacob.pedersen@lasernetgroup.com")
+    set(CPACK_NSIS_CONTACT             "mediacurator@bleze.dk")
     set(CPACK_NSIS_MODIFY_PATH         ON)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
@@ -43,7 +43,7 @@ else()
     set(CPACK_DEBIAN_PACKAGE_NAME        "mediacurator")
     set(CPACK_DEBIAN_PACKAGE_VERSION     "${PROJECT_VERSION}")
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
-    set(CPACK_DEBIAN_PACKAGE_MAINTAINER  "Jacob Pedersen <jacob.pedersen@lasernetgroup.com>")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER  "Jacob Pedersen <mediacurator@bleze.dk>")
     set(CPACK_DEBIAN_PACKAGE_DESCRIPTION
         "MediaCurator — smart video library curator\n"
         " Scans media files with ffprobe, stores metadata in SQLite, and uses\n"

@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
 	app.setPalette(pal);
 
 	app.setApplicationName("MediaCurator");
-	app.setApplicationVersion("0.1.0");
+	app.setApplicationVersion("0.9.0");
 	app.setOrganizationName("Bleze Software");
 	app.setOrganizationDomain("mediacurator.app");
 
