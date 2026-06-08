@@ -115,6 +115,14 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 		}
 	}
 
+	// ── Rating filter ─────────────────────────────────────────────────────────
+	const bool ratingFilterActive = (m_ratingMin > 0.0 || m_ratingMax < 10.0);
+	if (ratingFilterActive) {
+		const double r = m_ratings.value(e.file.id, -1.0);
+		if (r < 0.0) return false;          // no rating — exclude when filter active
+		if (r < m_ratingMin || r > m_ratingMax) return false;
+	}
+
 	return true;
 }
 
@@ -128,10 +136,12 @@ void McFileListModel::applyFilter()
 	std::sort(m_entries.begin(), m_entries.end(),
 	          [this](const FileEntry& a, const FileEntry& b) {
 		switch (m_sortOrder) {
-		case SortByNewest:  return a.file.createdMs > b.file.createdMs;
-		case SortByOldest:  return a.file.createdMs < b.file.createdMs;
-		case SortByLargest: return a.file.sizeBytes > b.file.sizeBytes;
-		default:            // SortByName
+		case SortByNewest:     return a.file.createdMs   > b.file.createdMs;
+		case SortByOldest:     return a.file.createdMs   < b.file.createdMs;
+		case SortByLargest:    return a.file.sizeBytes   > b.file.sizeBytes;
+		case SortByRatingHigh: return m_ratings.value(a.file.id, 0.0) > m_ratings.value(b.file.id, 0.0);
+		case SortByRatingLow:  return m_ratings.value(a.file.id, 0.0) < m_ratings.value(b.file.id, 0.0);
+		default:               // SortByName
 			return a.file.filename.compare(b.file.filename, Qt::CaseInsensitive) < 0;
 		}
 	});
@@ -155,20 +165,33 @@ void McFileListModel::reload()
 	for (const FileRecord& f : files)
 		m_allEntries.append({ f, streams.value(f.id) });
 
-	// Pre-load poster paths and IMDb IDs already stored in the DB.
+	// Pre-load poster paths, IMDb IDs, and ratings already stored in the DB.
 	m_posterPaths = db.allDonePosterPaths();
 	m_imdbIds     = db.allKnownImdbIds();
+	m_ratings     = db.allRatings();
 
+	recomputeFolderCounts();
 	applyFilter();
+}
+
+void McFileListModel::recomputeFolderCounts()
+{
+	m_folderCounts.clear();
+	for (const FileEntry& e : m_allEntries) {
+		const QString dir = QFileInfo(e.file.path).absolutePath();
+		m_folderCounts[dir]++;
+	}
 }
 
 void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
                                const QHash<qint64, QString>& imdbIds,
-                               const QSet<qint64>& filesWithJobs)
+                               const QSet<qint64>& filesWithJobs,
+                               const QHash<qint64, double>& ratings)
 {
 	m_posterPaths   = posterPaths;
 	m_imdbIds       = imdbIds;
 	m_filesWithJobs = filesWithJobs;
+	if (!ratings.isEmpty()) m_ratings = ratings;
 }
 
 void McFileListModel::refreshJobFilter()
@@ -312,6 +335,30 @@ void McFileListModel::setSortOrder(int order)
 	applyFilter();
 }
 
+void McFileListModel::setRatingFilter(double minRating, double maxRating)
+{
+	if (qFuzzyCompare(m_ratingMin, minRating) && qFuzzyCompare(m_ratingMax, maxRating)) return;
+	m_ratingMin = minRating;
+	m_ratingMax = maxRating;
+	applyFilter();
+}
+
+void McFileListModel::setRatingForFile(qint64 fileId, double rating)
+{
+	if (rating > 0.0) m_ratings[fileId] = rating;
+	else              m_ratings.remove(fileId);
+
+	for (int row = 0; row < m_entries.size(); ++row) {
+		if (m_entries.at(row).file.id == fileId) {
+			const QModelIndex idx = index(row);
+			emit dataChanged(idx, idx, { RatingRole });
+			break;
+		}
+	}
+	// If the rating filter is active this file may now enter or leave the visible set
+	if (m_ratingMin > 0.0 || m_ratingMax < 10.0) applyFilter();
+}
+
 // ── QAbstractListModel ────────────────────────────────────────────────────────
 
 int McFileListModel::rowCount(const QModelIndex& parent) const
@@ -334,6 +381,13 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case PosterRole:        return m_posterPaths.value(e.file.id);
 	case PosterVersionRole: return m_posterVersions.value(e.file.id, 0);
 	case ImdbRole:          return m_imdbIds.value(e.file.id);
+	case RatingRole:        return m_ratings.value(e.file.id, 0.0);
+	case DisplayTitleRole:  return e.file.displayTitle;
+	case ContainerTitleRole:return e.file.containerTitle;
+	case FolderCountRole: {
+		const QString dir = QFileInfo(e.file.path).absolutePath();
+		return m_folderCounts.value(dir, 1);
+	}
 	case OverridesRole:   return QVariant::fromValue(m_forcedRemovals.value(e.file.id));
 	default:              return {};
 	}

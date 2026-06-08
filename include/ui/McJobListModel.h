@@ -32,6 +32,8 @@ public:
 		FilePathRole   = Qt::UserRole + 12,  // QString absolute file path
 		ImdbIdRole     = Qt::UserRole + 13,  // QString IMDb tt-id, empty if not linked
 		DurationRole   = Qt::UserRole + 14,  // double duration in seconds
+		RatingRole            = Qt::UserRole + 15,  // double TMDB vote_average, 0 if unknown
+		OriginalLanguageRole  = Qt::UserRole + 16,  // QString ISO 639-2 original audio language
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -70,12 +72,15 @@ public slots:
 	void setFilterText(const QString& text);
 	void setFilterStatus(const QString& status);   // empty string = show all
 	void setQuickFilters(quint32 flags);           // McFilterPanel::QF_* bitmask
+	void setRatingFilter(double minRating, double maxRating);
+	void setRatingForFile(qint64 fileId, double rating);
 	void updateProgress(qint64 jobId, int percent);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void updateImdbId(qint64 fileId, const QString& imdbId);
 
 private:
 	void applyFilter();
+	bool statusMatchesFilter(const QString& status) const;
 	static QList<StreamRecord> streamsFromJson(const QString& json);
 	static QString rebuildCommandArgs(const QString& existingJson,
 	                                   const QList<StreamRecord>& all,
@@ -90,6 +95,8 @@ private:
 	QString                m_filterText;
 	QString                m_filterStatus;
 	quint32                m_quickFilters = 0;
+	double                 m_ratingMin    = 0.0;
+	double                 m_ratingMax    = 10.0;
 };
 
 } // namespace Mc

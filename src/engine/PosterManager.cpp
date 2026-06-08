@@ -105,17 +105,30 @@ private:
 		QString       imdbId    = findNfoImdbId(filePath);
 		const QString baseStem  = QFileInfo(filePath).completeBaseName();
 
-		// Skip files that are already done (e.g. enqueued again after a rescan).
 		const auto existing = DatabaseManager::instance().posterForFile(fileId);
-		if (existing && existing->status == "done"
-		    && !existing->imagePath.isEmpty()
-		    && QFile::exists(existing->imagePath))
-			return;
 
-		// Fall back to the DB-stored IMDb ID if the NFO file doesn't have one
-		// (e.g. when the user pasted an ID directly without a TMDB search result).
+		// Fall back to the DB-stored IMDb ID if the NFO file doesn't have one.
 		if (imdbId.isEmpty() && existing && !existing->imdbId.isEmpty())
 			imdbId = existing->imdbId;
+
+		// Skip files that are already fully done (poster + rating).
+		// If the poster is done but rating is missing and we have an imdbId,
+		// fall through to fetch the rating from TMDB.
+		if (existing && existing->status == "done"
+		    && !existing->imagePath.isEmpty()
+		    && QFile::exists(existing->imagePath)) {
+			if (existing->voteAverage > 0.0 || imdbId.isEmpty() || m_tmdbApiKey.isEmpty())
+				return;
+			// Rating-only fetch — poster already on disk.
+			const TmdbInfo info = fetchTmdbInfo(imdbId);
+			if (info.voteAverage > 0.0) {
+				PosterRecord pr = *existing;
+				pr.voteAverage = info.voteAverage;
+				pr.voteCount   = info.voteCount;
+				DatabaseManager::instance().upsertPosterRecord(pr);
+			}
+			return;
+		}
 
 		PosterRecord rec;
 		rec.fileId    = fileId;
@@ -133,6 +146,13 @@ private:
 			rec.source    = "tmdb";
 			rec.status    = "done";
 			rec.imagePath = cached;
+			// Try to fetch rating while we're here — no image download needed,
+			// just a lightweight /find API call.
+			if (!imdbId.isEmpty() && !m_tmdbApiKey.isEmpty()) {
+				const TmdbInfo info = fetchTmdbInfo(imdbId);
+				rec.voteAverage = info.voteAverage;
+				rec.voteCount   = info.voteCount;
+			}
 			DatabaseManager::instance().upsertPosterRecord(rec);
 			emit posterReady(fileId, cached);
 			return;
@@ -150,14 +170,16 @@ private:
 
 		QString imagePath;
 		if (!imdbId.isEmpty()) {
-			QString posterPath = fetchTmdbPosterPath(imdbId);
-			if (!posterPath.isEmpty()) {
+			const TmdbInfo info = fetchTmdbInfo(imdbId);
+			if (!info.posterPath.isEmpty()) {
 				const QString outPath = m_cacheDir + "/" + imdbId + ".jpg";
 				if (downloadImage(
-				        QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(posterPath),
+				        QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(info.posterPath),
 				        outPath))
 					imagePath = outPath;
 			}
+			rec.voteAverage = info.voteAverage;
+			rec.voteCount   = info.voteCount;
 		}
 
 		if (!imagePath.isEmpty()) {
@@ -191,7 +213,9 @@ private:
 
 	// ── TMDB lookup ───────────────────────────────────────────────────────────
 
-	QString fetchTmdbPosterPath(const QString& imdbId)
+	struct TmdbInfo { QString posterPath; double voteAverage = 0.0; int voteCount = 0; };
+
+	TmdbInfo fetchTmdbInfo(const QString& imdbId)
 	{
 		const QUrl url(QStringLiteral(
 		    "https://api.themoviedb.org/3/find/%1?external_source=imdb_id&api_key=%2")
@@ -202,7 +226,10 @@ private:
 
 		const QJsonArray results = QJsonDocument::fromJson(data)["movie_results"].toArray();
 		if (results.isEmpty()) return {};
-		return results.first().toObject()["poster_path"].toString();
+		const QJsonObject obj = results.first().toObject();
+		return { obj["poster_path"].toString(),
+		         obj["vote_average"].toDouble(),
+		         obj["vote_count"].toInt() };
 	}
 
 	// ── HTTP helpers ──────────────────────────────────────────────────────────
@@ -322,7 +349,8 @@ void PosterManager::enqueue(qint64 fileId)
 }
 
 void PosterManager::refresh(qint64 fileId, const QString& posterPath,
-                             const QByteArray& imageData, const QString& imdbIdHint)
+                             const QByteArray& imageData, const QString& imdbIdHint,
+                             double voteAverage, int voteCount)
 {
 	const auto rec = DatabaseManager::instance().posterForFile(fileId);
 	const QString imdbId = !imdbIdHint.isEmpty() ? imdbIdHint
@@ -353,12 +381,14 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 		f.write(bytes);
 		f.close();
 		PosterRecord pr;
-		pr.fileId    = fileId;
-		pr.source    = "tmdb";
-		pr.status    = "done";
-		pr.imagePath = outPath;
-		pr.imdbId    = imdbId;
-		pr.fetchedAt = QDateTime::currentMSecsSinceEpoch();
+		pr.fileId       = fileId;
+		pr.source       = "tmdb";
+		pr.status       = "done";
+		pr.imagePath    = outPath;
+		pr.imdbId       = imdbId;
+		pr.fetchedAt    = QDateTime::currentMSecsSinceEpoch();
+		pr.voteAverage  = voteAverage;
+		pr.voteCount    = voteCount;
 		DatabaseManager::instance().upsertPosterRecord(pr);
 		emit posterReady(fileId, outPath);
 		return true;
@@ -380,7 +410,7 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 		                 QNetworkRequest::NoLessSafeRedirectPolicy);
 		QNetworkReply* reply = m_nam->get(req);
 		connect(reply, &QNetworkReply::finished, this,
-		        [this, reply, fileId, imdbId, cacheDir]() {
+		        [this, reply, fileId, imdbId, cacheDir, voteAverage, voteCount]() {
 			if (reply->error() == QNetworkReply::NoError) {
 				const QByteArray bytes = reply->readAll();
 				if (!bytes.isEmpty()) {
@@ -392,12 +422,14 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 						f.write(bytes);
 						f.close();
 						PosterRecord pr;
-						pr.fileId    = fileId;
-						pr.source    = "tmdb";
-						pr.status    = "done";
-						pr.imagePath = outPath;
-						pr.imdbId    = imdbId;
-						pr.fetchedAt = QDateTime::currentMSecsSinceEpoch();
+						pr.fileId      = fileId;
+						pr.source      = "tmdb";
+						pr.status      = "done";
+						pr.imagePath   = outPath;
+						pr.imdbId      = imdbId;
+						pr.fetchedAt   = QDateTime::currentMSecsSinceEpoch();
+						pr.voteAverage = voteAverage;
+						pr.voteCount   = voteCount;
 						DatabaseManager::instance().upsertPosterRecord(pr);
 						emit posterReady(fileId, outPath);
 					}

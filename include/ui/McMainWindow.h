@@ -104,6 +104,7 @@ private:
 	bool             m_firstShowDone     = false;
 	bool             m_splitterRestored  = false;
 	QString          m_currentJobFilename;
+	int              m_queuedAtStart   = 0;
 #ifdef Q_OS_WIN
 	ITaskbarList3*   m_taskbar = nullptr;
 #endif

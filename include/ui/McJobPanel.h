@@ -33,6 +33,7 @@ public:
 public slots:
 	void onJobStatusChanged(qint64 jobId, const QString& status);
 	void repaintCards();
+	void setRatingForFile(qint64 fileId, double rating);
 
 signals:
 	void jobsChanged(int count);   // emitted after any load/remove; count = total visible rows
@@ -75,6 +76,8 @@ private:
 	QLineEdit*      m_filterEdit          = nullptr;
 	QComboBox*      m_statusFilter        = nullptr;
 	QCheckBox*      m_chkAutoTrack        = nullptr;
+	QWidget*        m_ratingSlider        = nullptr;
+	QLabel*         m_ratingLabel         = nullptr;
 	quint32         m_qfFlags             = 0;      // active quick-filter bitmask
 	JobQueue*       m_queue               = nullptr;
 	QElapsedTimer   m_jobTimer;

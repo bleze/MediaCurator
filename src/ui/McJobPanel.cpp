@@ -1,8 +1,9 @@
-﻿#include "ui/McJobPanel.h"
+#include "ui/McJobPanel.h"
 #include "ui/McBulkSummaryDialog.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McJobCardDelegate.h"
 #include "ui/McJobListModel.h"
+#include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
 #include "engine/JobQueue.h"
 #include "engine/PosterManager.h"
@@ -369,6 +370,40 @@ void McJobPanel::setupUi()
 	addPill("DTS:X",  audioColor, "DTS:X only",                              QF::QF_DtsX);
 
 	filterLayout->addWidget(vSep(filterBar));
+	m_ratingLabel = new QLabel(tr("Rating: All"), filterBar);
+	m_ratingLabel->setMinimumWidth(82);
+	filterLayout->addWidget(m_ratingLabel);
+	auto* rSlider = new RangeSlider(Qt::Horizontal, RangeSlider::Option::DoubleHandles, filterBar);
+	m_ratingSlider = rSlider;
+	rSlider->SetRange(0, 100);
+	rSlider->SetLowerValue(0);
+	rSlider->SetUpperValue(100);
+	rSlider->setFixedWidth(110);
+	connect(rSlider, &RangeSlider::lowerValueChanged, this, [this]() {
+		auto* s = qobject_cast<RangeSlider*>(m_ratingSlider);
+		if (!s) return;
+		const double lo = s->GetLowerValue() / 10.0;
+		const double hi = s->GetUpperValue() / 10.0;
+		if (lo <= 0.0 && hi >= 10.0)  m_ratingLabel->setText(tr("Rating: All"));
+		else if (lo <= 0.0)           m_ratingLabel->setText(tr("Rating: \xe2\x89\xa4%1").arg(hi, 0, 'f', 1));
+		else if (hi >= 10.0)          m_ratingLabel->setText(tr("Rating: \xe2\x89\xa5%1").arg(lo, 0, 'f', 1));
+		else                          m_ratingLabel->setText(tr("Rating: %1\xe2\x80\x93%2").arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1));
+		m_model->setRatingFilter(lo, hi);
+	});
+	connect(rSlider, &RangeSlider::upperValueChanged, this, [this]() {
+		auto* s = qobject_cast<RangeSlider*>(m_ratingSlider);
+		if (!s) return;
+		const double lo = s->GetLowerValue() / 10.0;
+		const double hi = s->GetUpperValue() / 10.0;
+		if (lo <= 0.0 && hi >= 10.0)  m_ratingLabel->setText(tr("Rating: All"));
+		else if (lo <= 0.0)           m_ratingLabel->setText(tr("Rating: \xe2\x89\xa4%1").arg(hi, 0, 'f', 1));
+		else if (hi >= 10.0)          m_ratingLabel->setText(tr("Rating: \xe2\x89\xa5%1").arg(lo, 0, 'f', 1));
+		else                          m_ratingLabel->setText(tr("Rating: %1\xe2\x80\x93%2").arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1));
+		m_model->setRatingFilter(lo, hi);
+	});
+	filterLayout->addWidget(rSlider);
+
+	filterLayout->addWidget(vSep(filterBar));
 	filterLayout->addWidget(m_chkAutoTrack);
 	root->addWidget(filterBar);
 
@@ -526,21 +561,50 @@ void McJobPanel::setupUi()
 
 		QMenu menu(this);
 
+		// Collect all selected job IDs grouped by status so batch actions cover the
+		// full selection rather than only the right-clicked item.
+		QList<qint64> selectedProposedJobIds;
+		QList<qint64> selectedQueuedJobIds;
+		{
+			QSet<int> seen;
+			for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes()) {
+				if (seen.contains(si.row())) continue;
+				seen.insert(si.row());
+				const qint64  jid = si.data(McJobListModel::JobIdRole).toLongLong();
+				const QString st  = si.data(McJobListModel::StatusRole).toString();
+				if (jid <= 0) continue;
+				if (st == QLatin1String("proposed")) selectedProposedJobIds << jid;
+				else if (st == QLatin1String("queued")) selectedQueuedJobIds << jid;
+			}
+			// Ensure the right-clicked item is included even if outside the selection.
+			if (status == QLatin1String("proposed") && !selectedProposedJobIds.contains(jobId))
+				selectedProposedJobIds.prepend(jobId);
+			else if (status == QLatin1String("queued") && !selectedQueuedJobIds.contains(jobId))
+				selectedQueuedJobIds.prepend(jobId);
+		}
+
 		if (status == QLatin1String("proposed")) {
-			auto* queueAct = menu.addAction(svgIcon(":/icons/add_to_queue.svg"),
-			                                tr("&Queue File"));
-			connect(queueAct, &QAction::triggered, this, [this, jobId] {
-				DatabaseManager::instance().promoteJobsToQueued({ jobId });
-				m_model->updateJob(jobId, "queued");
+			const QString queueLabel = selectedProposedJobIds.size() > 1
+			    ? tr("&Queue %1 Files").arg(selectedProposedJobIds.size())
+			    : tr("&Queue File");
+			auto* queueAct = menu.addAction(svgIcon(":/icons/add_to_queue.svg"), queueLabel);
+			connect(queueAct, &QAction::triggered, this, [this, selectedProposedJobIds] {
+				DatabaseManager::instance().promoteJobsToQueued(selectedProposedJobIds);
+				for (qint64 jid : selectedProposedJobIds)
+					m_model->updateJob(jid, "queued");
 				updateFooter();
 			});
 			menu.addSeparator();
 		} else if (status == QLatin1String("queued")) {
-			auto* unqueueAct = menu.addAction(svgIcon(":/icons/undo.svg"),
-			                                  tr("&Unqueue File"));
-			connect(unqueueAct, &QAction::triggered, this, [this, jobId] {
-				DatabaseManager::instance().updateJobStatus(jobId, "proposed");
-				m_model->updateJob(jobId, "proposed");
+			const QString unqueueLabel = selectedQueuedJobIds.size() > 1
+			    ? tr("&Unqueue %1 Files").arg(selectedQueuedJobIds.size())
+			    : tr("&Unqueue File");
+			auto* unqueueAct = menu.addAction(svgIcon(":/icons/undo.svg"), unqueueLabel);
+			connect(unqueueAct, &QAction::triggered, this, [this, selectedQueuedJobIds] {
+				for (qint64 jid : selectedQueuedJobIds) {
+					DatabaseManager::instance().updateJobStatus(jid, "proposed");
+					m_model->updateJob(jid, "proposed");
+				}
 				updateFooter();
 			});
 			menu.addSeparator();
@@ -718,6 +782,11 @@ void McJobPanel::onJobStatusChanged(qint64 jobId, const QString& status)
 void McJobPanel::repaintCards()
 {
 	m_listView->viewport()->repaint();
+}
+
+void McJobPanel::setRatingForFile(qint64 fileId, double rating)
+{
+	m_model->setRatingForFile(fileId, rating);
 }
 
 void McJobPanel::onQueueSelected()

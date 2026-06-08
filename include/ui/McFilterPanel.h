@@ -2,6 +2,7 @@
 #include <QWidget>
 
 class QComboBox;
+class QLabel;
 class QLineEdit;
 
 namespace Mc {
@@ -23,10 +24,12 @@ public:
 	};
 
 	enum SortOrder {
-		SortByName    = 0,
-		SortByNewest  = 1,
-		SortByOldest  = 2,
-		SortByLargest = 3,
+		SortByName       = 0,
+		SortByNewest     = 1,
+		SortByOldest     = 2,
+		SortByLargest    = 3,
+		SortByRatingHigh = 4,
+		SortByRatingLow  = 5,
 	};
 
 signals:
@@ -34,14 +37,19 @@ signals:
 	void filterStatusChanged(int statusIndex);   // 0=all, 1=proposed, 2=missing-poster
 	void quickFiltersChanged(quint32 flags);
 	void sortOrderChanged(int order);
+	void ratingFilterChanged(double minRating, double maxRating);
 
 private:
 	void onPillToggled(quint32 flag, bool on);
 
-	quint32    m_activeFilters = QF_None;
-	QLineEdit* m_search        = nullptr;
-	QComboBox* m_statusCombo   = nullptr;
-	QComboBox* m_sortCombo     = nullptr;
+	void onRatingChanged();
+
+	quint32    m_activeFilters  = QF_None;
+	QLineEdit* m_search         = nullptr;
+	QComboBox* m_statusCombo    = nullptr;
+	QComboBox* m_sortCombo      = nullptr;
+	QWidget*   m_ratingSlider   = nullptr;  // RangeSlider (forward-declared as QWidget)
+	QLabel*    m_ratingLabel    = nullptr;
 };
 
 } // namespace Mc

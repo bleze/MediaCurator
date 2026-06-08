@@ -1,9 +1,11 @@
 #include "ui/McFilterPanel.h"
+#include "ui/RangeSlider.h"
 
 #include <QColor>
 #include <QComboBox>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
 #include <QStandardItemModel>
@@ -159,15 +161,32 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	};
 	addGroup(audioColor, audGroup);
 
+	// ── Rating slider ─────────────────────────────────────────────────────────
+	lay->addWidget(vSep(this));
+	m_ratingLabel = new QLabel(tr("Rating: All"), this);
+	m_ratingLabel->setMinimumWidth(82);
+	lay->addWidget(m_ratingLabel);
+	auto* slider = new RangeSlider(Qt::Horizontal, RangeSlider::Option::DoubleHandles, this);
+	m_ratingSlider = slider;
+	slider->SetRange(0, 100);
+	slider->SetLowerValue(0);
+	slider->SetUpperValue(100);
+	slider->setFixedWidth(110);
+	connect(slider, &RangeSlider::lowerValueChanged, this, &McFilterPanel::onRatingChanged);
+	connect(slider, &RangeSlider::upperValueChanged, this, &McFilterPanel::onRatingChanged);
+	lay->addWidget(slider);
+
 	// ── Sort combo ────────────────────────────────────────────────────────────
 	lay->addWidget(vSep(this));
 	m_sortCombo = new QComboBox(this);
 	m_sortCombo->setItemDelegate(new McFlatComboDelegate(m_sortCombo));
-	m_sortCombo->addItem(tr("Sorting"),      QVariant());    // 0: header
-	m_sortCombo->addItem(tr("Name"),         SortByName);   // 1
-	m_sortCombo->addItem(tr("Newest first"), SortByNewest); // 2
-	m_sortCombo->addItem(tr("Oldest first"), SortByOldest); // 3
-	m_sortCombo->addItem(tr("Largest"),      SortByLargest); // 4
+	m_sortCombo->addItem(tr("Sorting"),      QVariant());        // 0: header
+	m_sortCombo->addItem(tr("Name"),         SortByName);       // 1
+	m_sortCombo->addItem(tr("Newest first"), SortByNewest);     // 2
+	m_sortCombo->addItem(tr("Oldest first"), SortByOldest);     // 3
+	m_sortCombo->addItem(tr("Largest"),      SortByLargest);    // 4
+	m_sortCombo->addItem(tr("Rating ↓"),     SortByRatingHigh); // 5
+	m_sortCombo->addItem(tr("Rating ↑"),     SortByRatingLow);  // 6
 	if (auto* m = qobject_cast<QStandardItemModel*>(m_sortCombo->model()))
 		if (auto* item = m->item(0))
 			item->setEnabled(false);
@@ -185,6 +204,23 @@ void McFilterPanel::onPillToggled(quint32 flag, bool on)
 	if (on) m_activeFilters |= flag;
 	else    m_activeFilters &= ~flag;
 	emit quickFiltersChanged(m_activeFilters);
+}
+
+void McFilterPanel::onRatingChanged()
+{
+	auto* slider = qobject_cast<RangeSlider*>(m_ratingSlider);
+	if (!slider) return;
+	const double lo = slider->GetLowerValue() / 10.0;
+	const double hi = slider->GetUpperValue() / 10.0;
+	if (lo <= 0.0 && hi >= 10.0)
+		m_ratingLabel->setText(tr("Rating: All"));
+	else if (lo <= 0.0)
+		m_ratingLabel->setText(tr("Rating: ≤%1").arg(hi, 0, 'f', 1));
+	else if (hi >= 10.0)
+		m_ratingLabel->setText(tr("Rating: ≥%1").arg(lo, 0, 'f', 1));
+	else
+		m_ratingLabel->setText(tr("Rating: %1–%2").arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1));
+	emit ratingFilterChanged(lo, hi);
 }
 
 } // namespace Mc

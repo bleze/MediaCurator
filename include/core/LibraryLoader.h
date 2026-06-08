@@ -18,7 +18,8 @@ public slots:
 signals:
 	void metaReady(QHash<qint64, QString> posterPaths,
 	               QHash<qint64, QString> imdbIds,
-	               QSet<qint64> filesWithJobs);
+	               QSet<qint64> filesWithJobs,
+	               QHash<qint64, double> ratings);
 	void fileReady(Mc::FileRecord file, QList<Mc::StreamRecord> streams);
 	void finished(int totalFileCount);
 

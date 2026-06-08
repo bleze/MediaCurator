@@ -28,12 +28,14 @@ public:
 	                  QWidget* parent = nullptr);
 	~ImdbSearchDialog() override;
 
-	QString    selectedImdbId()          const;
-	QString    selectedTitle()           const;
-	int        selectedYear()            const;
-	QString    selectedPosterPath()      const;
-	QByteArray selectedImageData()       const;
+	QString    selectedImdbId()           const;
+	QString    selectedTitle()            const;
+	int        selectedYear()             const;
+	QString    selectedPosterPath()       const;
+	QByteArray selectedImageData()        const;
 	QString    selectedOriginalLanguage() const;  // ISO 639-1 from TMDB; empty if not available
+	double     selectedVoteAverage()      const;
+	int        selectedVoteCount()        const;
 
 	// When set, exec() runs the dialog invisibly (opacity 0) and auto-accepts if the
 	// search returns exactly one result. Falls back to opaque+visible if ambiguous.

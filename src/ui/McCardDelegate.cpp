@@ -122,21 +122,28 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.posterPath       = index.data(McFileListModel::PosterRole).toString();
 		d.posterVersion    = index.data(McFileListModel::PosterVersionRole).toInt();
 		d.imdbId           = index.data(McFileListModel::ImdbRole).toString();
-		d.allStreams        = index.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
-		d.removedIndices   = index.data(McFileListModel::OverridesRole).value<QSet<int>>();
+		d.rating           = index.data(McFileListModel::RatingRole).toDouble();
+		d.displayTitle      = index.data(McFileListModel::DisplayTitleRole).toString();
+		d.containerTitle    = index.data(McFileListModel::ContainerTitleRole).toString();
+		d.folderCount       = index.data(McFileListModel::FolderCountRole).toInt();
+		d.originalLanguage  = file.originalLanguage;
+		d.allStreams         = index.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
+		d.removedIndices    = index.data(McFileListModel::OverridesRole).value<QSet<int>>();
 	} else {
 		d.filename         = index.data(McJobListModel::FilenameRole).toString();
 		d.filePath         = index.data(McJobListModel::FilePathRole).toString();
 		d.sizeBytes        = index.data(McJobListModel::FileSizeRole).toLongLong();
 		d.posterPath       = index.data(McJobListModel::PosterRole).toString();
 		d.imdbId           = index.data(McJobListModel::ImdbIdRole).toString();
+		d.rating           = index.data(McJobListModel::RatingRole).toDouble();
 		d.status           = index.data(McJobListModel::StatusRole).toString();
 		d.savedBytes       = index.data(McJobListModel::SavedRole).toLongLong();
 		d.durationSec      = index.data(McJobListModel::DurationRole).toDouble();
 		d.progress         = index.data(McJobListModel::ProgressRole).toInt();
-		d.checked          = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
-		d.toggleable       = (d.status == QLatin1String("proposed"));
-		d.allStreams        = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
+		d.toggleable        = (d.status == QLatin1String("proposed"));
+		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
+		d.allStreams         = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 		const auto kept    = index.data(McJobListModel::KeptStreamsRole).value<QList<StreamRecord>>();
 		QSet<int> keptIdx;
 		for (const auto& s : kept) keptIdx.insert(s.streamIndex);
@@ -219,7 +226,7 @@ QString McCardDelegate::channelStr(int ch)
 	}
 }
 
-QString McCardDelegate::buildBadgeText(const StreamRecord& s)
+QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 {
 	QString t = codecLabel(s);
 	if (s.codecType == "video") {
@@ -232,12 +239,13 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s)
 		if (!ch.isEmpty()) t += "  " + ch;
 		if (!s.language.isEmpty() && s.language != "und")
 			t += "  " + s.language.toUpper();
-		if (s.isDefault) t += "  \xE2\x98\x85";
+		if (s.isDefault)  t += "  \xE2\x98\x85"; // ★
+		if (isOriginal)   t += "  \xE2\x97\x8E"; // ◎
 	} else if (s.codecType == "subtitle") {
 		if (!s.language.isEmpty() && s.language != "und")
 			t += "  " + s.language.toUpper();
 		if (s.isForced)  t += "  \xE2\x97\x8F";
-		if (s.isDefault) t += "  \xE2\x98\x85";
+		if (s.isDefault) t += "  \xE2\x98\x85"; // ★
 	}
 	return t;
 }
@@ -335,6 +343,7 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
                                   const QSet<int>& removedIndices,
                                   const QFont& badgeFont,
                                   const QColor& cardBg,
+                                  const QString& originalLang,
                                   int hoveredStreamIndex) const
 {
 	if (tracks.isEmpty()) return 0;
@@ -352,11 +361,14 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 
 	for (int i = 0; i < sorted.size(); ++i) {
 		const StreamRecord& s       = sorted.at(i);
-		const QString       text    = buildBadgeText(s);
+		const bool          isOrig  = s.codecType == QLatin1String("audio")
+		                           && !originalLang.isEmpty()
+		                           && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
+		const QString       text    = buildBadgeText(s, isOrig);
 		const int           bW      = fm.horizontalAdvance(text) + 2 * kBadgePad;
 		const bool          removed = removedIndices.contains(s.streamIndex);
 		const bool          isHov   = (s.streamIndex == hoveredStreamIndex);
-		const bool          hasTip  = !s.title.isEmpty() || s.isDefault || s.isHearingImpaired;
+		const bool          hasTip  = !s.title.isEmpty() || s.isDefault || s.isHearingImpaired || isOrig;
 		const bool          isLast  = (i == sorted.size() - 1);
 
 		if (x > rowRect.left() && x + bW > maxX) {
@@ -384,7 +396,8 @@ bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect
 int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
                                         const QList<StreamRecord>& tracks,
                                         const QFont& baseFont,
-                                        bool hasImdb) const
+                                        bool hasImdb,
+                                        const QString& originalLang) const
 {
 	const QRect content = itemRect.adjusted(kPosterW + kPosterGap, kPadV, -kPadH, -kPadBottom);
 	QFont badgeFont = baseFont;
@@ -394,8 +407,6 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 
 	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 
-	// Iterate in the same order as the paint function (video → audio → subtitle).
-	// Video is included only to advance y correctly; clicks on video badges return -1.
 	for (const QString& type : {QStringLiteral("video"), QStringLiteral("audio"), QStringLiteral("subtitle")}) {
 		QList<StreamRecord> group;
 		for (const auto& s : tracks)
@@ -407,7 +418,10 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 
 		int numRows = 1, rx = 0;
 		for (const auto& s : group) {
-			const int bW = fm.horizontalAdvance(buildBadgeText(s)) + 2 * kBadgePad;
+			const bool isOrig = s.codecType == QLatin1String("audio")
+			                 && !originalLang.isEmpty()
+			                 && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
+			const int bW = fm.horizontalAdvance(buildBadgeText(s, isOrig)) + 2 * kBadgePad;
 			if (rx > 0 && rx + bW > badgeAreaW) { numRows++; rx = 0; }
 			rx += bW + kBadgeGap;
 		}
@@ -418,7 +432,10 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 			if (typeRect.contains(pos)) {
 				int x = content.left(), row = 0;
 				for (const auto& s : group) {
-					const QString text = buildBadgeText(s);
+					const bool    isOrig = s.codecType == QLatin1String("audio")
+					                   && !originalLang.isEmpty()
+					                   && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
+					const QString text = buildBadgeText(s, isOrig);
 					const int     bW   = fm.horizontalAdvance(text) + 2 * kBadgePad;
 					if (x > content.left() && x + bW > content.left() + badgeAreaW)
 						{ row++; x = content.left(); }
@@ -561,7 +578,10 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 
 		int numRows = 1, rx = 0;
 		for (const auto& s : group) {
-			const int bW = fm.horizontalAdvance(buildBadgeText(s)) + 2 * kBadgePad;
+			const bool isOrig = s.codecType == QLatin1String("audio")
+			                 && !d.originalLanguage.isEmpty()
+			                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
+			const int bW = fm.horizontalAdvance(buildBadgeText(s, isOrig)) + 2 * kBadgePad;
 			if (rx > 0 && rx + bW > badgeAreaW) { numRows++; rx = 0; }
 			rx += bW + kBadgeGap;
 		}
@@ -571,7 +591,10 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 		if (typeRect.contains(event->pos())) {
 			int x = content.left(), row = 0;
 			for (const auto& s : group) {
-				const QString txt = buildBadgeText(s);
+				const bool    isOrig = s.codecType == QLatin1String("audio")
+				                   && !d.originalLanguage.isEmpty()
+				                   && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
+				const QString txt = buildBadgeText(s, isOrig);
 				const int     bW  = fm.horizontalAdvance(txt) + 2 * kBadgePad;
 				if (x > content.left() && x + bW > content.left() + badgeAreaW)
 					{ row++; x = content.left(); }
@@ -581,8 +604,9 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					const auto cls = clf.classify(s.title, s.language, s.codecName);
 					QStringList lines;
 					if (!s.title.isEmpty())  lines << s.title;
-					if (s.isDefault)         lines << tr("★ Default track");
+					if (s.isDefault)         lines << tr("\xE2\x98\x85  Default track");
 					if (s.isHearingImpaired) lines << tr("SDH / Hearing impaired");
+					if (isOrig)              lines << tr("\xE2\x97\x8E  Original audio language");
 					if (cls.type != TrackType::Main) {
 						QString typeName;
 						switch (cls.type) {
@@ -618,7 +642,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const
 {
 	const int w = m_view ? m_view->viewport()->width() : option.rect.width();
-	if (m_cacheWidth == 0 || std::abs(w - m_cacheWidth) >= 20) {
+	if (m_cacheWidth == 0 || w != m_cacheWidth) {
 		m_sizeCache.clear();
 		m_cacheWidth = w;
 	}
@@ -640,7 +664,8 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	}
 	const QFontMetrics& fm = m_badgeFm;
 	const int totalContentW = m_cacheWidth - kPosterW - kPosterGap - kPadH;
-	const int badgeAreaW    = totalContentW - (hasImdb ? kImdbBtnW + kBadgeGap : 0);
+	const int rightReserve  = hasImdb ? kImdbBtnW + kBadgeGap : 0;
+	const int badgeAreaW    = totalContentW - rightReserve;
 
 	int totalRows = 0;
 	for (const QString& type : {QStringLiteral("video"), QStringLiteral("audio"), QStringLiteral("subtitle")}) {
@@ -651,7 +676,10 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 
 		int rows = 1, x = 0;
 		for (const auto& s : group) {
-			const int bW = fm.horizontalAdvance(buildBadgeText(s)) + 2 * kBadgePad;
+			const bool isOrig = s.codecType == QLatin1String("audio")
+			                 && !d.originalLanguage.isEmpty()
+			                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
+			const int bW = fm.horizontalAdvance(buildBadgeText(s, isOrig)) + 2 * kBadgePad;
 			if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
 			x += bW + kBadgeGap;
 		}
@@ -733,23 +761,102 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	painter->setClipRect(QRect(option.rect.left() + kPosterW, option.rect.top(),
 	                           option.rect.width() - kPosterW, option.rect.height()));
 
-	// ── Folder label ─────────────────────────────────────────────────────────
+	// ── Folder / title row: smart title (left) | duration · size | rating ─────
 	{
-		QFont folderFont = option.font;
-		folderFont.setPointSizeF(option.font.pointSizeF() * 0.76);
+		const QRect folderRect(content.left(), content.top(), content.width(), kFolderH);
+
+		// Smart title priority: displayTitle > containerTitle (if not filename-like) > folder name
+		const QString stemmed    = QFileInfo(d.filePath).completeBaseName();
 		const QString folderName = QFileInfo(d.filePath).dir().dirName();
-		const QRect   folderRect(content.left(), content.top(), content.width(), kFolderH);
-		painter->setFont(folderFont);
-		painter->setPen(dimColor);
-		painter->drawText(folderRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, folderName);
+		QString smartTitle;
+		if (!d.displayTitle.isEmpty()) {
+			smartTitle = d.displayTitle;
+		} else if (!d.containerTitle.isEmpty()
+		           && d.containerTitle.compare(stemmed, Qt::CaseInsensitive) != 0) {
+			smartTitle = d.containerTitle;
+		} else {
+			smartTitle = folderName;
+		}
+
+		QFont starFont = option.font;
+		QFont numFont  = option.font;
+		numFont.setBold(true);
+		numFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+		QFont tenFont = option.font;
+		tenFont.setPointSizeF(option.font.pointSizeF() * 0.70);
+		QFont metaFont = option.font;
+		metaFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+
+		const bool hasRating = (d.rating > 0.0);
+
+		// Build meta text: duration + size (both modes show this in the folder row)
+		QString metaText;
+		if (d.durationSec > 0) metaText = formatDuration(d.durationSec);
+		if (d.sizeBytes    > 0) metaText += (metaText.isEmpty() ? QString() : QStringLiteral("  ")) + formatSize(d.sizeBytes);
+
+		// Draw right-side elements from right → left, tracking the right edge
+		int rightEdge = folderRect.right();
+		const int midY = folderRect.top() + folderRect.height() / 2;
+
+		// Rating: ★ X.X/10
+		if (hasRating) {
+			const QString starText  = QStringLiteral("\xe2\x98\x85");
+			const QString scoreText = QStringLiteral("%1").arg(d.rating, 0, 'f', 1);
+			const QString tenText   = QStringLiteral("/10");
+			const int tenW   = QFontMetrics(tenFont).horizontalAdvance(tenText);
+			const int scoreW = QFontMetrics(numFont).horizontalAdvance(scoreText);
+			const int starW  = QFontMetrics(starFont).horizontalAdvance(starText);
+			const int numBase  = midY + QFontMetrics(numFont).ascent()  / 2;
+			const int starBase = midY + QFontMetrics(starFont).ascent() / 2;
+
+			int x = rightEdge - tenW;
+			painter->save();
+			painter->setFont(tenFont);
+			painter->setPen(sel ? dimColor : pal.color(QPalette::PlaceholderText));
+			painter->drawText(x, numBase, tenText);
+			x -= scoreW;
+			painter->setFont(numFont);
+			painter->setPen(sel ? textColor : pal.color(QPalette::Text));
+			painter->drawText(x, numBase, scoreText);
+			x -= starW + 3;
+			painter->setFont(starFont);
+			painter->setPen(sel ? QColor(0xF5, 0xC5, 0x18).darker(110) : QColor(0xF5, 0xC5, 0x18));
+			painter->drawText(x, starBase, starText);
+			painter->restore();
+
+			rightEdge = x - 8;  // gap between rating and meta text
+		}
+
+		// Duration · size
+		if (!metaText.isEmpty()) {
+			const QFontMetrics mfm(metaFont);
+			const int mW   = mfm.horizontalAdvance(metaText);
+			const int mBase = midY + mfm.ascent() / 2;
+			painter->save();
+			painter->setFont(metaFont);
+			painter->setPen(dimColor);
+			painter->drawText(rightEdge - mW, mBase, metaText);
+			painter->restore();
+			rightEdge -= mW + 8;  // gap between meta and title
+		}
+
+		// Smart title — fills remaining left portion
+		QFont titleFont = option.font;
+		titleFont.setPointSizeF(option.font.pointSizeF() * 0.85);
+		const int titleW = rightEdge - folderRect.left() - 4;
+		if (titleW > 20) {
+			const QRect titleRect(folderRect.left(), folderRect.top(), titleW, folderRect.height());
+			painter->setFont(titleFont);
+			painter->setPen(d.displayTitle.isEmpty() && d.containerTitle.isEmpty()
+			                ? dimColor : textColor.darker(110));
+			painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, smartTitle);
+		}
 	}
 
 	// ── Header: VLC button (right) | right-side meta | filename (left) ───────
 	{
 		QFont fnFont = option.font;
 		fnFont.setBold(true);
-		QFont metaFont = option.font;
-		metaFont.setPointSizeF(option.font.pointSizeF() * 0.87);
 
 		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
 		                content.width(), kHeaderH);
@@ -774,23 +881,10 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			painter->restore();
 		}
 
-		// Right-side meta: library → duration+size / job → status pill + size
+		// Right-side meta: library → play only / job → status pill
 		int rightEdgeForFilename = playBtn.left() - kBadgeGap;
 
-		if (m_mode == Mode::Library) {
-			QString meta;
-			if (d.durationSec > 0) meta  = formatDuration(d.durationSec);
-			if (d.sizeBytes    > 0) meta += (meta.isEmpty() ? QString() : "    ") + formatSize(d.sizeBytes);
-			if (!meta.isEmpty()) {
-				const int metaW = QFontMetrics(metaFont).horizontalAdvance(meta) + 8;
-				const int metaX = playBtn.left() - kBadgeGap - metaW;
-				painter->setFont(metaFont);
-				painter->setPen(dimColor);
-				painter->drawText(QRect(metaX, hdr.top(), metaW, hdr.height()),
-				                  Qt::AlignRight | Qt::AlignVCenter, meta);
-				rightEdgeForFilename = metaX;
-			}
-		} else {
+		if (m_mode == Mode::JobQueue) {
 			QFont pillFont = option.font;
 			pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
 
@@ -825,20 +919,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			drawBadge(painter, pillX, pillY, kBadgeH,
 			          pillText, statusColor(d.status), pillFont);
 
-			// File size to the left of the status pill
-			int sizeW = 0;
-			if (d.sizeBytes > 0) {
-				const QString sizeText = formatSize(d.sizeBytes);
-				sizeW = QFontMetrics(metaFont).horizontalAdvance(sizeText) + 8;
-				const int sizeX = pillX - kBadgeGap - sizeW;
-				painter->setFont(metaFont);
-				painter->setPen(dimColor);
-				painter->drawText(QRect(sizeX, hdr.top(), sizeW, hdr.height()),
-				                  Qt::AlignRight | Qt::AlignVCenter, sizeText);
-				rightEdgeForFilename = sizeX;
-			} else {
-				rightEdgeForFilename = pillX;
-			}
+			rightEdgeForFilename = pillX;
 		}
 
 		// Filename — fills remaining left space
@@ -848,9 +929,10 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		                  Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, d.filename);
 	}
 
-	// ── Badge area: IMDb button (right column) + track rows (left) ────────────
-	const bool hasImdb   = !d.imdbId.isEmpty();
-	const int  badgeAreaW = content.width() - (hasImdb ? kImdbBtnW + kBadgeGap : 0);
+	// ── Badge area: IMDb button (right) + track rows (left) ─────────────────
+	const bool hasImdb  = !d.imdbId.isEmpty();
+	const int rightReserve = hasImdb ? kImdbBtnW + kBadgeGap : 0;
+	const int badgeAreaW   = content.width() - rightReserve;
 
 	if (hasImdb) {
 		const QRect ir = imdbButtonRect(content);
@@ -870,7 +952,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 	// Hover-highlight the badge under the mouse for toggleable job cards
 	const int hoveredStreamIdx = (m_mode == Mode::JobQueue && d.toggleable && m_lastMousePos.x() >= 0)
-		? hitTestBadgeStream(m_lastMousePos, option.rect, d.allStreams, option.font, hasImdb)
+		? hitTestBadgeStream(m_lastMousePos, option.rect, d.allStreams, option.font, hasImdb, d.originalLanguage)
 		: -1;
 
 	QFont badgeFont = option.font;
@@ -885,7 +967,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		const int rows = drawBadgeRow(painter,
 		                              QRect(content.left(), y, badgeAreaW, kBadgeH),
 		                              group, d.removedIndices, badgeFont, bg,
-		                              hoveredStreamIdx);
+		                              d.originalLanguage, hoveredStreamIdx);
 		y += rows * (kBadgeH + kRowGap);
 	};
 

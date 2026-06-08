@@ -22,7 +22,8 @@ void LibraryLoader::run()
 	                   for (const auto& j : db.allJobsForPanel())
 	                       if (j.status == QLatin1String("proposed")) s.insert(j.fileId);
 	                   return s;
-	               }());
+	               }(),
+	               db.allRatings());
 
 	int offset    = m_startOffset;
 	int pageIndex = 0;

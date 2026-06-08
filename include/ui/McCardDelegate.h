@@ -50,7 +50,7 @@ public:
 	bool  handlePress(const QPoint& viewportPos, const QRect& itemRect,
 	                  const QFont& viewFont, const QModelIndex& index);
 
-	static constexpr int kPosterW = 80;
+	static constexpr int kPosterW = 110; // poster column width (sized for ~2:3 aspect at typical card height)
 
 public slots:
 	void invalidateSizeCacheFor(qint64 fileId);
@@ -71,6 +71,11 @@ private:
 		QString             posterPath;
 		int                 posterVersion  = 0;
 		QString             imdbId;
+		double              rating         = 0.0;   // TMDB vote_average; 0 = unknown
+		QString             displayTitle;           // TMDB/user override (Library only)
+		QString             containerTitle;         // ffprobe format tags title (Library only)
+		int                 folderCount    = 1;     // files sharing the same parent folder (Library only)
+		QString             originalLanguage;       // ISO 639-2 original audio language (both modes)
 		QList<StreamRecord> allStreams;
 		QSet<int>           removedIndices; // stream indices shown struck-through
 		// job queue only
@@ -89,7 +94,7 @@ private:
 	static QString formatSize(qint64 bytes);
 	static QString codecLabel(const StreamRecord& s);
 	static QString channelStr(int channels);
-	static QString buildBadgeText(const StreamRecord& s);
+	static QString buildBadgeText(const StreamRecord& s, bool isOriginal = false);
 	static QColor  badgeColor(const QString& codecType);
 	static QColor  statusColor(const QString& status);
 	static QString statusLabel(const QString& status);
@@ -105,12 +110,14 @@ private:
 	                  const QSet<int>& removedIndices,
 	                  const QFont& badgeFont,
 	                  const QColor& cardBg,
-	                  int hoveredStreamIndex = -1) const;
+	                  const QString& originalLang  = {},
+	                  int hoveredStreamIndex        = -1) const;
 
 	int  hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 	                        const QList<StreamRecord>& tracks,
 	                        const QFont& baseFont,
-	                        bool hasImdb) const;
+	                        bool hasImdb,
+	                        const QString& originalLang = {}) const;
 
 	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect, bool hasImdb = false) const;
 
@@ -124,20 +131,20 @@ private:
 	mutable QFont             m_badgeFont;
 	mutable QFontMetrics      m_badgeFm      { QFont{} };
 
-	static constexpr int kPadH      = 10;
-	static constexpr int kPadV      = 6;
-	static constexpr int kPadBottom = 8;
-	static constexpr int kFolderH   = 13;
-	static constexpr int kFolderGap = 1;
-	static constexpr int kHeaderH   = 22;
-	static constexpr int kSepGap    = 4;
-	static constexpr int kBadgeH    = 18;
-	static constexpr int kRowGap    = 4;
-	static constexpr int kBadgeGap  = 4;
-	static constexpr int kBadgePad  = 6;
-	static constexpr int kPlayBtnW  = 24;
-	static constexpr int kImdbBtnW  = 24;
-	static constexpr int kPosterGap = 8;
+	static constexpr int kPadH      = 10; // horizontal inset from card edge to poster and content
+	static constexpr int kPadV      = 6;  // vertical padding above the folder row
+	static constexpr int kPadBottom = 8;  // vertical padding below the last badge row
+	static constexpr int kFolderH   = 20; // height of the title/meta row (movie title, duration, size, rating)
+	static constexpr int kFolderGap = 0;  // explicit gap between the title row and the filename row
+	static constexpr int kHeaderH   = 24; // height of the filename row (also the play-button size)
+	static constexpr int kSepGap    = 3;  // gap between the filename row and the first badge row; set to kFolderGap+(kFolderH-12)/2 for equal visual gaps
+	static constexpr int kBadgeH    = 18; // height of each track badge pill
+	static constexpr int kRowGap    = 4;  // vertical gap between badge rows
+	static constexpr int kBadgeGap  = 4;  // horizontal gap between adjacent badges within a row
+	static constexpr int kBadgePad  = 6;  // horizontal text padding inside each badge pill
+	static constexpr int kPlayBtnW  = 24; // width and height of the play (▶) button on the right
+	static constexpr int kImdbBtnW  = 24; // width and height of the IMDb shortcut button on the right
+	static constexpr int kPosterGap = 0;  // gap between the poster column right edge and the content area
 };
 
 } // namespace Mc

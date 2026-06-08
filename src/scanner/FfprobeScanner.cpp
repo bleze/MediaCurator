@@ -140,6 +140,15 @@ FfprobeScanner::ScanResult FfprobeScanner::parseJsonOutput(
 	else
 		file.container = formatName.split(',').first().trimmed();
 
+	// Title from format tags (case-insensitive key lookup)
+	const QJsonObject formatTags = format.value("tags").toObject();
+	for (auto it = formatTags.constBegin(); it != formatTags.constEnd(); ++it) {
+		if (it.key().compare("title", Qt::CaseInsensitive) == 0) {
+			file.containerTitle = it.value().toString().trimmed();
+			break;
+		}
+	}
+
 	// ── Build StreamRecords ───────────────────────────────────────────────────
 	QList<StreamRecord> streamList;
 	QString detectedOriginalLang;

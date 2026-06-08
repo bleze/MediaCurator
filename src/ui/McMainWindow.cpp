@@ -241,10 +241,13 @@ McMainWindow::McMainWindow(QWidget* parent)
 		for (const auto& j : DatabaseManager::instance().allJobsForPanel()) {
 			if (j.jobId == jobId) { m_currentJobFilename = j.filename; break; }
 		}
+		m_queuedAtStart = DatabaseManager::instance().queuedJobCount();
 		m_progressBar->setRange(0, 100);
 		m_progressBar->setValue(0);
 		m_progressBar->setVisible(true);
-		m_statusLabel->setText(tr("Processing '%1'…").arg(m_currentJobFilename));
+		const QString suffix = m_queuedAtStart > 0
+		    ? tr(" (%1 queued)").arg(m_queuedAtStart) : QString();
+		m_statusLabel->setText(tr("Processing '%1'…%2").arg(m_currentJobFilename, suffix));
 	});
 
 	connect(m_jobQueue, &JobQueue::progressChanged, this, [this](qint64, int pct) {
@@ -253,7 +256,9 @@ McMainWindow::McMainWindow(QWidget* parent)
 			// output file before the process exits. Switch to an indeterminate
 			// animation so the UI doesn't look frozen at 100%.
 			m_progressBar->setRange(0, 0);
-			m_statusLabel->setText(tr("Finishing '%1'…").arg(m_currentJobFilename));
+			const QString finSuffix = m_queuedAtStart > 0
+			    ? tr(" (%1 queued)").arg(m_queuedAtStart) : QString();
+			m_statusLabel->setText(tr("Finishing '%1'…%2").arg(m_currentJobFilename, finSuffix));
 #ifdef Q_OS_WIN
 			if (m_taskbar)
 				m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_INDETERMINATE);
@@ -297,8 +302,12 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_progressBar->setValue(0);
 		m_currentJobFilename.clear();
 		updateSavedLabel();
-		const int total = m_listModel->totalCount();
-		m_statusLabel->setText(tr("All jobs finished — %1 files in library").arg(total));
+		const int total    = m_listModel->totalCount();
+		const int proposed = DatabaseManager::instance().totalJobCount();
+		QString msg = tr("All jobs finished — %1 files in library").arg(total);
+		if (proposed > 0)
+			msg += tr(", %1 proposed").arg(proposed);
+		m_statusLabel->setText(msg);
 #ifdef Q_OS_WIN
 		clearTaskbarProgress();
 #endif
@@ -381,10 +390,18 @@ void McMainWindow::setupUi()
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
 				NfoParser::writeMovieNfo(file.path, id, dlg.selectedTitle(), dlg.selectedYear());
-				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id);
+				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+				if (dlg.selectedVoteAverage() > 0) {
+					m_listModel->setRatingForFile(file.id, dlg.selectedVoteAverage());
+					m_jobPanel->setRatingForFile(file.id, dlg.selectedVoteAverage());
+				}
 				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(file.id, origLang);
+				const QString title = dlg.selectedTitle();
+				if (!title.isEmpty())
+					DatabaseManager::instance().updateDisplayTitle(file.id, title);
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -406,6 +423,11 @@ void McMainWindow::setupUi()
 		if (!idx.isValid()) return;
 		const FileRecord file = idx.data(McFileListModel::FileRole).value<FileRecord>();
 
+		QSet<int> selRows;
+		for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes())
+			selRows.insert(si.row());
+		const int selCount = selRows.size();
+
 		QMenu menu(this);
 
 		auto* analyzeAction = menu.addAction(svgIcon(":/icons/manage_search.svg"),
@@ -425,6 +447,7 @@ void McMainWindow::setupUi()
 
 		auto* previewAction = menu.addAction(svgIcon(":/icons/visibility.svg"),
 		                                      tr("&Preview Tracks…"));
+		previewAction->setEnabled(selCount == 1);
 		connect(previewAction, &QAction::triggered,
 		        this, [this, file] { onShowPreview(file.id); });
 
@@ -471,10 +494,18 @@ void McMainWindow::setupUi()
 				const QString imdbId = dlg.selectedImdbId();
 				if (imdbId.isEmpty()) continue;
 				NfoParser::writeMovieNfo(f.path, imdbId, dlg.selectedTitle(), dlg.selectedYear());
-				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId);
+				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId,
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+				if (dlg.selectedVoteAverage() > 0) {
+					m_listModel->setRatingForFile(f.id, dlg.selectedVoteAverage());
+					m_jobPanel->setRatingForFile(f.id, dlg.selectedVoteAverage());
+				}
 				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(f.id, origLang);
+				const QString title = dlg.selectedTitle();
+				if (!title.isEmpty())
+					DatabaseManager::instance().updateDisplayTitle(f.id, title);
 			}
 			m_listView->viewport()->repaint();
 		});
@@ -524,6 +555,8 @@ void McMainWindow::setupUi()
 	        m_listModel, &McFileListModel::setQuickFilters);
 	connect(m_filterPanel, &McFilterPanel::sortOrderChanged,
 	        m_listModel, &McFileListModel::setSortOrder);
+	connect(m_filterPanel, &McFilterPanel::ratingFilterChanged,
+	        m_listModel, &McFileListModel::setRatingFilter);
 
 	auto* topWidget = new QWidget(this);
 	auto* topLayout = new QVBoxLayout(topWidget);
@@ -570,10 +603,18 @@ void McMainWindow::setupUi()
 			if (!id.isEmpty()) {
 				NfoParser::writeMovieNfo(fileOpt->path, id,
 				                        dlg.selectedTitle(), dlg.selectedYear());
-				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id);
+				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+			if (dlg.selectedVoteAverage() > 0) {
+					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
+					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
+				}
 				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
+				const QString title = dlg.selectedTitle();
+				if (!title.isEmpty())
+					DatabaseManager::instance().updateDisplayTitle(fileId, title);
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -611,10 +652,18 @@ void McMainWindow::setupUi()
 			if (!id.isEmpty()) {
 				NfoParser::writeMovieNfo(fileOpt->path, id,
 				                        dlg.selectedTitle(), dlg.selectedYear());
-				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id);
+				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+			if (dlg.selectedVoteAverage() > 0) {
+					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
+					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
+				}
 				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
+				const QString title = dlg.selectedTitle();
+				if (!title.isEmpty())
+					DatabaseManager::instance().updateDisplayTitle(fileId, title);
 			}
 		}
 		m_listView->viewport()->repaint();
@@ -1118,14 +1167,16 @@ void McMainWindow::startLibraryLoader()
 	connect(loader, &LibraryLoader::metaReady, this,
 	        [this](const QHash<qint64, QString>& posters,
 	               const QHash<qint64, QString>& imdbIds,
-	               const QSet<qint64>& filesWithJobs) {
-		m_listModel->initMeta(posters, imdbIds, filesWithJobs);
+	               const QSet<qint64>& filesWithJobs,
+	               const QHash<qint64, double>& ratings) {
+		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings);
 	});
 
 	connect(loader, &LibraryLoader::fileReady,
 	        m_listModel, &McFileListModel::applyFileUpdate);
 
 	connect(loader, &LibraryLoader::finished, this, [this](int total) {
+		m_listModel->recomputeFolderCounts();
 		m_jobPanel->refresh();
 		updateJobPanelVisibility(/*forceShow=*/true);
 		updateActionStates();

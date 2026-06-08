@@ -24,6 +24,10 @@ public:
 		OverridesRole     = Qt::UserRole + 4,   // QSet<int> — stream indices forced to Remove by user
 		PosterVersionRole = Qt::UserRole + 5,   // int — increments each time a poster changes
 		ImdbRole          = Qt::UserRole + 6,   // QString — IMDb ID (e.g. "tt1234567") or empty
+		RatingRole        = Qt::UserRole + 7,   // double — TMDB vote_average (0.0 if unknown)
+		DisplayTitleRole  = Qt::UserRole + 8,   // QString — TMDB/user-assigned title override
+		ContainerTitleRole= Qt::UserRole + 9,   // QString — title from ffprobe format tags
+		FolderCountRole   = Qt::UserRole + 10,  // int — number of files sharing same parent folder
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -39,10 +43,12 @@ public:
 	};
 
 	enum SortOrder {
-		SortByName    = 0,
-		SortByNewest  = 1,
-		SortByOldest  = 2,
-		SortByLargest = 3,
+		SortByName       = 0,
+		SortByNewest     = 1,
+		SortByOldest     = 2,
+		SortByLargest    = 3,
+		SortByRatingHigh = 4,
+		SortByRatingLow  = 5,
 	};
 
 	explicit McFileListModel(QObject* parent = nullptr);
@@ -52,9 +58,11 @@ public:
 
 	void reload();
 	void reloadFile(qint64 fileId);
+	void recomputeFolderCounts();
 	void initMeta(const QHash<qint64, QString>& posterPaths,
 	              const QHash<qint64, QString>& imdbIds,
-	              const QSet<qint64>& filesWithJobs);
+	              const QSet<qint64>& filesWithJobs,
+	              const QHash<qint64, double>& ratings = {});
 	void applyFileUpdate(const Mc::FileRecord& file, const QList<Mc::StreamRecord>& streams);
 	void removeEntry(qint64 fileId);
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter
@@ -70,6 +78,8 @@ public slots:
 	void setFilterMissingImdb(bool on);
 	void setQuickFilters(quint32 flags);
 	void setSortOrder(int order);
+	void setRatingFilter(double minRating, double maxRating);
+	void setRatingForFile(qint64 fileId, double rating);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onImdbIdSaved(qint64 fileId, const QString& imdbId);
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
@@ -85,12 +95,16 @@ private:
 	QHash<qint64, QString>    m_posterPaths;     // fileId → cached image path
 	QHash<qint64, int>        m_posterVersions;  // fileId → version counter (increments on update)
 	QHash<qint64, QString>    m_imdbIds;         // fileId → IMDb ID
+	QHash<qint64, double>     m_ratings;         // fileId → TMDB vote_average (absent = no rating)
+	QHash<QString, int>       m_folderCounts;    // parentDir → count of files in that folder
 	QHash<qint64, QSet<int>>  m_forcedRemovals;  // fileId → stream indices user wants removed
 	QString                   m_filterText;
 	bool                      m_filterHasRemovals  = false;
 	bool                      m_filterMissingImdb  = false;
 	quint32                   m_quickFilters       = QF_None;
 	int                       m_sortOrder          = SortByName;
+	double                    m_ratingMin          = 0.0;
+	double                    m_ratingMax          = 10.0;
 };
 
 } // namespace Mc

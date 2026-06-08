@@ -27,6 +27,8 @@ struct FileRecord {
 	qint64      scanTime = 0;
 	qint64      scanRunId = -1;
 	bool        needsRescan = false;
+	QString     containerTitle;   // title from ffprobe format tags; may be absent or junk
+	QString     displayTitle;     // TMDB/user-assigned override; preferred over all others
 };
 
 // Mirrors the 'streams' table row
@@ -78,12 +80,14 @@ struct JobRecord {
 
 // Poster / enrichment cache
 struct PosterRecord {
-	qint64  fileId   = -1;
-	QString source;      // "embedded" | "tmdb" | ""
-	QString status;      // "pending" | "done" | "no_poster" | "failed"
+	qint64  fileId      = -1;
+	QString source;         // "embedded" | "tmdb" | ""
+	QString status;         // "pending" | "done" | "no_poster" | "failed"
 	QString imagePath;
 	QString imdbId;
-	qint64  fetchedAt = 0;
+	qint64  fetchedAt   = 0;
+	double  voteAverage = 0.0;
+	int     voteCount   = 0;
 };
 
 // For display in McJobPanel (jobs JOIN files JOIN poster_cache)
@@ -98,7 +102,9 @@ struct JobDisplayRecord {
 	qint64  sizeBytes  = 0;
 	double  durationSec = 0.0;
 	qint64  createdAt  = 0;
-	QString imdbId;   // from poster_cache; empty if no IMDb link yet
+	QString imdbId;            // from poster_cache; empty if no IMDb link yet
+	double  voteAverage = 0.0;
+	QString originalLanguage;  // ISO 639-2; set by RuleEngine or TMDB dialog
 };
 
 /**
@@ -154,11 +160,13 @@ public:
 	bool clearJobsByStatus(const QString& status);
 	bool promoteJobsToQueued(const QList<qint64>& jobIds);
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
+	bool updateDisplayTitle(qint64 fileId, const QString& title);
 	QList<JobRecord> queuedJobs() const;
 	QList<JobRecord> allJobs() const;
 	QList<JobDisplayRecord> allJobsForPanel() const;
 	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}) const;
 	int                     totalJobCount() const;
+	int                     queuedJobCount() const;
 
 	// ── Poster cache ─────────────────────────────────────────────────────────
 	void                        upsertPosterRecord(const PosterRecord& rec);
@@ -166,6 +174,7 @@ public:
 	QList<qint64>               fileIdsNeedingPosters() const;
 	QHash<qint64, QString>      allDonePosterPaths() const;
 	QHash<qint64, QString>      allKnownImdbIds() const;
+	QHash<qint64, double>       allRatings() const;
 	void                        resetPosterForFile(qint64 fileId);
 	void                        updateImdbId(qint64 fileId, const QString& imdbId);
 	void                        resetNoPosterRecords();

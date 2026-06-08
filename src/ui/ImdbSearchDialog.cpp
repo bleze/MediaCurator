@@ -34,13 +34,23 @@ namespace {
 class ImdbResultDelegate : public QStyledItemDelegate
 {
 public:
-	static constexpr int kBtnW = 24;
-	static constexpr int kGap  = 8;
+	static constexpr int kBtnW    = 24;
+	static constexpr int kGap     = 8;
+	static constexpr int kRatingW = 76;   // reserved width for the IMDb rating badge
 
 	QPoint hoverPos{-1, -1};  // updated by the dialog's eventFilter
 
 	explicit ImdbResultDelegate(QObject* parent = nullptr)
 		: QStyledItemDelegate(parent) {}
+
+	// "15000" → "15K",  "1500000" → "1.5M"
+	static QString formatVotes(int n)
+	{
+		if (n <= 0)       return {};
+		if (n >= 1000000) return QStringLiteral("%1M").arg(n / 1000000.0, 0, 'f', n % 1000000 >= 100000 ? 1 : 0);
+		if (n >= 1000)    return QStringLiteral("%1K").arg(n / 1000);
+		return QString::number(n);
+	}
 
 	void paint(QPainter* p, const QStyleOptionViewItem& option,
 	           const QModelIndex& index) const override
@@ -53,18 +63,13 @@ public:
 			return;
 		}
 
-		// Draw standard item narrowed to leave room for button.
-		// Suppress the dotted focus rectangle — results look like cards, not grid cells.
+		// Narrow text area to leave room for rating badge + IMDb button.
 		QStyleOptionViewItem opt = option;
 		opt.state &= ~QStyle::State_HasFocus;
-		opt.rect.setRight(option.rect.right() - kBtnW - kGap);
+		opt.rect.setRight(option.rect.right() - kRatingW - kBtnW - kGap * 2);
 		QStyledItemDelegate::paint(p, opt, index);
 
-		// Fill the gap + button column to match exactly what the standard delegate
-		// painted for the text/poster area.  Qt uses QPalette::Inactive when the
-		// view doesn't have keyboard focus (State_Active is absent), so we must
-		// mirror that group selection — otherwise the two halves show different
-		// shades and look like separate table columns.
+		// Fill the right two columns with the same background so they blend.
 		const bool sel    = option.state & QStyle::State_Selected;
 		const bool active = option.state & QStyle::State_Active;
 		const QPalette::ColorGroup grp = active ? QPalette::Active : QPalette::Inactive;
@@ -76,9 +81,72 @@ public:
 		p->fillRect(QRect(opt.rect.right() + 1, option.rect.top(),
 		                  option.rect.right() - opt.rect.right(), option.rect.height()), bg);
 
-		// IMDb logo — hover brightens it
+		// ── IMDb-style rating badge ───────────────────────────────────────────
+		const double voteAvg   = index.data(Qt::UserRole + 6).toDouble();
+		const int    voteCount = index.data(Qt::UserRole + 7).toInt();
+		if (voteAvg > 0.0) {
+			const QRect ratingRect(opt.rect.right() + kGap, option.rect.top(),
+			                       kRatingW - kGap, option.rect.height());
+
+			// Star — centered vertically, left-aligned in rating rect
+			QFont starFont = option.font;
+			starFont.setPointSizeF(option.font.pointSizeF() * 1.5);
+			starFont.setBold(true);
+			const int starH    = QFontMetrics(starFont).height();
+			const int starW    = QFontMetrics(starFont).horizontalAdvance(QStringLiteral("\xe2\x98\x85"));
+			const int midY     = option.rect.top() + option.rect.height() / 2;
+			const int starTop  = midY - starH / 2 - (voteCount > 0 ? 4 : 0);
+			p->save();
+			p->setFont(starFont);
+			p->setPen(QColor(0xF5, 0xC5, 0x18));  // IMDb yellow
+			p->drawText(QRect(ratingRect.left(), starTop, starW + 2, starH),
+			            Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("\xe2\x98\x85"));
+			p->restore();
+
+			// "X.X/10" — next to the star
+			const int numX = ratingRect.left() + starW + 4;
+			QFont numFont = option.font;
+			numFont.setBold(true);
+			numFont.setPointSizeF(option.font.pointSizeF() * 1.1);
+			const QString scoreText = QStringLiteral("%1").arg(voteAvg, 0, 'f', 1);
+			QFont tenFont = option.font;
+			tenFont.setPointSizeF(option.font.pointSizeF() * 0.78);
+			const int scoreW = QFontMetrics(numFont).horizontalAdvance(scoreText);
+			const int tenW   = QFontMetrics(tenFont).horizontalAdvance(QStringLiteral("/10"));
+
+			p->save();
+			const QColor textColor = sel ? option.palette.color(grp, QPalette::HighlightedText)
+			                             : option.palette.color(grp, QPalette::Text);
+			const QColor dimColor  = sel ? textColor.darker(140)
+			                             : option.palette.color(grp, QPalette::PlaceholderText);
+			p->setFont(numFont);
+			p->setPen(textColor);
+			p->drawText(QRect(numX, starTop, scoreW, QFontMetrics(numFont).height()),
+			            Qt::AlignLeft | Qt::AlignVCenter, scoreText);
+			p->setFont(tenFont);
+			p->setPen(dimColor);
+			p->drawText(QRect(numX + scoreW, starTop + QFontMetrics(numFont).height() - QFontMetrics(tenFont).height(),
+			                  tenW, QFontMetrics(tenFont).height()),
+			            Qt::AlignLeft | Qt::AlignBottom, QStringLiteral("/10"));
+			p->restore();
+
+			// Vote count below
+			if (voteCount > 0) {
+				const QString votes = formatVotes(voteCount);
+				QFont cntFont = option.font;
+				cntFont.setPointSizeF(option.font.pointSizeF() * 0.78);
+				const int cntY = starTop + QFontMetrics(numFont).height() + 1;
+				p->save();
+				p->setFont(cntFont);
+				p->setPen(sel ? textColor.darker(150) : option.palette.color(grp, QPalette::PlaceholderText));
+				p->drawText(QRect(ratingRect.left() + starW + 4, cntY, kRatingW, QFontMetrics(cntFont).height()),
+				            Qt::AlignLeft, votes);
+				p->restore();
+			}
+		}
+
+		// ── IMDb logo button ─────────────────────────────────────────────────
 		const QRect r = btnRect(option.rect);
-		const bool hovered = r.contains(hoverPos);
 		QPixmap logo;
 		if (!QPixmapCache::find("dlg_imdb_logo", &logo)) {
 			logo = QPixmap(":/icons/imdb.png").scaled(
@@ -86,7 +154,7 @@ public:
 			QPixmapCache::insert("dlg_imdb_logo", logo);
 		}
 		p->save();
-		p->setOpacity(hovered ? 1.0 : 0.75);
+		p->setOpacity(r.contains(hoverPos) ? 1.0 : 0.75);
 		p->drawPixmap(r.left() + (r.width()  - logo.width())  / 2,
 		              r.top()  + (r.height() - logo.height()) / 2,
 		              logo);
@@ -283,6 +351,20 @@ QString ImdbSearchDialog::selectedOriginalLanguage() const
 	return item ? item->data(Qt::UserRole + 5).toString() : QString{};
 }
 
+double ImdbSearchDialog::selectedVoteAverage() const
+{
+	if (!m_resultsList) return 0.0;
+	const QListWidgetItem* item = m_resultsList->currentItem();
+	return item ? item->data(Qt::UserRole + 6).toDouble() : 0.0;
+}
+
+int ImdbSearchDialog::selectedVoteCount() const
+{
+	if (!m_resultsList) return 0;
+	const QListWidgetItem* item = m_resultsList->currentItem();
+	return item ? item->data(Qt::UserRole + 7).toInt() : 0;
+}
+
 void ImdbSearchDialog::setStatusText(const QString& text, bool isError)
 {
 	m_statusLabel->setText(text);
@@ -362,12 +444,14 @@ void ImdbSearchDialog::onSearch()
 		}
 
 		for (const auto& v : results) {
-			const QJsonObject obj        = v.toObject();
-			const QString     title      = obj["title"].toString();
-			const int         year       = obj["release_date"].toString().left(4).toInt();
-			const int         tmdbId     = obj["id"].toInt();
-			const QString     posterPath = obj["poster_path"].toString();
-			const QString     origLang   = obj["original_language"].toString();
+			const QJsonObject obj         = v.toObject();
+			const QString     title       = obj["title"].toString();
+			const int         year        = obj["release_date"].toString().left(4).toInt();
+			const int         tmdbId      = obj["id"].toInt();
+			const QString     posterPath  = obj["poster_path"].toString();
+			const QString     origLang    = obj["original_language"].toString();
+			const double      voteAvg     = obj["vote_average"].toDouble();
+			const int         voteCount   = obj["vote_count"].toInt();
 
 			const QString display = year > 0
 				? QStringLiteral("%1  (%2)").arg(title).arg(year)
@@ -377,8 +461,10 @@ void ImdbSearchDialog::onSearch()
 			item->setData(Qt::UserRole,     tmdbId);
 			item->setData(Qt::UserRole + 1, title);
 			item->setData(Qt::UserRole + 2, year);
-			item->setData(Qt::UserRole + 5, origLang);  // ISO 639-1 original language from TMDB
 			item->setData(Qt::UserRole + 3, posterPath);
+			item->setData(Qt::UserRole + 5, origLang);
+			item->setData(Qt::UserRole + 6, voteAvg);
+			item->setData(Qt::UserRole + 7, voteCount);
 
 			// Fetch thumbnail asynchronously
 			if (!posterPath.isEmpty()) {

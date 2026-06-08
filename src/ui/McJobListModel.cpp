@@ -63,6 +63,13 @@ void McJobListModel::reload()
 
 void McJobListModel::reloadPaged(int limit)
 {
+	// "Running" filter must also show queued jobs — delegate to full reload so both
+	// statuses enter m_allEntries (the paged DB query would otherwise drop 'queued').
+	if (m_filterStatus == QLatin1String("running")) {
+		reload();
+		return;
+	}
+
 	m_allEntries.clear();
 	m_allCheckStates.clear();
 
@@ -120,7 +127,7 @@ void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 saved
 		if (m_entries[i].job.jobId != jobId) continue;
 		m_entries[i].job.status = status;
 		if (savedBytes >= 0) m_entries[i].job.savedBytes = savedBytes;
-		if (!m_filterStatus.isEmpty() && status != m_filterStatus) {
+		if (!statusMatchesFilter(status)) {
 			applyFilter();   // entry no longer passes status filter
 		} else {
 			const QModelIndex idx = index(i);
@@ -129,7 +136,7 @@ void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 saved
 		return;
 	}
 	// Not in filtered view — check if the status change makes it visible now
-	if (m_filterStatus.isEmpty() || status == m_filterStatus)
+	if (statusMatchesFilter(status))
 		applyFilter();
 }
 
@@ -152,6 +159,27 @@ void McJobListModel::setQuickFilters(quint32 flags)
 	if (m_quickFilters == flags) return;
 	m_quickFilters = flags;
 	applyFilter();
+}
+
+void McJobListModel::setRatingFilter(double minRating, double maxRating)
+{
+	if (qFuzzyCompare(m_ratingMin, minRating) && qFuzzyCompare(m_ratingMax, maxRating)) return;
+	m_ratingMin = minRating;
+	m_ratingMax = maxRating;
+	applyFilter();
+}
+
+void McJobListModel::setRatingForFile(qint64 fileId, double rating)
+{
+	for (auto& e : m_allEntries)
+		if (e.job.fileId == fileId) { e.job.voteAverage = rating; break; }
+
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId != fileId) continue;
+		m_entries[i].job.voteAverage = rating;
+		emit dataChanged(index(i), index(i), { RatingRole });
+		break;
+	}
 }
 
 QHash<QString, int> McJobListModel::countsByStatus() const
@@ -203,6 +231,16 @@ void McJobListModel::updateProgress(qint64 jobId, int percent)
 	}
 }
 
+bool McJobListModel::statusMatchesFilter(const QString& status) const
+{
+	if (m_filterStatus.isEmpty()) return true;
+	// "Running" filter intentionally includes queued jobs so the user can see
+	// both what is processing now and what is lined up next.
+	if (m_filterStatus == QLatin1String("running"))
+		return status == QLatin1String("running") || status == QLatin1String("queued");
+	return status == m_filterStatus;
+}
+
 void McJobListModel::applyFilter()
 {
 	using QF = McFilterPanel;
@@ -239,7 +277,7 @@ void McJobListModel::applyFilter()
 		}
 
 		// ── Status filter ────────────────────────────────────────────────────────
-		if (!m_filterStatus.isEmpty() && e.job.status != m_filterStatus)
+		if (!statusMatchesFilter(e.job.status))
 			continue;
 
 		// ── Quick filters ────────────────────────────────────────────────────────
@@ -294,6 +332,12 @@ void McJobListModel::applyFilter()
 				}
 				if (!ok) continue;
 			}
+		}
+
+		// ── Rating filter ────────────────────────────────────────────────────────
+		if (m_ratingMin > 0.0 || m_ratingMax < 10.0) {
+			const double r = e.job.voteAverage;
+			if (r <= 0.0 || r < m_ratingMin || r > m_ratingMax) continue;
 		}
 
 		m_entries.append(e);
@@ -352,7 +396,9 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case FilePathRole:      return e.job.filePath;
 	case ImdbIdRole:        return e.job.imdbId;
 	case DurationRole:      return e.job.durationSec;
-	default:                return {};
+	case RatingRole:           return e.job.voteAverage;
+	case OriginalLanguageRole: return e.job.originalLanguage;
+	default:                   return {};
 	}
 }
 

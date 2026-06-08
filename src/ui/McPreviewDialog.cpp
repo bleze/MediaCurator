@@ -359,8 +359,13 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 		auto* typeItem    = new QTableWidgetItem(td.stream.codecType);
 		auto* codecItem   = new QTableWidgetItem(td.stream.codecName.isEmpty()
 		                                         ? tr("—") : td.stream.codecName);
-		auto* langItem    = new QTableWidgetItem(td.stream.language.isEmpty()
-		                                         ? tr("und") : td.stream.language);
+		const bool isOrig = td.stream.codecType == QLatin1String("audio")
+		                 && !decision.file.originalLanguage.isEmpty()
+		                 && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
+		QString langStr = td.stream.language.isEmpty() ? tr("und") : td.stream.language;
+		if (td.stream.isDefault) langStr += "  \xE2\x98\x85"; // ★
+		if (isOrig)              langStr += "  \xE2\x97\x8E"; // ◎
+		auto* langItem    = new QTableWidgetItem(langStr);
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
 		    estimateStreamBytes(td.stream, allStreams,
@@ -408,8 +413,13 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		auto* typeItem    = new QTableWidgetItem(td.stream.codecType);
 		auto* codecItem   = new QTableWidgetItem(td.stream.codecName.isEmpty()
 		                                         ? tr("—") : td.stream.codecName);
-		auto* langItem    = new QTableWidgetItem(td.stream.language.isEmpty()
-		                                         ? tr("und") : td.stream.language);
+		const bool isOrig2 = td.stream.codecType == QLatin1String("audio")
+		                  && !decision.file.originalLanguage.isEmpty()
+		                  && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
+		QString langStr2 = td.stream.language.isEmpty() ? tr("und") : td.stream.language;
+		if (td.stream.isDefault) langStr2 += "  \xE2\x98\x85"; // ★
+		if (isOrig2)             langStr2 += "  \xE2\x97\x8E"; // ◎
+		auto* langItem    = new QTableWidgetItem(langStr2);
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
 		    estimateStreamBytes(td.stream, allStreams,

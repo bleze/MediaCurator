@@ -19,6 +19,7 @@ set(MC_SOURCES
     ui/McTrackTableModel.cpp
     ui/McFileListModel.cpp
     ui/McCardDelegate.cpp
+    ui/RangeSlider.cpp
     ui/McSettingsDialog.cpp
     ui/McJobPanel.cpp
     ui/McJobListModel.cpp
@@ -80,6 +81,7 @@ set(MC_HEADERS
     ../include/ui/McCardDelegate.h
     ../include/ui/McFileCardDelegate.h
     ../include/ui/McJobCardDelegate.h
+    ../include/ui/RangeSlider.h
     ../include/ui/McLibraryPanel.h
     ../include/ui/McFilterPanel.h
     ../include/ui/McJobPanel.h

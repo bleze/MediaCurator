@@ -276,6 +276,21 @@ bool DatabaseManager::initSchema()
 		m.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_file_proposed ON jobs(file_id) WHERE status='proposed'");
 	}
 
+	// Migration: add rating columns to poster_cache
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE poster_cache ADD COLUMN vote_average REAL DEFAULT 0.0");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN vote_count INTEGER DEFAULT 0");
+		// Ignore errors — column already exists
+	}
+
+	// Migration: add title columns to files
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN container_title TEXT DEFAULT ''");
+		m.exec("ALTER TABLE files ADD COLUMN display_title TEXT DEFAULT ''");
+	}
+
 	// One-time migration: reset 'no_poster' records to 'pending' so that newly
 	// bundled tools (ffmpeg, mkvextract) get a chance to extract embedded art.
 	// Uses a preferences key so this only runs once per installation upgrade.
@@ -329,8 +344,9 @@ std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 	QSqlQuery q(connection());
 	q.prepare(R"(
 		INSERT INTO files(path, filename, size_bytes, mtime_ms, created_ms, container, duration_s,
-						  overall_bitrate, original_language, scan_time, scan_run_id, needs_rescan)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+						  overall_bitrate, original_language, scan_time, scan_run_id, needs_rescan,
+						  container_title)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(path) DO UPDATE SET
 			filename=excluded.filename,
 			size_bytes=excluded.size_bytes,
@@ -342,7 +358,8 @@ std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 			original_language=excluded.original_language,
 			scan_time=excluded.scan_time,
 			scan_run_id=excluded.scan_run_id,
-			needs_rescan=excluded.needs_rescan
+			needs_rescan=excluded.needs_rescan,
+			container_title=excluded.container_title
 	)");
 	q.addBindValue(rec.path);
 	q.addBindValue(rec.filename);
@@ -356,6 +373,7 @@ std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 	q.addBindValue(rec.scanTime);
 	q.addBindValue(rec.scanRunId > 0 ? QVariant(rec.scanRunId) : QVariant());
 	q.addBindValue(rec.needsRescan ? 1 : 0);
+	q.addBindValue(rec.containerTitle);
 
 	if (!q.exec()) {
 		qWarning() << "upsertFile failed:" << q.lastError().text();
@@ -404,6 +422,8 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.scanTime         = q.value("scan_time").toLongLong();
 	r.scanRunId        = q.value("scan_run_id").toLongLong();
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+	r.containerTitle   = q.value("container_title").toString();
+	r.displayTitle     = q.value("display_title").toString();
 	return r;
 }
 
@@ -428,6 +448,8 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 	r.originalLanguage = q.value("original_language").toString();
 	r.scanTime         = q.value("scan_time").toLongLong();
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+	r.containerTitle   = q.value("container_title").toString();
+	r.displayTitle     = q.value("display_title").toString();
 	return r;
 }
 
@@ -449,6 +471,8 @@ QList<FileRecord> DatabaseManager::allFiles() const
 		r.originalLanguage = q.value("original_language").toString();
 		r.scanTime         = q.value("scan_time").toLongLong();
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+		r.containerTitle   = q.value("container_title").toString();
+		r.displayTitle     = q.value("display_title").toString();
 		result.append(r);
 	}
 	return result;
@@ -476,6 +500,8 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit) const
 		r.originalLanguage = q.value("original_language").toString();
 		r.scanTime         = q.value("scan_time").toLongLong();
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+		r.containerTitle   = q.value("container_title").toString();
+		r.displayTitle     = q.value("display_title").toString();
 		result.append(r);
 	}
 	return result;
@@ -837,6 +863,15 @@ bool DatabaseManager::updateFileOriginalLanguage(qint64 fileId, const QString& l
 	return q.exec();
 }
 
+bool DatabaseManager::updateDisplayTitle(qint64 fileId, const QString& title)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET display_title=? WHERE id=?");
+	q.addBindValue(title);
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
 QList<JobRecord> DatabaseManager::queuedJobs() const
 {
 	QList<JobRecord> result;
@@ -913,8 +948,10 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.filename    = q.value(6).toString();
 		r.filePath    = q.value(7).toString();
 		r.sizeBytes   = q.value(8).toLongLong();
-		r.imdbId      = q.value(9).toString();
-		r.durationSec = q.value("duration_s").toDouble();
+		r.imdbId            = q.value(9).toString();
+		r.durationSec       = q.value("duration_s").toDouble();
+		r.voteAverage       = q.value("vote_average").toDouble();
+		r.originalLanguage  = q.value("original_language").toString();
 		result.append(r);
 	}
 }
@@ -927,7 +964,9 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel() const
 		SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,
 			   f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,
 			   COALESCE(pc.imdb_id, '') AS imdb_id,
-			   COALESCE(f.duration_s, 0.0) AS duration_s
+			   COALESCE(f.duration_s, 0.0) AS duration_s,
+			   COALESCE(pc.vote_average, 0.0) AS vote_average,
+			   COALESCE(f.original_language, '') AS original_language
 		FROM jobs j
 		LEFT JOIN files f ON j.file_id = f.id
 		LEFT JOIN poster_cache pc ON j.file_id = pc.file_id
@@ -948,7 +987,9 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,
 			   f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,
 			   COALESCE(pc.imdb_id, '') AS imdb_id,
-			   COALESCE(f.duration_s, 0.0) AS duration_s
+			   COALESCE(f.duration_s, 0.0) AS duration_s,
+			   COALESCE(pc.vote_average, 0.0) AS vote_average,
+			   COALESCE(f.original_language, '') AS original_language
 		FROM jobs j
 		LEFT JOIN files f ON j.file_id = f.id
 		LEFT JOIN poster_cache pc ON j.file_id = pc.file_id
@@ -963,7 +1004,14 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 int DatabaseManager::totalJobCount() const
 {
 	QSqlQuery q(connection());
-	q.exec("SELECT COUNT(*) FROM jobs");
+	q.exec("SELECT COUNT(*) FROM jobs WHERE status NOT IN ('done','cancelled')");
+	return q.next() ? q.value(0).toInt() : 0;
+}
+
+int DatabaseManager::queuedJobCount() const
+{
+	QSqlQuery q(connection());
+	q.exec("SELECT COUNT(*) FROM jobs WHERE status='queued'");
 	return q.next() ? q.value(0).toInt() : 0;
 }
 
@@ -994,14 +1042,16 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, imdb_id, fetched_at)
-		VALUES(?, ?, ?, ?, ?, ?)
+		INSERT INTO poster_cache(file_id, source, status, image_path, imdb_id, fetched_at, vote_average, vote_count)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET
 			source=excluded.source,
 			status=excluded.status,
 			image_path=excluded.image_path,
 			imdb_id=excluded.imdb_id,
-			fetched_at=excluded.fetched_at
+			fetched_at=excluded.fetched_at,
+			vote_average=CASE WHEN excluded.vote_average > 0 THEN excluded.vote_average ELSE vote_average END,
+			vote_count=CASE WHEN excluded.vote_count > 0 THEN excluded.vote_count ELSE vote_count END
 	)");
 	// Bind empty string (not null) — Qt maps null QString → SQL NULL which violates NOT NULL
 	auto nn = [](const QString& s) { return s.isNull() ? QString("") : s; };
@@ -1011,6 +1061,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 	q.addBindValue(nn(rec.imagePath));
 	q.addBindValue(nn(rec.imdbId));
 	q.addBindValue(rec.fetchedAt);
+	q.addBindValue(rec.voteAverage);
+	q.addBindValue(rec.voteCount);
 	if (!q.exec())
 		qWarning() << "upsertPosterRecord failed:" << q.lastError().text();
 }
@@ -1018,16 +1070,18 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT source,status,image_path,imdb_id,fetched_at FROM poster_cache WHERE file_id=?");
+	q.prepare("SELECT source,status,image_path,imdb_id,fetched_at,vote_average,vote_count FROM poster_cache WHERE file_id=?");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return {};
 	PosterRecord r;
-	r.fileId    = fileId;
-	r.source    = q.value(0).toString();
-	r.status    = q.value(1).toString();
-	r.imagePath = q.value(2).toString();
-	r.imdbId    = q.value(3).toString();
-	r.fetchedAt = q.value(4).toLongLong();
+	r.fileId      = fileId;
+	r.source      = q.value(0).toString();
+	r.status      = q.value(1).toString();
+	r.imagePath   = q.value(2).toString();
+	r.imdbId      = q.value(3).toString();
+	r.fetchedAt   = q.value(4).toLongLong();
+	r.voteAverage = q.value(5).toDouble();
+	r.voteCount   = q.value(6).toInt();
 	return r;
 }
 
@@ -1037,7 +1091,9 @@ QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 	q.exec(R"(
 		SELECT f.id FROM files f
 		LEFT JOIN poster_cache pc ON pc.file_id = f.id
-		WHERE pc.file_id IS NULL OR pc.status = 'pending'
+		WHERE pc.file_id IS NULL
+		   OR pc.status = 'pending'
+		   OR (pc.status = 'done' AND pc.vote_average = 0 AND pc.imdb_id != '')
 		ORDER BY f.id
 	)");
 	QList<qint64> ids;
@@ -1097,6 +1153,16 @@ QHash<qint64, QString> DatabaseManager::allKnownImdbIds() const
 	QHash<qint64, QString> result;
 	while (q.next())
 		result.insert(q.value(0).toLongLong(), q.value(1).toString());
+	return result;
+}
+
+QHash<qint64, double> DatabaseManager::allRatings() const
+{
+	QSqlQuery q(connection());
+	q.exec("SELECT file_id, vote_average FROM poster_cache WHERE vote_average > 0");
+	QHash<qint64, double> result;
+	while (q.next())
+		result.insert(q.value(0).toLongLong(), q.value(1).toDouble());
 	return result;
 }
 

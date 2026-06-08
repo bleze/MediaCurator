@@ -44,7 +44,8 @@ public:
 	// posterPath: TMDB poster_path already known (e.g. from search dialog) — skips the API lookup.
 	// imageData:  raw image bytes already downloaded — written directly to cache, no network call.
 	void refresh(qint64 fileId, const QString& posterPath = {},
-	             const QByteArray& imageData = {}, const QString& imdbId = {});
+	             const QByteArray& imageData = {}, const QString& imdbId = {},
+	             double voteAverage = 0.0, int voteCount = 0);
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
