@@ -50,3 +50,88 @@ jobs:
         name: MediaCurator-Windows-Release
         path: build/bin/
         if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    name: macOS (Clang universal)
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.3'
+        host: 'mac'
+        target: 'desktop'
+        arch: 'clang_64'
+        cache: true
+
+    - name: Configure CMake
+      run: cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DQt6_DIR="${{ env.Qt6_DIR }}"
+
+    - name: Build
+      run: cmake --build build --parallel
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MediaCurator-macOS-Release
+        path: build/bin/
+        if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    name: Linux (GCC x64)
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y \
+          ninja-build \
+          libgl1-mesa-dev \
+          libfontconfig1-dev \
+          libfreetype6-dev \
+          libx11-dev \
+          libx11-xcb-dev \
+          libxcb1-dev \
+          libxcb-icccm4-dev \
+          libxcb-image0-dev \
+          libxcb-keysyms1-dev \
+          libxcb-randr0-dev \
+          libxcb-render-util0-dev \
+          libxcb-shape0-dev \
+          libxcb-shm0-dev \
+          libxcb-sync-dev \
+          libxcb-xfixes0-dev \
+          libxcb-xinerama0-dev \
+          libxcb-xkb-dev \
+          libxkbcommon-dev \
+          libxkbcommon-x11-dev
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.3'
+        host: 'linux'
+        target: 'desktop'
+        arch: 'linux_gcc_64'
+        cache: true
+
+    - name: Configure CMake
+      run: cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DQt6_DIR="${{ env.Qt6_DIR }}"
+
+    - name: Build
+      run: cmake --build build --parallel
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MediaCurator-Linux-Release
+        path: build/bin/
+        if-no-files-found: error
