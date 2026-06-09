@@ -17,9 +17,11 @@ set(CPACK_PACKAGE_EXECUTABLES     "MediaCurator;MediaCurator")
 if(WIN32)
     set(CPACK_GENERATOR "NSIS")
     if(EXISTS "${CMAKE_SOURCE_DIR}/src/resources/icons/app_icon.ico")
-        # NSIS requires DOS-style backslash paths; CMake does not auto-convert these.
+        # NSIS requires backslash paths.  CPack writes the value verbatim into
+        # CPackConfig.cmake inside a set() call, so each \ must be stored as \\
+        # (CMake string-escape) to survive the round-trip without a parse error.
         set(_ico "${CMAKE_SOURCE_DIR}/src/resources/icons/app_icon.ico")
-        string(REPLACE "/" "\\" _ico "${_ico}")
+        string(REPLACE "/" "\\\\" _ico "${_ico}")
         set(CPACK_NSIS_MUI_ICON    "${_ico}")
         set(CPACK_NSIS_MUI_UNIICON "${_ico}")
     endif()
