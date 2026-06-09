@@ -329,8 +329,8 @@ void McJobPanel::setupUi()
 	m_chkAutoTrack = new QCheckBox(tr("Track running"), this);
 	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
 	m_chkAutoTrack->setToolTip(tr(
-	    "When a job starts: switch the filter to Running (if any specific filter is active) "
-	    "or scroll to the running item (if All is active)"));
+	    "When a job starts: scroll it into view, switching the filter to Running "
+	    "first if another filter is active"));
 	connect(m_chkAutoTrack, &QCheckBox::toggled, this, [](bool on) {
 		AppSettings::instance().setValue("jobPanel/followRunning", on);
 	});
@@ -720,16 +720,8 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 
 		if (!m_chkAutoTrack->isChecked()) return;
 
-		const QString filter = m_statusFilter->currentData().toString();
-		if (filter.isEmpty()) {
-			for (int row = 0; row < m_model->rowCount(); ++row) {
-				const QModelIndex idx = m_model->index(row);
-				if (idx.data(McJobListModel::StatusRole).toString() == QLatin1String("running")) {
-					m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
-					break;
-				}
-			}
-		} else {
+		// Any specific filter switches to Running first (no-op if already there)
+		if (!m_statusFilter->currentData().toString().isEmpty()) {
 			for (int i = 0; i < m_statusFilter->count(); ++i) {
 				if (m_statusFilter->itemData(i).toString() == QLatin1String("running")) {
 					m_statusFilter->setCurrentIndex(i);
@@ -737,6 +729,22 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 				}
 			}
 		}
+
+		// Scroll the job that just started into view. The Running filter also
+		// lists queued jobs, so the running item can sit anywhere in the list.
+		QModelIndex target;
+		for (int row = 0; row < m_model->rowCount(); ++row) {
+			const QModelIndex idx = m_model->index(row);
+			if (idx.data(McJobListModel::JobIdRole).toLongLong() == jobId) {
+				target = idx;
+				break;
+			}
+			if (!target.isValid()
+			    && idx.data(McJobListModel::StatusRole).toString() == QLatin1String("running"))
+				target = idx;   // fallback: first running item
+		}
+		if (target.isValid())
+			m_listView->scrollTo(target, QAbstractItemView::PositionAtCenter);
 	});
 	connect(queue, &JobQueue::jobFinished, this,
 	        [this](qint64 jobId, bool ok, qint64 savedBytes) {
