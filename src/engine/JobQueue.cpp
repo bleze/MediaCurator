@@ -141,12 +141,15 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	const QString finalOutput   = m_currentJob->finalOutputPath();
 	const QString originalInput = m_currentJob->inputFilePath();
 
-	emit jobFinished(jobId, ok, savedBytes);
-
+	// Clear the current-job pointer BEFORE emitting jobFinished so that
+	// hasActiveJob() returns false inside any synchronous signal handler
+	// (e.g. the close-after-pause path in McMainWindow::closeEvent).
 	m_currentJob->deleteLater();
 	m_currentJob    = nullptr;
 	m_currentJobId  = -1;
 	m_currentFileId = -1;
+
+	emit jobFinished(jobId, ok, savedBytes);
 
 	// Re-scan the file so the card reflects the new track layout.
 	// For non-MKV / ISO jobs the output path differs from the input — update the
