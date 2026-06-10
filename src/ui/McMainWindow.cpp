@@ -31,6 +31,7 @@
 #endif
 
 #include <QAbstractItemView>
+#include <QComboBox>
 #include <QShowEvent>
 #include <QTimer>
 #include <functional>
@@ -729,6 +730,26 @@ void McMainWindow::setupUi()
 	m_jobPanel->setJobQueue(m_jobQueue);
 	m_jobPanel->setMinimumHeight(120);
 	splitter->addWidget(m_jobPanel);
+
+	// Sync filter-bar combo widths so they align column-by-column across the splitter.
+	// Status combos: both already have their minimum widths set (with different padding
+	// for the pill delegate), so take the max.
+	// Sort combos: neither has an explicit minimum, so measure via AdjustToContents first.
+	{
+		const auto syncCombos = [](QComboBox* a, QComboBox* b) {
+			const auto pol = QComboBox::AdjustToContents;
+			const auto polR = QComboBox::AdjustToContentsOnFirstShow;
+			a->setSizeAdjustPolicy(pol);
+			b->setSizeAdjustPolicy(pol);
+			const int w = qMax(a->sizeHint().width(), b->sizeHint().width());
+			a->setMinimumWidth(w);
+			b->setMinimumWidth(w);
+			a->setSizeAdjustPolicy(polR);
+			b->setSizeAdjustPolicy(polR);
+		};
+		syncCombos(m_filterPanel->statusCombo(), m_jobPanel->statusCombo());
+		syncCombos(m_filterPanel->sortCombo(),   m_jobPanel->sortCombo());
+	}
 
 	connect(m_jobPanel, &McJobPanel::jobsChanged,
 	        this, [this](int) { updateJobPanelVisibility(); });
@@ -1517,9 +1538,16 @@ void McMainWindow::onAnalyzeProgress(int current, int total, const QString& file
 
 void McMainWindow::onAnalyzeJobProposed(qint64 /*fileId*/)
 {
+	const bool isFirst = (m_analyzeJobCount == 0);
 	++m_analyzeJobCount;
-	// Debounce: collapse bursts of proposed-job signals into one refresh
-	// fired 300 ms after the last one. onAnalyzeFinished does a final refresh.
+	if (isFirst) {
+		// Show the queue immediately on the first hit rather than waiting for
+		// the debounce timer or the end of analysis.
+		m_jobPanel->refresh();
+		m_listModel->refreshJobFilter();
+		updateJobPanelVisibility(/*forceShow=*/true);
+	}
+	// Debounce: collapse subsequent bursts into one refresh 300 ms after the last.
 	m_analyzeRefreshTimer->start();
 }
 

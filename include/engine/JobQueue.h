@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "core/DatabaseManager.h"
 #include <QObject>
 #include <QList>
 
@@ -17,6 +18,7 @@ public:
 	void cancel();
 
 	void setWriteJobLog(bool v) { m_writeJobLog = v; }
+	void setSortMode(JobSortMode mode) { m_sortMode = mode; }
 
 	bool isRunning()   const { return m_running; }
 	bool isPaused()    const { return m_paused; }
@@ -47,6 +49,7 @@ private:
 	bool           m_running      = false;
 	bool           m_paused       = false;
 	bool           m_writeJobLog  = false;
+	JobSortMode    m_sortMode     = JobSortMode::SmallestFirst;
 };
 
 } // namespace Mc

@@ -788,8 +788,9 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	QSqlQuery q(connection());
 	q.prepare(R"(
 		INSERT INTO jobs(file_id, status, job_type, command_args_json,
-						 summary, dry_run, created_at, description_text, original_streams_json)
-		VALUES(?,?,?,?,?,?,?,?,?)
+						 summary, dry_run, created_at, description_text, original_streams_json,
+						 saved_bytes)
+		VALUES(?,?,?,?,?,?,?,?,?,?)
 	)");
 	q.addBindValue(job.fileId > 0 ? QVariant(job.fileId) : QVariant());
 	q.addBindValue(job.status.isEmpty() ? "proposed" : job.status);
@@ -800,6 +801,7 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.addBindValue(QDateTime::currentSecsSinceEpoch());
 	q.addBindValue(job.descriptionText);
 	q.addBindValue(job.originalStreamsJson);
+	q.addBindValue(job.savedBytes);
 	if (!q.exec()) {
 		qWarning() << "insertJob failed:" << q.lastError().text();
 		return -1;
@@ -913,21 +915,21 @@ void DatabaseManager::deleteJobsForFile(qint64 fileId)
 	q.exec();
 }
 
-QList<JobRecord> DatabaseManager::queuedJobs() const
+QList<JobRecord> DatabaseManager::queuedJobs(JobSortMode sortMode) const
 {
 	QList<JobRecord> result;
 	QSqlQuery q(connection());
-	// Join files to order by size ascending — smallest files run first so each
-	// completed job frees the most proportional space for the next.
-	q.exec(R"(
-		SELECT j.id, j.file_id, j.status, j.job_type, j.command_args_json,
-		       j.summary, j.dry_run, j.created_at, j.started_at, j.finished_at,
-		       j.result_code, j.output_log, j.saved_bytes, j.description_text
-		FROM jobs j
-		LEFT JOIN files f ON j.file_id = f.id
-		WHERE j.status = 'queued'
-		ORDER BY COALESCE(f.size_bytes, 0) ASC
-	)");
+	const QString orderBy = (sortMode == JobSortMode::LargestSavingsFirst)
+		? QStringLiteral("j.saved_bytes DESC")
+		: QStringLiteral("COALESCE(f.size_bytes, 0) ASC");
+	const QString sql = QStringLiteral(
+		"SELECT j.id, j.file_id, j.status, j.job_type, j.command_args_json,"
+		"       j.summary, j.dry_run, j.created_at, j.started_at, j.finished_at,"
+		"       j.result_code, j.output_log, j.saved_bytes, j.description_text"
+		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
+		" WHERE j.status = 'queued'"
+		" ORDER BY %1").arg(orderBy);
+	q.exec(sql);
 	while (q.next()) {
 		JobRecord j;
 		j.id               = q.value("id").toLongLong();
@@ -997,44 +999,50 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 	}
 }
 
-QList<JobDisplayRecord> DatabaseManager::allJobsForPanel() const
+QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) const
 {
 	QList<JobDisplayRecord> result;
 	QSqlQuery q(connection());
-	q.exec(R"(
-		SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,
-			   f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,
-			   COALESCE(pc.imdb_id, '') AS imdb_id,
-			   COALESCE(f.duration_s, 0.0) AS duration_s,
-			   COALESCE(pc.vote_average, 0.0) AS vote_average,
-			   COALESCE(f.original_language, '') AS original_language
-		FROM jobs j
-		LEFT JOIN files f ON j.file_id = f.id
-		LEFT JOIN poster_cache pc ON j.file_id = pc.file_id
-		ORDER BY size_bytes ASC, j.created_at ASC
-	)");
+	const QString orderBy = (sortMode == JobSortMode::LargestSavingsFirst)
+		? QStringLiteral("j.saved_bytes DESC, j.created_at ASC")
+		: QStringLiteral("size_bytes ASC, j.created_at ASC");
+	const QString sql = QStringLiteral(
+		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
+		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
+		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
+		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
+		"       COALESCE(f.original_language, '') AS original_language"
+		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
+		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
+		" ORDER BY %1").arg(orderBy);
+	q.exec(sql);
 	if (!q.isActive())
 		qWarning() << "allJobsForPanel query failed:" << q.lastError().text();
 	parseJobDisplayRecord(q, result);
 	return result;
 }
 
-QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const QString& statusFilter) const
+QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const QString& statusFilter, JobSortMode sortMode) const
 {
 	QList<JobDisplayRecord> result;
 	QSqlQuery q(connection());
-	const QString where = statusFilter.isEmpty() ? QString{} : QStringLiteral(" WHERE j.status = ?");
-	q.prepare(QStringLiteral(R"(
-		SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,
-			   f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,
-			   COALESCE(pc.imdb_id, '') AS imdb_id,
-			   COALESCE(f.duration_s, 0.0) AS duration_s,
-			   COALESCE(pc.vote_average, 0.0) AS vote_average,
-			   COALESCE(f.original_language, '') AS original_language
-		FROM jobs j
-		LEFT JOIN files f ON j.file_id = f.id
-		LEFT JOIN poster_cache pc ON j.file_id = pc.file_id
-	)") + where + QStringLiteral(" ORDER BY size_bytes ASC, j.created_at ASC LIMIT ?"));
+	const QString orderBy = (sortMode == JobSortMode::LargestSavingsFirst)
+		? QStringLiteral("j.saved_bytes DESC, j.created_at ASC")
+		: QStringLiteral("size_bytes ASC, j.created_at ASC");
+	QString sql = QStringLiteral(
+		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
+		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
+		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
+		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
+		"       COALESCE(f.original_language, '') AS original_language"
+		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
+		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
+	if (!statusFilter.isEmpty())
+		sql += QStringLiteral(" WHERE j.status = ?");
+	sql += QStringLiteral(" ORDER BY %1 LIMIT ?").arg(orderBy);
+	q.prepare(sql);
 	if (!statusFilter.isEmpty()) q.addBindValue(statusFilter);
 	q.addBindValue(limit);
 	q.exec();

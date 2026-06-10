@@ -70,6 +70,7 @@ public:
 
 public slots:
 	void setFilterText(const QString& text);
+	void setSortMode(JobSortMode sortMode);
 	void setFilterStatus(const QString& status);   // empty string = show all
 	void setQuickFilters(quint32 flags);           // McFilterPanel::QF_* bitmask
 	void setRatingFilter(double minRating, double maxRating);
@@ -97,6 +98,7 @@ private:
 	quint32                m_quickFilters = 0;
 	double                 m_ratingMin    = 0.0;
 	double                 m_ratingMax    = 10.0;
+	JobSortMode            m_sortMode     = JobSortMode::SmallestFirst;
 };
 
 } // namespace Mc

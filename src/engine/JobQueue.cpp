@@ -1,5 +1,6 @@
 ﻿#include "engine/JobQueue.h"
 #include "engine/RemuxJob.h"
+#include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
 #include "scanner/FfprobeScanner.h"
@@ -22,11 +23,6 @@ void JobQueue::start()
 	m_running = true;
 
 	if (m_currentJob) return; // already running a job
-
-	// Load all queued jobs from DB ordered by creation time
-	m_queue.clear();
-	for (const JobRecord& j : DatabaseManager::instance().queuedJobs())
-		m_queue.append(j.id);
 
 	runNext();
 }
@@ -53,12 +49,11 @@ void JobQueue::runNext()
 {
 	if (!m_running || m_paused) return;
 
-	// If the pre-loaded queue is exhausted, re-query the DB — the user may have
-	// queued more jobs while a previous job was running.
-	if (m_queue.isEmpty()) {
-		for (const JobRecord& j : DatabaseManager::instance().queuedJobs())
-			m_queue.append(j.id);
-	}
+	// Always re-query for a fresh sorted order — new jobs may have been added
+	// while the previous job was running and must be sorted correctly.
+	m_queue.clear();
+	for (const JobRecord& j : DatabaseManager::instance().queuedJobs(m_sortMode))
+		m_queue.append(j.id);
 
 	if (m_queue.isEmpty()) {
 		m_running = false;
@@ -74,7 +69,7 @@ void JobQueue::startJob(qint64 jobId)
 	auto& db = DatabaseManager::instance();
 
 	// Load job record to get command args and fileId
-	const auto jobs = db.queuedJobs();
+	const auto jobs = db.queuedJobs(m_sortMode);
 	QString commandArgsJson;
 	QString descriptionText;
 	qint64  fileId = -1;
@@ -145,8 +140,12 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 
 	auto& db = DatabaseManager::instance();
 	db.updateJobStatus(jobId, ok ? "done" : "failed", exitCode, log);
-	if (ok && savedBytes > 0)
+	if (ok && savedBytes > 0) {
 		db.updateJobSavedBytes(jobId, savedBytes);
+		auto& settings = AppSettings::instance();
+		const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
+		settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
+	}
 
 	// Capture paths before deleteLater invalidates the job object
 	const QString finalOutput   = m_currentJob->finalOutputPath();
@@ -176,7 +175,7 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 		// The running job finished but the queue is paused, so we won't start
 		// the next one. If the queue is also exhausted, transition to idle so
 		// the UI doesn't stay stuck in "processing" with m_running=true forever.
-		if (m_queue.isEmpty() && DatabaseManager::instance().queuedJobs().isEmpty()) {
+		if (DatabaseManager::instance().queuedJobs(m_sortMode).isEmpty()) {
 			m_running = false;
 			emit allFinished();
 		}

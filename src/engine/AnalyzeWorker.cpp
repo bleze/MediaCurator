@@ -136,6 +136,25 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 
 	if (db.hasActiveJobForFile(file.id)) return false;
 
+	// Proportional estimate: each removed track's share of total bitrate
+	// applied to actual file size.  Bitrate values often inflate absolute
+	// calculations; the ratio cancels most of that error.
+	QSet<int> removedIdx;
+	for (const auto& td : decision.tracks)
+		if (td.decision == Decision::Remove)
+			removedIdx.insert(td.stream.streamIndex);
+	double totalBr = 0.0, removedBr = 0.0;
+	for (const StreamRecord& s : streams) {
+		const double br = s.bitRate > 0 ? static_cast<double>(s.bitRate)
+		                : s.codecType == QLatin1String("subtitle") ? 50'000.0 : 0.0;
+		totalBr += br;
+		if (removedIdx.contains(s.streamIndex))
+			removedBr += br;
+	}
+	const qint64 estimatedSavings = (totalBr > 0.0 && file.sizeBytes > 0)
+	    ? static_cast<qint64>(removedBr / totalBr * static_cast<double>(file.sizeBytes))
+	    : 0;
+
 	JobRecord job;
 	job.fileId          = file.id;
 	job.status          = QStringLiteral("proposed");
@@ -144,6 +163,7 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 	job.summary             = summary;
 	job.descriptionText     = descLines.join(QLatin1Char('\n'));
 	job.originalStreamsJson  = QJsonDocument(origArr).toJson(QJsonDocument::Compact);
+	job.savedBytes          = estimatedSavings;
 	(void)db.insertJob(job);
 
 	emit jobProposed(file.id);

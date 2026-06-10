@@ -26,6 +26,9 @@ public:
 	void refresh();
 	void refreshPaged(int limit);
 
+	QComboBox* statusCombo() const { return m_statusFilter; }
+	QComboBox* sortCombo()   const { return m_sortCombo;    }
+
 	// After analyzeSingleFile creates a proposed job, call this to switch the
 	// filter to Proposed, select the new row and scroll it into view.
 	void scrollToFileJob(qint64 fileId);
@@ -75,7 +78,7 @@ private:
 	QPushButton*    m_btnSummary          = nullptr;
 	QLineEdit*      m_filterEdit          = nullptr;
 	QComboBox*      m_statusFilter        = nullptr;
-	QCheckBox*      m_chkAutoTrack        = nullptr;
+	QComboBox*      m_sortCombo           = nullptr;
 	QWidget*        m_ratingSlider        = nullptr;
 	QLabel*         m_ratingLabel         = nullptr;
 	quint32         m_qfFlags             = 0;      // active quick-filter bitmask

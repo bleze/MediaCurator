@@ -374,6 +374,19 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	tmdbHint->setOpenExternalLinks(true);
 	enrichLayout->addWidget(tmdbHint);
 	right->addWidget(enrichGroup);
+
+	// ── RIGHT: Job Queue ──────────────────────────────────────────────────────
+	auto* jobGroup  = new QGroupBox(tr("Job Queue"), this);
+	auto* jobLayout = new QVBoxLayout(jobGroup);
+
+	m_chkAutoTrack = new QCheckBox(tr("Track running job"), jobGroup);
+	m_chkAutoTrack->setToolTip(tr(
+	    "When a job starts: scroll it into view, switching the filter to Running "
+	    "first if another filter is active"));
+	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
+	jobLayout->addWidget(m_chkAutoTrack);
+	right->addWidget(jobGroup);
+
 	right->addStretch();
 
 	// ── Buttons ───────────────────────────────────────────────────────────────
@@ -498,6 +511,8 @@ void McSettingsDialog::accept()
 	m_profile->setWriteJobLog(m_chkWriteLog->isChecked());
 	m_profile->setTmdbApiKey(m_editTmdbKey->text().trimmed());
 	m_profile->save();
+
+	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());
 
 	QDialog::accept();
 }

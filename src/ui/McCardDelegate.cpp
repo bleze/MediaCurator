@@ -21,83 +21,6 @@
 #include <QtMath>
 #include <algorithm>
 
-namespace {
-
-static bool isLosslessAudio(const Mc::StreamRecord& s)
-{
-	if (s.codecType != QLatin1String("audio")) return false;
-	const QString cn = s.codecName.toLower();
-	if (cn == QLatin1String("flac")   || cn == QLatin1String("alac")
-	 || cn == QLatin1String("truehd") || cn == QLatin1String("mlp")
-	 || cn == QLatin1String("tta")    || cn == QLatin1String("wavpack")
-	 || cn.startsWith(QLatin1String("pcm_")))
-		return true;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		return cp.contains(QLatin1String("MA")) || cp.contains(QLatin1String("HRA"));
-	}
-	return false;
-}
-
-// Extracts bit depth from a PCM codec name (e.g. "pcm_s24le" → 24).
-static int pcmBitDepth(const QString& cn)
-{
-	const int u = cn.indexOf('_');
-	if (u < 0 || u + 2 >= cn.size()) return 0;
-	int i = u + 1;
-	if (!cn[i].isLetter()) return 0;
-	++i;
-	const int start = i;
-	while (i < cn.size() && cn[i].isDigit()) ++i;
-	return (i > start) ? cn.mid(start, i - start).toInt() : 0;
-}
-
-// Estimated bytes/sec per channel for lossless audio; -1 if codec is unknown.
-// ffprobe bit_rate is unreliable for lossless tracks in MKV, so we use a
-// per-codec lookup table instead of trusting the stored bitrate.
-static qint64 losslessBytesPerSecPerChannel(const Mc::StreamRecord& s)
-{
-	const QString cn = s.codecName.toLower();
-	if (cn.startsWith(QLatin1String("pcm_"))) {
-		if (s.sampleRate <= 0) return -1;
-		const int depth = pcmBitDepth(cn);
-		return (depth > 0) ? static_cast<qint64>(s.sampleRate) * depth / 8 : -1;
-	}
-	if (cn == QLatin1String("truehd") || cn == QLatin1String("mlp")) return 87'500; // ~700 kbps/ch
-	if (cn == QLatin1String("flac"))    return 56'250;  // ~450 kbps/ch
-	if (cn == QLatin1String("alac"))    return 50'000;  // ~400 kbps/ch
-	if (cn == QLatin1String("tta") || cn == QLatin1String("wavpack")) return 56'250;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		if (cp.contains(QLatin1String("MA")))  return 87'500;  // DTS-HD MA
-		if (cp.contains(QLatin1String("HRA"))) return 62'500;  // DTS-HD HRA
-	}
-	return -1;
-}
-
-// Returns estimated byte size for a stream.
-// Returns -1 for lossless audio when no reliable estimate is possible.
-static qint64 estimateStreamBytes(const Mc::StreamRecord& s,
-                                   const QList<Mc::StreamRecord>&,
-                                   qint64,
-                                   double fileDurationSec)
-{
-	if (fileDurationSec <= 0) return -1;
-
-	if (!isLosslessAudio(s)) {
-		if (s.bitRate > 0)
-			return static_cast<qint64>(s.bitRate / 8.0 * fileDurationSec);
-		if (s.codecType == QLatin1String("subtitle"))
-			return 256LL * 1024;
-		return 0;
-	}
-
-	const qint64 bpsPerChannel = losslessBytesPerSecPerChannel(s);
-	if (bpsPerChannel < 0) return -1;
-	return static_cast<qint64>(bpsPerChannel * qMax(s.channels, 1) * fileDurationSec);
-}
-
-} // anonymous namespace
 
 namespace Mc {
 
@@ -950,17 +873,21 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 				pillText = QStringLiteral("Running %1%\xE2\x80\xA6").arg(d.progress);
 
 			qint64 displaySavedBytes = d.savedBytes;
-			bool   isEstimate        = false;
-			if (displaySavedBytes == 0 &&
-			    (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued"))) {
+			const bool isPending = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued"));
+			if (isPending && displaySavedBytes == 0 && d.sizeBytes > 0) {
+				// Fallback for old jobs: proportional estimate
+				double totalBr = 0.0, removedBr = 0.0;
 				for (const auto& s : d.allStreams) {
-					if (!d.removedIndices.contains(s.streamIndex)) continue;
-					const qint64 est = estimateStreamBytes(
-					    s, d.allStreams, d.sizeBytes, d.durationSec);
-					if (est > 0) displaySavedBytes += est;
+					const double br = s.bitRate > 0 ? static_cast<double>(s.bitRate)
+					                : s.codecType == QLatin1String("subtitle") ? 50'000.0 : 0.0;
+					totalBr += br;
+					if (d.removedIndices.contains(s.streamIndex))
+						removedBr += br;
 				}
-				isEstimate = (displaySavedBytes > 0);
+				if (totalBr > 0.0)
+					displaySavedBytes = static_cast<qint64>(removedBr / totalBr * d.sizeBytes);
 			}
+			const bool isEstimate = isPending && (displaySavedBytes > 0);
 			if (displaySavedBytes > 0) {
 				const QString prefix = isEstimate ? QStringLiteral("~-") : QStringLiteral("-");
 				const double  gb     = displaySavedBytes / 1073741824.0;

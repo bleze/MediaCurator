@@ -51,6 +51,7 @@ private:
 	QCheckBox*   m_chkKeepOriginalSub;
 	QCheckBox*   m_chkWriteLog;
 	QLineEdit*   m_editTmdbKey;
+	QCheckBox*   m_chkAutoTrack;
 };
 
 } // namespace Mc

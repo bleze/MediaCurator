@@ -110,6 +110,11 @@ struct JobDisplayRecord {
 	QString originalLanguage;  // ISO 639-2; set by RuleEngine or TMDB dialog
 };
 
+enum class JobSortMode {
+	SmallestFirst,       // process smallest files first — best when low on disk space
+	LargestSavingsFirst  // process largest files first — best to recover maximum space quickly
+};
+
 /**
  * DatabaseManager — singleton access to the SQLite database.
  *
@@ -167,10 +172,10 @@ public:
 	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
 	bool setFileIgnored(qint64 fileId, bool ignored);
 	void deleteJobsForFile(qint64 fileId);
-	QList<JobRecord> queuedJobs() const;
+	QList<JobRecord> queuedJobs(JobSortMode sortMode = JobSortMode::SmallestFirst) const;
 	QList<JobRecord> allJobs() const;
-	QList<JobDisplayRecord> allJobsForPanel() const;
-	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}) const;
+	QList<JobDisplayRecord> allJobsForPanel(JobSortMode sortMode = JobSortMode::SmallestFirst) const;
+	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}, JobSortMode sortMode = JobSortMode::SmallestFirst) const;
 	int                     totalJobCount() const;
 	int                     queuedJobCount() const;
 

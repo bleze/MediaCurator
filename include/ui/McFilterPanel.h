@@ -12,6 +12,9 @@ class McFilterPanel : public QWidget {
 public:
 	explicit McFilterPanel(QWidget* parent = nullptr);
 
+	QComboBox* statusCombo() const { return m_statusCombo; }
+	QComboBox* sortCombo()   const { return m_sortCombo;   }
+
 	enum QuickFilter : quint32 {
 		QF_None   = 0,
 		QF_4K     = 1 << 0,

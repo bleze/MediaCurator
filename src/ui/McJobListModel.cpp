@@ -24,7 +24,7 @@ void McJobListModel::reload()
 	m_posterPaths = DatabaseManager::instance().allDonePosterPaths();
 
 	auto& db = DatabaseManager::instance();
-	const auto displayJobs = db.allJobsForPanel();
+	const auto displayJobs = db.allJobsForPanel(m_sortMode);
 
 	const auto allJobRecords = db.allJobs();
 	QHash<qint64, QString> argsMap;
@@ -75,7 +75,7 @@ void McJobListModel::reloadPaged(int limit)
 
 	auto& db = DatabaseManager::instance();
 	m_posterPaths = db.allDonePosterPaths();
-	const auto displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus);
+	const auto displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode);
 
 	// allJobs() is fast (just metadata, no streams) — needed for commandArgs/origStreams
 	const auto allJobRecords = db.allJobs();
@@ -111,6 +111,11 @@ void McJobListModel::reloadPaged(int limit)
 	}
 
 	applyFilter();
+}
+
+void McJobListModel::setSortMode(JobSortMode sortMode)
+{
+	m_sortMode = sortMode;
 }
 
 void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 savedBytes)

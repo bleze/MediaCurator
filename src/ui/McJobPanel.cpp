@@ -326,14 +326,11 @@ void McJobPanel::setupUi()
 	m_statusFilter->setMinimumWidth(m_statusFilter->sizeHint().width() + 31);
 	m_statusFilter->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
 
-	m_chkAutoTrack = new QCheckBox(tr("Track running"), this);
-	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
-	m_chkAutoTrack->setToolTip(tr(
-	    "When a job starts: scroll it into view, switching the filter to Running "
-	    "first if another filter is active"));
-	connect(m_chkAutoTrack, &QCheckBox::toggled, this, [](bool on) {
-		AppSettings::instance().setValue("jobPanel/followRunning", on);
-	});
+	m_sortCombo = new QComboBox(this);
+	m_sortCombo->addItem(tr("Smallest first"),        static_cast<int>(JobSortMode::SmallestFirst));
+	m_sortCombo->addItem(tr("Largest savings first"), static_cast<int>(JobSortMode::LargestSavingsFirst));
+	m_sortCombo->setCurrentIndex(AppSettings::instance().value("jobPanel/sortMode", 0).toInt());
+	m_sortCombo->setToolTip(tr("Queue processing order: which job runs next when the queue is active"));
 
 	// ── Quick-filter pills (same codec/quality set as the library panel) ──────
 	using QF = McFilterPanel;
@@ -404,7 +401,7 @@ void McJobPanel::setupUi()
 	filterLayout->addWidget(rSlider);
 
 	filterLayout->addWidget(vSep(filterBar));
-	filterLayout->addWidget(m_chkAutoTrack);
+	filterLayout->addWidget(m_sortCombo);
 	root->addWidget(filterBar);
 
 	connect(m_btnQueueSelected, &QPushButton::clicked, this, &McJobPanel::onQueueSelected);
@@ -419,6 +416,15 @@ void McJobPanel::setupUi()
 
 	// ── List view ─────────────────────────────────────────────────────────────
 	m_model = new McJobListModel(this);
+	m_model->setSortMode(static_cast<JobSortMode>(
+		AppSettings::instance().value("jobPanel/sortMode", 0).toInt()));
+	connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+		AppSettings::instance().setValue("jobPanel/sortMode", idx);
+		const auto mode = static_cast<JobSortMode>(idx);
+		m_model->setSortMode(mode);
+		m_model->reload();
+		if (m_queue) m_queue->setSortMode(mode);
+	});
 
 	m_listView = new QListView(this);
 	m_listView->setModel(m_model);
@@ -712,13 +718,15 @@ void McJobPanel::setupUi()
 void McJobPanel::setJobQueue(JobQueue* queue)
 {
 	m_queue = queue;
+	queue->setSortMode(static_cast<JobSortMode>(
+		AppSettings::instance().value("jobPanel/sortMode", 0).toInt()));
 
 	connect(queue, &JobQueue::jobStarted, this, [this](qint64 jobId) {
 		onJobStatusChanged(jobId, "running");
 		m_jobTimer.start();
 		m_etaTimer->start();
 
-		if (!m_chkAutoTrack->isChecked()) return;
+		if (!AppSettings::instance().value("jobPanel/followRunning", true).toBool()) return;
 
 		// Any specific filter switches to Running first (no-op if already there)
 		if (!m_statusFilter->currentData().toString().isEmpty()) {
@@ -757,7 +765,7 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 		refresh();
 		// When auto-track left the filter on "Running" and there's nothing left
 		// to run, jump to Proposed so the user can queue more without manual steps.
-		if (m_chkAutoTrack->isChecked()
+		if (AppSettings::instance().value("jobPanel/followRunning", true).toBool()
 		    && m_statusFilter->currentData().toString() == QLatin1String("running")) {
 			const auto counts = m_model->countsByStatus();
 			const QString target = counts.value("proposed", 0) > 0
@@ -1086,16 +1094,18 @@ void McJobPanel::updateStatusCombo()
 void McJobPanel::updateFooter()
 {
 	int total = 0, done = 0, queued = 0, running = 0, proposed = 0;
-	qint64 savedTotal = 0;
 
 	const auto jobs = DatabaseManager::instance().allJobsForPanel();
 	for (const auto& r : jobs) {
 		++total;
-		if (r.status == "done")     { ++done; savedTotal += r.savedBytes; }
+		if (r.status == "done")     ++done;
 		if (r.status == "queued")   ++queued;
 		if (r.status == "running")  ++running;
 		if (r.status == "proposed") ++proposed;
 	}
+
+	const qint64 savedTotal = AppSettings::instance()
+	    .value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
 
 	// Button state — one source of truth
 	m_btnQueueAll->setEnabled(proposed > 0);
