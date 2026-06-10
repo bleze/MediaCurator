@@ -1,5 +1,6 @@
 #include "ui/McFileListModel.h"
 
+#include <QApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <algorithm>
@@ -159,35 +160,38 @@ void McFileListModel::applyFilter()
 
 void McFileListModel::reload()
 {
-	// Refresh proposed-job file IDs for the "with removals" filter
-	m_filesWithJobs.clear();
-	for (const auto& j : DatabaseManager::instance().allJobsForPanel())
-		if (j.status == "proposed") m_filesWithJobs.insert(j.fileId);
+	QApplication::setOverrideCursor(Qt::WaitCursor);
 
 	auto& db = DatabaseManager::instance();
+	m_filesWithJobs = db.proposedJobFileIds();
+
+	const QList<FileRecord>                  files   = db.allFiles();
+	const QHash<qint64, QList<StreamRecord>> streams = db.allStreamsGrouped();
 	m_allEntries.clear();
-	const QList<FileRecord>                    files   = db.allFiles();
-	const QHash<qint64, QList<StreamRecord>>   streams = db.allStreamsGrouped();
 	m_allEntries.reserve(files.size());
 	for (const FileRecord& f : files)
 		m_allEntries.append({ f, streams.value(f.id) });
 
-	// Pre-load poster paths, IMDb IDs, and ratings already stored in the DB.
 	m_posterPaths = db.allDonePosterPaths();
 	m_imdbIds     = db.allKnownImdbIds();
 	m_ratings     = db.allRatings();
 
 	recomputeFolderCounts();
 	applyFilter();
+
+	QApplication::restoreOverrideCursor();
 }
 
 void McFileListModel::recomputeFolderCounts()
 {
+	QHash<QString, int> dirCounts;
+	for (const FileEntry& e : m_allEntries)
+		dirCounts[QFileInfo(e.file.path).absolutePath()]++;
+
 	m_folderCounts.clear();
-	for (const FileEntry& e : m_allEntries) {
-		const QString dir = QFileInfo(e.file.path).absolutePath();
-		m_folderCounts[dir]++;
-	}
+	m_folderCounts.reserve(m_allEntries.size());
+	for (const FileEntry& e : m_allEntries)
+		m_folderCounts[e.file.id] = dirCounts.value(QFileInfo(e.file.path).absolutePath(), 1);
 }
 
 void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
@@ -203,9 +207,7 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 
 void McFileListModel::refreshJobFilter()
 {
-	m_filesWithJobs.clear();
-	for (const auto& j : DatabaseManager::instance().allJobsForPanel())
-		if (j.status == "proposed") m_filesWithJobs.insert(j.fileId);
+	m_filesWithJobs = DatabaseManager::instance().proposedJobFileIds();
 	applyFilter();
 }
 
@@ -423,10 +425,8 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case DisplayTitleRole:  return e.file.displayTitle;
 	case DisplayYearRole:   return e.file.displayYear;
 	case ContainerTitleRole:return e.file.containerTitle;
-	case FolderCountRole: {
-		const QString dir = QFileInfo(e.file.path).absolutePath();
-		return m_folderCounts.value(dir, 1);
-	}
+	case FolderCountRole:
+		return m_folderCounts.value(e.file.id, 1);
 	case OverridesRole:   return QVariant::fromValue(m_forcedRemovals.value(e.file.id));
 	default:              return {};
 	}

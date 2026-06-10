@@ -42,20 +42,29 @@ void McJobListModel::reload()
 		it = liveJobIds.contains(it.key()) ? ++it : m_progress.erase(it);
 	}
 
+	// Batch-load streams for all jobs that need live DB data (non-done, or done without snapshot)
+	QList<qint64> fileIdsForBatch;
+	for (const JobDisplayRecord& djr : displayJobs) {
+		const QString& origJson = origStreamsMap.value(djr.jobId);
+		if (!(djr.status == QLatin1String("done") && !origJson.isEmpty()))
+			fileIdsForBatch << djr.fileId;
+	}
+	const auto streamsMap = db.streamsForFiles(fileIdsForBatch);
+
 	for (const JobDisplayRecord& djr : displayJobs) {
 		JobCardEntry e;
 		e.job = djr;
 		const QString& origJson = origStreamsMap.value(djr.jobId);
-		if (djr.status == "done" && !origJson.isEmpty()) {
+		if (djr.status == QLatin1String("done") && !origJson.isEmpty()) {
 			// Use the pre-remux stream snapshot so removed tracks (now gone from DB)
 			// still show with strikethrough and indices match the original command args.
 			e.allStreams = streamsFromJson(origJson);
 		} else {
-			e.allStreams = db.streamsForFile(djr.fileId);
+			e.allStreams = streamsMap.value(djr.fileId);
 		}
 		e.keptStreams = computeKeptStreams(e.allStreams, argsMap.value(djr.jobId));
 		m_allEntries.append(e);
-		m_allCheckStates.append(djr.status == "proposed" ? Qt::Checked : Qt::Unchecked);
+		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
 
 	applyFilter();

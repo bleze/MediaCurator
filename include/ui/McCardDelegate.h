@@ -147,8 +147,8 @@ private:
 	mutable QFontMetrics      m_badgeFm      { QFont{} };
 
 	static constexpr int kPadH      = 10; // horizontal inset from card edge to poster and content
-	static constexpr int kPadV      = 6;  // vertical padding above the folder row
-	static constexpr int kPadBottom = 8;  // vertical padding below the last badge row
+	static constexpr int kPadV      = 4;  // vertical padding above the folder row
+	static constexpr int kPadBottom = 7;  // vertical padding below the last badge row
 	static constexpr int kFolderH   = 20; // height of the title/meta row (movie title, duration, size, rating)
 	static constexpr int kFolderGap = 0;  // explicit gap between the title row and the filename row
 	static constexpr int kHeaderH   = 24; // height of the filename row (also the play-button size)

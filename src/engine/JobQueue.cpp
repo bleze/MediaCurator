@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QStorageInfo>
+#include <QThreadPool>
 
 namespace Mc {
 
@@ -51,36 +52,25 @@ void JobQueue::runNext()
 
 	// Always re-query for a fresh sorted order — new jobs may have been added
 	// while the previous job was running and must be sorted correctly.
-	m_queue.clear();
-	for (const JobRecord& j : DatabaseManager::instance().queuedJobs(m_sortMode))
-		m_queue.append(j.id);
+	const auto jobs = DatabaseManager::instance().queuedJobs(m_sortMode);
 
-	if (m_queue.isEmpty()) {
+	if (jobs.isEmpty()) {
 		m_running = false;
 		emit allFinished();
 		return;
 	}
 
-	startJob(m_queue.takeFirst());
+	startJob(jobs.first());
 }
 
-void JobQueue::startJob(qint64 jobId)
+void JobQueue::startJob(const JobRecord& job)
 {
 	auto& db = DatabaseManager::instance();
 
-	// Load job record to get command args and fileId
-	const auto jobs = db.queuedJobs(m_sortMode);
-	QString commandArgsJson;
-	QString descriptionText;
-	qint64  fileId = -1;
-	for (const JobRecord& j : jobs) {
-		if (j.id == jobId) {
-			commandArgsJson = j.commandArgsJson;
-			fileId          = j.fileId;
-			descriptionText = j.descriptionText;
-			break;
-		}
-	}
+	const qint64  jobId           = job.id;
+	const qint64  fileId          = job.fileId;
+	const QString commandArgsJson = job.commandArgsJson;
+	const QString descriptionText = job.descriptionText;
 
 	if (commandArgsJson.isEmpty()) {
 		// Job no longer queued — skip
@@ -166,7 +156,31 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 			const QFileInfo fi(finalOutput);
 			db.updateFilePath(fileId, finalOutput, fi.fileName());
 		}
-		rescanFile(fileId);
+		// Rescan on a thread pool thread — ffprobe can take several seconds and
+		// must not block the UI thread. The signal is delivered via queued connection.
+		const qint64  capturedFileId = fileId;
+		const QString ffprobePath    = ExternalTools::instance().ffprobePath();
+		const auto    fileOpt        = db.fileById(capturedFileId);
+		if (fileOpt) {
+			FileRecord fileCopy = *fileOpt;
+			QThreadPool::globalInstance()->start([this, capturedFileId, fileCopy, ffprobePath]() {
+				FfprobeScanner scanner(ffprobePath);
+				const FfprobeScanner::ScanResult result = scanner.scanFile(fileCopy.path);
+				if (!result.success) {
+					qWarning() << "JobQueue::rescanFile: ffprobe failed for" << fileCopy.path
+					           << "—" << result.errorMessage;
+					return;
+				}
+				auto& db2 = DatabaseManager::instance();
+				FileRecord updated       = result.file;
+				updated.scanRunId        = fileCopy.scanRunId;
+				if (updated.originalLanguage.isEmpty())
+					updated.originalLanguage = fileCopy.originalLanguage;
+				(void)db2.upsertFile(updated);
+				db2.insertStreams(capturedFileId, result.streams);
+				emit fileRescanned(capturedFileId);
+			});
+		}
 	}
 
 	if (m_running && !m_paused) {
@@ -175,44 +189,12 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 		// The running job finished but the queue is paused, so we won't start
 		// the next one. If the queue is also exhausted, transition to idle so
 		// the UI doesn't stay stuck in "processing" with m_running=true forever.
-		if (DatabaseManager::instance().queuedJobs(m_sortMode).isEmpty()) {
+		if (DatabaseManager::instance().queuedJobCount() == 0) {
 			m_running = false;
 			emit allFinished();
 		}
 	}
 }
 
-void JobQueue::rescanFile(qint64 fileId)
-{
-	auto& db = DatabaseManager::instance();
-
-	const auto fileOpt = db.fileById(fileId);
-	if (!fileOpt) {
-		qWarning() << "JobQueue::rescanFile: fileId" << fileId << "not found in DB";
-		return;
-	}
-
-	const QString ffprobePath = ExternalTools::instance().ffprobePath();
-	FfprobeScanner scanner(ffprobePath);
-
-	const FfprobeScanner::ScanResult result = scanner.scanFile(fileOpt->path);
-	if (!result.success) {
-		qWarning() << "JobQueue::rescanFile: ffprobe failed for" << fileOpt->path
-		           << "—" << result.errorMessage;
-		return;
-	}
-
-	// Preserve the existing scan_run_id; update file metadata + streams
-	FileRecord updated       = result.file;
-	updated.scanRunId        = fileOpt->scanRunId;
-	// Keep the original language that was already detected/stored
-	if (updated.originalLanguage.isEmpty())
-		updated.originalLanguage = fileOpt->originalLanguage;
-
-	(void)db.upsertFile(updated);
-	db.insertStreams(fileId, result.streams);
-
-	emit fileRescanned(fileId);
-}
 
 } // namespace Mc

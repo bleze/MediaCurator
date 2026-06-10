@@ -100,7 +100,7 @@ private:
 	QHash<qint64, int>        m_posterVersions;  // fileId → version counter (increments on update)
 	QHash<qint64, QString>    m_imdbIds;         // fileId → IMDb ID
 	QHash<qint64, double>     m_ratings;         // fileId → TMDB vote_average (absent = no rating)
-	QHash<QString, int>       m_folderCounts;    // parentDir → count of files in that folder
+	QHash<qint64, int>        m_folderCounts;    // fileId → count of files sharing the same parent folder
 	QHash<qint64, QSet<int>>  m_forcedRemovals;  // fileId → stream indices user wants removed
 	QString                   m_filterText;
 	bool                      m_filterHasRemovals  = false;

@@ -39,10 +39,8 @@ private slots:
 
 private:
 	void runNext();
-	void startJob(qint64 jobId);
-	void rescanFile(qint64 fileId);
+	void startJob(const JobRecord& job);
 
-	QList<qint64>  m_queue;
 	RemuxJob*      m_currentJob   = nullptr;
 	qint64         m_currentJobId = -1;
 	qint64         m_currentFileId = -1;

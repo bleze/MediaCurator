@@ -1078,6 +1078,26 @@ int DatabaseManager::queuedJobCount() const
 	return q.next() ? q.value(0).toInt() : 0;
 }
 
+QHash<QString, int> DatabaseManager::jobStatusCounts() const
+{
+	QHash<QString, int> result;
+	QSqlQuery q(connection());
+	q.exec("SELECT status, COUNT(*) FROM jobs GROUP BY status");
+	while (q.next())
+		result.insert(q.value(0).toString(), q.value(1).toInt());
+	return result;
+}
+
+QSet<qint64> DatabaseManager::proposedJobFileIds() const
+{
+	QSet<qint64> result;
+	QSqlQuery q(connection());
+	q.exec("SELECT file_id FROM jobs WHERE status='proposed'");
+	while (q.next())
+		result.insert(q.value(0).toLongLong());
+	return result;
+}
+
 // ── Preferences ───────────────────────────────────────────────────────────────
 
 bool DatabaseManager::setPref(const QString& key, const QString& value)

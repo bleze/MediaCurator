@@ -11,6 +11,7 @@
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QColor>
 #include <QComboBox>
@@ -935,7 +936,12 @@ void McJobPanel::onStartPause()
 	} else if (m_queue->isRunning()) {
 		m_queue->pause();
 	} else {
+		// The disk-space check in startJob() calls QStorageInfo, which can stall
+		// for several seconds when the target drive is asleep (e.g. NAS spin-up).
+		// Show a wait cursor so the UI doesn't look frozen during that window.
+		QApplication::setOverrideCursor(Qt::WaitCursor);
 		m_queue->start();
+		QApplication::restoreOverrideCursor();
 	}
 	updateFooter();
 }
@@ -1084,16 +1090,13 @@ void McJobPanel::updateStatusCombo()
 
 void McJobPanel::updateFooter()
 {
-	int total = 0, done = 0, queued = 0, running = 0, proposed = 0;
-
-	const auto jobs = DatabaseManager::instance().allJobsForPanel();
-	for (const auto& r : jobs) {
-		++total;
-		if (r.status == "done")     ++done;
-		if (r.status == "queued")   ++queued;
-		if (r.status == "running")  ++running;
-		if (r.status == "proposed") ++proposed;
-	}
+	const auto statusCounts = DatabaseManager::instance().jobStatusCounts();
+	const int proposed = statusCounts.value(QStringLiteral("proposed"), 0);
+	const int queued   = statusCounts.value(QStringLiteral("queued"),   0);
+	const int running  = statusCounts.value(QStringLiteral("running"),  0);
+	const int done     = statusCounts.value(QStringLiteral("done"),     0);
+	int total = 0;
+	for (int n : statusCounts) total += n;
 
 	const qint64 savedTotal = AppSettings::instance()
 	    .value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();

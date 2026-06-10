@@ -179,6 +179,8 @@ public:
 	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}, JobSortMode sortMode = JobSortMode::SmallestFirst) const;
 	int                     totalJobCount() const;
 	int                     queuedJobCount() const;
+	QHash<QString, int>     jobStatusCounts() const;
+	QSet<qint64>            proposedJobFileIds() const;
 
 	// ── Poster cache ─────────────────────────────────────────────────────────
 	void                        upsertPosterRecord(const PosterRecord& rec);

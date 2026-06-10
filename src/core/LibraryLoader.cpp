@@ -17,12 +17,7 @@ void LibraryLoader::run()
 	// Emit meta first so posters and IMDb ids appear as files populate
 	emit metaReady(db.allDonePosterPaths(),
 	               db.allKnownImdbIds(),
-	               [&]{
-	                   QSet<qint64> s;
-	                   for (const auto& j : db.allJobsForPanel())
-	                       if (j.status == QLatin1String("proposed")) s.insert(j.fileId);
-	                   return s;
-	               }(),
+	               db.proposedJobFileIds(),
 	               db.allRatings());
 
 	int offset    = m_startOffset;
