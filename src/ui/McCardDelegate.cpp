@@ -824,13 +824,12 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 		// Smart title — fills remaining left portion
 		QFont titleFont = option.font;
-		titleFont.setPointSizeF(option.font.pointSizeF() * 0.85);
+		titleFont.setBold(true);
 		const int titleW = rightEdge - folderRect.left() - 4;
 		if (titleW > 20) {
 			const QRect titleRect(folderRect.left(), folderRect.top(), titleW, folderRect.height());
 			painter->setFont(titleFont);
-			painter->setPen(d.displayTitle.isEmpty() && d.containerTitle.isEmpty()
-			                ? dimColor : textColor.darker(110));
+			painter->setPen(textColor);
 			painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, smartTitle);
 		}
 	}
@@ -838,7 +837,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	// ── Header: VLC button (right) | right-side meta | filename (left) ───────
 	{
 		QFont fnFont = option.font;
-		fnFont.setBold(true);
+		fnFont.setPointSizeF(option.font.pointSizeF() * 0.85);
 
 		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
 		                content.width(), kHeaderH);
@@ -900,7 +899,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 		// Filename — fills remaining left space
 		painter->setFont(fnFont);
-		painter->setPen(textColor);
+		painter->setPen(dimColor);
 		painter->drawText(QRect(hdr.left(), hdr.top(), rightEdgeForFilename - hdr.left() - 4, hdr.height()),
 		                  Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, d.filename);
 	}

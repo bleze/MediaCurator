@@ -53,8 +53,7 @@ private slots:
 	void onRemoveSelected();
 	void onPreviewCommand();
 	void onShowSummary();
-	void onStart();
-	void onPause();
+	void onStartPause();
 	void onCancel();
 
 private:
@@ -70,8 +69,7 @@ private:
 	QPushButton*    m_btnQueueSelected    = nullptr;
 	QPushButton*    m_btnUnqueue          = nullptr;
 	QPushButton*    m_btnQueueAll         = nullptr;
-	QPushButton*    m_btnStart            = nullptr;
-	QPushButton*    m_btnPause            = nullptr;
+	QPushButton*    m_btnStartPause        = nullptr;
 	QPushButton*    m_btnCancel           = nullptr;
 	QPushButton*    m_btnRemove           = nullptr;
 	QPushButton*    m_btnPreviewCmd       = nullptr;

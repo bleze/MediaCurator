@@ -234,8 +234,7 @@ void McJobPanel::setupUi()
 	m_btnRemove        = new QPushButton(tr("Remove"),         toolbar);
 	m_btnPreviewCmd    = new QPushButton(tr("Preview Command"), toolbar);
 	m_btnSummary       = new QPushButton(tr("Summary"),        toolbar);
-	m_btnStart         = new QPushButton(tr("Start"),          toolbar);
-	m_btnPause         = new QPushButton(tr("Pause"),          toolbar);
+	m_btnStartPause    = new QPushButton(tr("Start"),          toolbar);
 	m_btnCancel        = new QPushButton(tr("Cancel"),         toolbar);
 
 	const QSize kIconSz(24, 24);
@@ -251,18 +250,15 @@ void McJobPanel::setupUi()
 	m_btnPreviewCmd->setIconSize(kIconSz);
 	m_btnSummary->setIcon(svgIcon(":/icons/manage_search.svg"));
 	m_btnSummary->setIconSize(kIconSz);
-	m_btnStart->setIcon(svgIcon(":/icons/play_arrow.svg"));
-	m_btnStart->setIconSize(kIconSz);
-	m_btnPause->setIcon(svgIcon(":/icons/pause.svg"));
-	m_btnPause->setIconSize(kIconSz);
+	m_btnStartPause->setIcon(svgIcon(":/icons/play_arrow.svg"));
+	m_btnStartPause->setIconSize(kIconSz);
 	m_btnCancel->setIcon(svgIcon(":/icons/stop_circle.svg"));
 	m_btnCancel->setIconSize(kIconSz);
 
 	m_btnQueueSelected->setEnabled(false);
 	m_btnUnqueue->setEnabled(false);
 	m_btnQueueAll->setEnabled(false);
-	m_btnStart->setEnabled(false);
-	m_btnPause->setEnabled(false);
+	m_btnStartPause->setEnabled(false);
 	m_btnCancel->setEnabled(false);
 	m_btnRemove->setEnabled(false);
 	m_btnPreviewCmd->setEnabled(false);
@@ -271,9 +267,8 @@ void McJobPanel::setupUi()
 	m_btnQueueSelected->setToolTip(tr("Move selected proposed jobs to the processing queue"));
 	m_btnUnqueue->setToolTip(tr("Move selected queued jobs back to proposed state"));
 	m_btnQueueAll->setToolTip(tr("Move all proposed jobs to the processing queue"));
-	m_btnStart->setToolTip(tr("Start processing — runs all queued jobs in order"));
-	m_btnPause->setToolTip(tr("Pause after the current job completes"));
-	m_btnCancel->setToolTip(tr("Stop the current job — queued jobs remain and can be resumed with Start"));
+	m_btnStartPause->setToolTip(tr("Start processing — runs all queued jobs in order"));
+	m_btnCancel->setToolTip(tr("Stop the current job — queued jobs remain and can be restarted"));
 	m_btnRemove->setToolTip(tr("Remove selected jobs from the queue"));
 	m_btnPreviewCmd->setToolTip(tr("Show the mkvmerge command for the selected job"));
 	m_btnSummary->setToolTip(tr("Show aggregate statistics for all proposed jobs"));
@@ -294,8 +289,7 @@ void McJobPanel::setupUi()
 	tbSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 	toolbar->addWidget(tbSpacer);
 
-	toolbar->addWidget(m_btnStart);
-	toolbar->addWidget(m_btnPause);
+	toolbar->addWidget(m_btnStartPause);
 	toolbar->addWidget(m_btnCancel);
 
 	m_footerLabel = new QLabel(tr("No jobs"), toolbar);
@@ -411,8 +405,7 @@ void McJobPanel::setupUi()
 	connect(m_btnRemove,      &QPushButton::clicked, this, &McJobPanel::onRemoveSelected);
 	connect(m_btnPreviewCmd,  &QPushButton::clicked, this, &McJobPanel::onPreviewCommand);
 	connect(m_btnSummary,     &QPushButton::clicked, this, &McJobPanel::onShowSummary);
-	connect(m_btnStart,       &QPushButton::clicked, this, &McJobPanel::onStart);
-	connect(m_btnPause,       &QPushButton::clicked, this, &McJobPanel::onPause);
+	connect(m_btnStartPause,  &QPushButton::clicked, this, &McJobPanel::onStartPause);
 	connect(m_btnCancel,      &QPushButton::clicked, this, &McJobPanel::onCancel);
 
 	// ── List view ─────────────────────────────────────────────────────────────
@@ -934,31 +927,22 @@ void McJobPanel::onRemoveSelected()
 	});
 }
 
-void McJobPanel::onStart()
-{
-	if (!m_queue) return;
-	m_queue->start();
-}
-
-void McJobPanel::onPause()
+void McJobPanel::onStartPause()
 {
 	if (!m_queue) return;
 	if (m_queue->isPaused()) {
 		m_queue->start();
-		m_btnPause->setIcon(svgIcon(":/icons/pause.svg"));
-		m_btnPause->setText(tr("Pause"));
-	} else {
+	} else if (m_queue->isRunning()) {
 		m_queue->pause();
-		m_btnPause->setIcon(svgIcon(":/icons/play_arrow.svg"));
-		m_btnPause->setText(tr("Resume"));
+	} else {
+		m_queue->start();
 	}
+	updateFooter();
 }
 
 void McJobPanel::onCancel()
 {
 	if (m_queue) m_queue->cancel();
-	m_btnPause->setIcon(svgIcon(":/icons/pause.svg"));
-	m_btnPause->setText(tr("Pause"));
 	refresh();
 }
 
@@ -1117,9 +1101,24 @@ void McJobPanel::updateFooter()
 	// Button state — one source of truth
 	m_btnQueueAll->setEnabled(proposed > 0);
 	m_btnSummary->setEnabled(proposed > 0);
-	m_btnStart->setEnabled(queued > 0 && running == 0);
-	m_btnPause->setEnabled(running > 0 && queued > 0);
 	m_btnCancel->setEnabled(running > 0);
+
+	if (m_queue && m_queue->isPaused()) {
+		m_btnStartPause->setIcon(svgIcon(":/icons/play_arrow.svg"));
+		m_btnStartPause->setText(tr("Resume"));
+		m_btnStartPause->setToolTip(tr("Resume processing the queue"));
+		m_btnStartPause->setEnabled(true);
+	} else if (running > 0) {
+		m_btnStartPause->setIcon(svgIcon(":/icons/pause.svg"));
+		m_btnStartPause->setText(tr("Pause"));
+		m_btnStartPause->setToolTip(tr("Pause after the current job completes"));
+		m_btnStartPause->setEnabled(true);
+	} else {
+		m_btnStartPause->setIcon(svgIcon(":/icons/play_arrow.svg"));
+		m_btnStartPause->setText(tr("Start"));
+		m_btnStartPause->setToolTip(tr("Start processing — runs all queued jobs in order"));
+		m_btnStartPause->setEnabled(queued > 0);
+	}
 
 	if (total == 0) { m_footerLabel->setText(tr("No jobs")); return; }
 
