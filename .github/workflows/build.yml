@@ -85,6 +85,9 @@ jobs:
     - name: Build
       run: cmake --build build --parallel
 
+    - name: Download bundled tools (ffprobe + mkvtoolnix)
+      run: bash scripts/setup_tools.sh
+
     - name: Package (DMG)
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 
@@ -142,6 +145,11 @@ jobs:
 
     - name: Build
       run: cmake --build build --parallel
+
+    - name: Download bundled tools (ffprobe + mkvtoolnix)
+      run: |
+        sudo apt-get install -y --no-install-recommends patchelf
+        bash scripts/setup_tools.sh
 
     - name: Package (DEB)
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages

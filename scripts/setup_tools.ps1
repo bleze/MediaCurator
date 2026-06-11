@@ -15,8 +15,8 @@ $ErrorActionPreference = "Stop"
 
 # ── Pinned versions ────────────────────────────────────────────────────────────
 #   To upgrade: bump the version + URL, delete tools\windows\, re-run.
-$FFPROBE_VERSION = "7.1"
-$FFPROBE_URL     = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-7.1-essentials_build.zip"
+$FFPROBE_VERSION = "release"
+$FFPROBE_URL     = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
 $MKV_VERSION     = "88.0"
 $MKV_URL         = "https://mkvtoolnix.download/windows/releases/88.0/mkvtoolnix-64-bit-88.0.7z"
