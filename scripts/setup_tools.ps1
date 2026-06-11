@@ -30,7 +30,7 @@ $MkvExe     = Join-Path $MkvDir   "mkvmerge.exe"
 
 New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
 
-Write-Host "MediaCurator — tool setup" -ForegroundColor Cyan
+Write-Host "MediaCurator - tool setup" -ForegroundColor Cyan
 Write-Host "  Target: $ToolsDir"
 Write-Host ""
 
@@ -45,7 +45,7 @@ function Get-7Zip {
     $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
     if ($found) { return $found }
 
-    Write-Host "  7-Zip not found — installing via winget..." -ForegroundColor Yellow
+    Write-Host "  7-Zip not found - installing via winget..." -ForegroundColor Yellow
     winget install --id 7zip.7zip --silent --accept-source-agreements --accept-package-agreements
     if (Test-Path $candidates[0]) { return $candidates[0] }
     throw "7-Zip install failed. Install 7-Zip manually and re-run."
