@@ -1,18 +1,56 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Background -->
-  <rect width="128" height="128" fill="#1565C0"/>
-  <!-- Film frame outline -->
-  <rect x="16" y="16" width="96" height="96" rx="8" fill="none" stroke="white" stroke-width="5" opacity="0.9"/>
-  <!-- Film perforations left (cutouts that reveal background) -->
-  <rect x="16" y="29" width="15" height="11" rx="2" fill="#1565C0"/>
-  <rect x="16" y="48" width="15" height="11" rx="2" fill="#1565C0"/>
-  <rect x="16" y="69" width="15" height="11" rx="2" fill="#1565C0"/>
-  <rect x="16" y="88" width="15" height="11" rx="2" fill="#1565C0"/>
-  <!-- Film perforations right -->
-  <rect x="97" y="29" width="15" height="11" rx="2" fill="#1565C0"/>
-  <rect x="97" y="48" width="15" height="11" rx="2" fill="#1565C0"/>
-  <rect x="97" y="69" width="15" height="11" rx="2" fill="#1565C0"/>
-  <rect x="97" y="88" width="15" height="11" rx="2" fill="#1565C0"/>
-  <!-- Checkmark -->
-  <path d="M38 66 L55 83 L90 46" stroke="white" stroke-width="11" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <!-- Clip everything to the rounded-square shape so edge strips get clean corners -->
+    <clipPath id="bounds">
+      <rect width="128" height="128" rx="22"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#bounds)">
+    <!-- Background: user-specified #1a3651 (RGB 26, 54, 81) -->
+    <rect width="128" height="128" fill="#1a3651"/>
+
+    <!--
+      Film strips — flush against left/right canvas edge, full height.
+      Colour is a darker shade of the background (#1a3651 at ~45 % brightness).
+    -->
+    <rect x="0"   y="0" width="20" height="128" fill="#0c1d2b"/>
+    <rect x="108" y="0" width="20" height="128" fill="#0c1d2b"/>
+
+    <!--
+      Sprocket holes — filled with the background colour so they read as
+      through-holes in the darker strip.
+
+      Strip width  = 20 px  →  hole x offset = (20 - 12) / 2 = 4 px
+      Left  holes: x = 4,   width = 12
+      Right holes: x = 112, width = 12  (108 + 4)
+
+      Vertical layout — 6 holes, height 10, gap 10, margin 9 each end:
+        total = 2×9 + 6×10 + 5×10 = 18 + 60 + 50 = 128 ✓
+        y positions: 9, 29, 49, 69, 89, 109
+    -->
+    <rect x="4"   y="9"   width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="4"   y="29"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="4"   y="49"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="4"   y="69"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="4"   y="89"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="4"   y="109" width="12" height="10" rx="2" fill="#1a3651"/>
+
+    <rect x="112" y="9"   width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="112" y="29"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="112" y="49"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="112" y="69"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="112" y="89"  width="12" height="10" rx="2" fill="#1a3651"/>
+    <rect x="112" y="109" width="12" height="10" rx="2" fill="#1a3651"/>
+
+    <!--
+      5-pointed star — plain white, no gradient.
+      Outer r = 28, inner r = 12, geometric centre (64, 62).
+      Shifted 2 px up to compensate for the optical bottom-heaviness of stars.
+    -->
+    <polygon
+      points="64,34 71.1,52.3 90.6,53.3 75.4,65.7 80.5,84.7 64,74 47.5,84.7 52.6,65.7 37.4,53.3 56.9,52.3"
+      fill="white"
+    />
+  </g>
 </svg>

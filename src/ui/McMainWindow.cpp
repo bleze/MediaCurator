@@ -1900,7 +1900,7 @@ void McMainWindow::onAbout()
 				bp.setPen(Qt::NoPen);
 				bp.setBrush(holeCol);
 				const int hx = sx + (BSTRIP - HOLE_W) / 2;
-				for (int y = 6; y + HOLE_H <= BH; y += HOLE_STEP)
+				for (int y = 1; y + HOLE_H <= BH; y += HOLE_STEP)
 					bp.drawRoundedRect(hx, y, HOLE_W, HOLE_H, HOLE_R, HOLE_R);
 			}
 		}

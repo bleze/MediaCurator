@@ -842,7 +842,7 @@ bool DatabaseManager::updateJobSavedBytes(qint64 jobId, qint64 savedBytes)
 bool DatabaseManager::updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson)
 {
 	QSqlQuery q(connection());
-	q.prepare("UPDATE jobs SET command_args_json=? WHERE id=? AND status='proposed'");
+	q.prepare("UPDATE jobs SET command_args_json=? WHERE id=? AND status IN ('proposed','queued')");
 	q.addBindValue(commandArgsJson);
 	q.addBindValue(jobId);
 	return q.exec();
