@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QObject>
 #include <QSet>
+#include <atomic>
 
 namespace Mc {
 
@@ -11,6 +12,8 @@ class LibraryLoader : public QObject
 	Q_OBJECT
 public:
 	explicit LibraryLoader(int startOffset, QObject* parent = nullptr);
+
+	void cancel() { m_cancelled.store(true, std::memory_order_relaxed); }
 
 public slots:
 	void run();
@@ -24,7 +27,8 @@ signals:
 	void finished(int totalFileCount);
 
 private:
-	int m_startOffset;
+	int                  m_startOffset;
+	std::atomic<bool>    m_cancelled{false};
 };
 
 } // namespace Mc

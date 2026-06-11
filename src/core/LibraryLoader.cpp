@@ -24,7 +24,7 @@ void LibraryLoader::run()
 	int pageIndex = 0;
 	int total     = m_startOffset;  // first page already shown synchronously
 
-	while (true) {
+	while (!m_cancelled.load(std::memory_order_relaxed)) {
 		const int limit = (pageIndex < kPageSizeCount) ? kPageSizes[pageIndex] : 2000;
 		++pageIndex;
 
@@ -36,15 +36,18 @@ void LibraryLoader::run()
 		for (const auto& f : files) ids << f.id;
 
 		const auto streams = db.streamsForFiles(ids);
-		for (const auto& f : files)
+		for (const auto& f : files) {
+			if (m_cancelled.load(std::memory_order_relaxed)) return;
 			emit fileReady(f, streams.value(f.id));
+		}
 
 		total  += files.size();
 		offset += files.size();
 		if (files.size() < limit) break;
 	}
 
-	emit finished(total);
+	if (!m_cancelled.load(std::memory_order_relaxed))
+		emit finished(total);
 }
 
 } // namespace Mc

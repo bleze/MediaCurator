@@ -18,6 +18,7 @@ namespace Mc {
 
 class AnalyzeWorker;
 class JobQueue;
+class LibraryLoader;
 class McFileListModel;
 class McFilterPanel;
 class McJobPanel;
@@ -100,6 +101,8 @@ private:
 	QSplitter*       m_splitter          = nullptr;
 	QStringList      m_pendingRoots;
 	QTimer*          m_analyzeRefreshTimer = nullptr;
+	QThread*         m_loadThread      = nullptr;
+	LibraryLoader*   m_loader          = nullptr;
 	QThread*         m_scanThread      = nullptr;
 	ScanWorker*      m_scanWorker      = nullptr;
 	QThread*         m_analyzeThread   = nullptr;

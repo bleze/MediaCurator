@@ -73,6 +73,9 @@
 #include <QUrl>
 #include <QWidgetAction>
 #include <QVBoxLayout>
+#include <QRandomGenerator>
+#include <QStandardPaths>
+#include <QSvgRenderer>
 
 namespace {
 
@@ -1120,6 +1123,21 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		m_jobQueue->cancel();
 	}
 
+	// Stop the library loader if it is still paging through the database.
+	// cancel() sets an atomic flag; the worker checks it between every file emit.
+	// DB pages are fast (< 50 ms each), so 3 s is more than enough.
+	if (m_loadThread && m_loadThread->isRunning()) {
+		if (m_loader) m_loader->cancel();
+		m_loadThread->quit();
+		if (!m_loadThread->wait(3000)) {
+			m_loadThread->terminate();
+			m_loadThread->wait(500);
+		}
+		// Thread has stopped — safe to delete loader from main thread now.
+		delete m_loader;     m_loader     = nullptr;
+		delete m_loadThread; m_loadThread = nullptr;
+	}
+
 	// Stop the scan worker before destroying the window.
 	// cancel() sets an atomic flag; the worker checks it between files.
 	// We wait up to 8 s for the current FFprobe call to finish naturally;
@@ -1368,18 +1386,26 @@ void McMainWindow::startLibraryLoader()
 	}
 
 	// ── Background thread: meta + remaining files + full queue refresh ────────
-	auto* thread = new QThread(this);
 	// Use the actual number of files loaded synchronously as the start offset —
 	// not kFirstPageSize — so LibraryLoader's total count is correct when the
 	// DB has fewer files than one full page (e.g. empty DB → offset 0, total 0).
-	auto* loader = new LibraryLoader(qMin(kFirstPageSize, dbTotal));
-	loader->moveToThread(thread);
+	m_loadThread = new QThread;   // no parent — we control lifetime explicitly
+	m_loader     = new LibraryLoader(qMin(kFirstPageSize, dbTotal));
+	m_loader->moveToThread(m_loadThread);
 
-	connect(thread, &QThread::started,        loader, &LibraryLoader::run);
-	connect(loader, &LibraryLoader::finished, thread, &QThread::quit);
-	connect(loader, &LibraryLoader::finished, loader, &QObject::deleteLater);
-	connect(thread, &QThread::finished,       thread, &QObject::deleteLater);
+	// Normal-completion cleanup: loader emits finished → thread quits → both
+	// schedule their own deletion.  Null member pointers once deleted so
+	// closeEvent() does not try to double-cancel.
+	connect(m_loadThread, &QThread::started,         m_loader,     &LibraryLoader::run);
+	connect(m_loader,     &LibraryLoader::finished,  m_loadThread, &QThread::quit);
+	connect(m_loader,     &LibraryLoader::finished,  m_loader,     &QObject::deleteLater);
+	connect(m_loadThread, &QThread::finished,        m_loadThread, &QObject::deleteLater);
+	connect(m_loader,     &QObject::destroyed,       this, [this]{ m_loader     = nullptr; });
+	connect(m_loadThread, &QObject::destroyed,       this, [this]{ m_loadThread = nullptr; });
 
+	// Capture local aliases so the lambdas below don't capture members that
+	// may be nulled out before the queued signal is delivered.
+	auto* loader = m_loader;
 	connect(loader, &LibraryLoader::metaReady, this,
 	        [this](const QHash<qint64, QString>& posters,
 	               const QHash<qint64, QString>& imdbIds,
@@ -1425,7 +1451,7 @@ void McMainWindow::startLibraryLoader()
 		}
 	});
 
-	thread->start();
+	m_loadThread->start();
 }
 
 bool McMainWindow::analyzeSingleFile(qint64 fileId)
@@ -1773,19 +1799,203 @@ void McMainWindow::onSettings()
 
 void McMainWindow::onAbout()
 {
-	QMessageBox::about(this, tr("About MediaCurator"),
-		tr("<h3>MediaCurator %1</h3>"
-		   "<p>Scan your video library with ffprobe, apply smart policy rules "
-		   "to identify redundant audio and subtitle tracks, then use MKVToolNix "
-		   "to losslessly strip them &mdash; no re-encoding, no quality loss.</p>"
-		   "<p><b>Author:</b> Jacob Pedersen &mdash; Bleze Software<br>"
-		   "<b>License:</b> Apache 2.0 &mdash; open source, free to use and modify.</p>"
-		   "<p><small>"
-		   "<b>Built with:</b> Qt %2 &middot; SQLite &middot; nlohmann/json<br>"
-		   "<b>Bundled tools:</b> ffprobe (LGPL) &middot; MKVToolNix (GPL)"
-		   "</small></p>")
-		.arg(QCoreApplication::applicationVersion(), QString(qVersion()))
-	);
+	auto* dlg = new QDialog(this);
+	dlg->setWindowTitle(tr("About MediaCurator"));
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setFixedWidth(480);
+
+	auto* mainLayout = new QVBoxLayout(dlg);
+	mainLayout->setSpacing(0);
+	mainLayout->setContentsMargins(0, 0, 0, 0);
+
+	// ── Cinematic banner ──────────────────────────────────────────────────────
+	constexpr int BW = 480, BH = 170;
+	constexpr int BSTRIP = 16;
+
+	QPixmap banner(BW, BH);
+	banner.fill(QColor(0x0d, 0x0e, 0x1a));
+	{
+		QPainter bp(&banner);
+		bp.setRenderHint(QPainter::Antialiasing);
+		bp.setRenderHint(QPainter::SmoothPixmapTransform);
+
+		// 1. Base gradient
+		{
+			QLinearGradient bg(0, 0, 0, BH);
+			bg.setColorAt(0.0, QColor(0x16, 0x18, 0x2e));
+			bg.setColorAt(0.5, QColor(0x0f, 0x10, 0x20));
+			bg.setColorAt(1.0, QColor(0x08, 0x09, 0x13));
+			bp.fillRect(0, 0, BW, BH, bg);
+		}
+
+		// 2. Poster mosaic (same as splash — graceful no-op when cache is empty)
+		{
+			const QString posterDir = QStandardPaths::writableLocation(
+				QStandardPaths::AppDataLocation) + "/posters";
+			const QStringList files = QDir(posterDir).entryList({"*.jpg"}, QDir::Files);
+
+			if (!files.isEmpty()) {
+				constexpr int PW = 52, PH = 78, STEP = PW + 4;
+				const int cols = BW / STEP + 2;
+				const int needed = cols * 2;
+
+				QList<QPixmap> pool;
+				pool.reserve(needed);
+				for (int i = 0; pool.size() < needed && i < needed * 2; ++i) {
+					QPixmap pm(posterDir + "/" + files[i % files.size()]);
+					if (!pm.isNull())
+						pool.append(pm.scaled(PW, PH, Qt::IgnoreAspectRatio,
+						                      Qt::SmoothTransformation));
+				}
+
+				if (!pool.isEmpty()) {
+					const struct { int y; int xOff; } rows[2] = {
+						{ -6,       0 },
+						{ 88,  -STEP / 2 },
+					};
+					bp.setOpacity(0.15);
+					int pi = 0;
+					for (const auto& row : rows)
+						for (int c = 0; c < cols; ++c, ++pi)
+							bp.drawPixmap(row.xOff + c * STEP, row.y, pool[pi % pool.size()]);
+					bp.setOpacity(1.0);
+				}
+			}
+		}
+
+		// 3. Dark overlay
+		{
+			QLinearGradient ov(0, 0, 0, BH);
+			ov.setColorAt(0.0, QColor(0x0d, 0x0e, 0x1a, 205));
+			ov.setColorAt(0.5, QColor(0x0d, 0x0e, 0x1a, 155));
+			ov.setColorAt(1.0, QColor(0x0d, 0x0e, 0x1a, 205));
+			bp.fillRect(0, 0, BW, BH, ov);
+		}
+
+		// 4. Radial vignette
+		{
+			QRadialGradient vig(BW / 2.0, BH / 2.0, BW * 0.65);
+			vig.setColorAt(0.25, QColor(0, 0, 0,   0));
+			vig.setColorAt(1.00, QColor(0, 0, 0, 200));
+			bp.fillRect(0, 0, BW, BH, vig);
+		}
+
+		// 5. Film strips
+		{
+			const QColor stripBg(0x06, 0x06, 0x0f, 235);
+			const QColor holeCol(0x1c, 0x1e, 0x34);   // visibly lighter than strip
+			const QColor edgeCol(0x2a, 0x2a, 0x46, 160);
+			constexpr int HOLE_W = 8, HOLE_H = 12, HOLE_R = 2, HOLE_STEP = 26;
+
+			for (int side = 0; side < 2; ++side) {
+				const int sx = (side == 0) ? 0 : BW - BSTRIP;
+				bp.setPen(Qt::NoPen);
+				bp.setBrush(stripBg);
+				bp.drawRect(sx, 0, BSTRIP, BH);
+
+				bp.setPen(QPen(edgeCol, 1));
+				const int ex = (side == 0) ? BSTRIP : BW - BSTRIP - 1;
+				bp.drawLine(ex, 0, ex, BH);
+
+				bp.setPen(Qt::NoPen);
+				bp.setBrush(holeCol);
+				const int hx = sx + (BSTRIP - HOLE_W) / 2;
+				for (int y = 6; y + HOLE_H <= BH; y += HOLE_STEP)
+					bp.drawRoundedRect(hx, y, HOLE_W, HOLE_H, HOLE_R, HOLE_R);
+			}
+		}
+
+		// 6. Film grain (stable seed)
+		{
+			QRandomGenerator rng(0x4d43'5241u);
+			for (int i = 0; i < 2500; ++i)
+				bp.setPen(QColor(255, 255, 255, rng.bounded(4, 12))),
+				bp.drawPoint(rng.bounded(BW), rng.bounded(BH));
+		}
+
+		// 7. App icon with glow
+		{
+			constexpr int SZ = 56, IY = 12;
+			const int IX = (BW - SZ) / 2;
+
+			QRadialGradient glow(BW / 2.0, IY + SZ / 2.0, SZ * 0.9);
+			glow.setColorAt(0.0, QColor(0x4a, 0x68, 0xd8, 55));
+			glow.setColorAt(1.0, QColor(0, 0, 0, 0));
+			bp.fillRect(IX - SZ / 2, IY - SZ / 2, SZ * 2, SZ * 2, glow);
+
+			QSvgRenderer icon(QStringLiteral(":/icons/app_icon.svg"));
+			icon.render(&bp, QRectF(IX, IY, SZ, SZ));
+		}
+
+		// 8. Title + accent line
+		{
+			bp.setFont(QFont("Segoe UI", 22, QFont::Light));
+			bp.setPen(QColor(0xe8, 0xe8, 0xff));
+			bp.drawText(QRect(BSTRIP, 78, BW - BSTRIP * 2, 36),
+			            Qt::AlignHCenter | Qt::AlignVCenter, "MediaCurator");
+
+			constexpr int LW = 48;
+			const int lx = (BW - LW) / 2;
+			bp.setPen(QPen(QColor(0x55, 0x78, 0xe8, 185), 1.5));
+			bp.drawLine(lx, 119, lx + LW, 119);
+		}
+
+		// 9. Version + brand
+		{
+			bp.setFont(QFont("Segoe UI", 9));
+			bp.setPen(QColor(0x72, 0x72, 0xa8));
+			bp.drawText(QRect(BSTRIP, 124, BW - BSTRIP * 2, 22),
+			            Qt::AlignHCenter | Qt::AlignVCenter,
+			            QString("v%1  ·  Bleze Software")
+			                .arg(QCoreApplication::applicationVersion()));
+		}
+
+		bp.end();
+	}
+
+	auto* bannerLabel = new QLabel(dlg);
+	bannerLabel->setPixmap(banner);
+	bannerLabel->setFixedSize(BW, BH);
+	mainLayout->addWidget(bannerLabel);
+
+	// ── Info section ──────────────────────────────────────────────────────────
+	auto* infoLayout = new QVBoxLayout;
+	infoLayout->setContentsMargins(20, 16, 20, 8);
+	infoLayout->setSpacing(6);
+
+	auto* descLabel = new QLabel(
+		tr("Scan your video library with ffprobe, apply smart policy rules to identify "
+		   "redundant audio and subtitle tracks, then use MKVToolNix to losslessly "
+		   "strip them — no re-encoding, no quality loss."), dlg);
+	descLabel->setWordWrap(true);
+	infoLayout->addWidget(descLabel);
+
+	infoLayout->addSpacing(6);
+
+	auto makeRow = [&](const QString& key, const QString& val) {
+		auto* lbl = new QLabel(
+			QString("<span style='color:#8888aa;'>%1</span>  %2").arg(key, val), dlg);
+		lbl->setTextFormat(Qt::RichText);
+		infoLayout->addWidget(lbl);
+	};
+	makeRow(tr("Author:"),        tr("Jacob Pedersen — Bleze Software"));
+	makeRow(tr("License:"),       tr("Apache 2.0 — open source, free to use and modify"));
+	makeRow(tr("Built with:"),    QString("Qt %1  ·  SQLite  ·  nlohmann/json").arg(qVersion()));
+	makeRow(tr("Bundled tools:"), tr("ffprobe (LGPL)  ·  MKVToolNix (GPL)"));
+
+	mainLayout->addLayout(infoLayout);
+
+	// ── Close button ──────────────────────────────────────────────────────────
+	auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+	connect(btnBox, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+	auto* btnLayout = new QHBoxLayout;
+	btnLayout->setContentsMargins(16, 4, 16, 14);
+	btnLayout->addStretch();
+	btnLayout->addWidget(btnBox);
+	mainLayout->addLayout(btnLayout);
+
+	btnBox->button(QDialogButtonBox::Close)->setFocus();
+	dlg->exec();
 }
 
 void McMainWindow::onDonate()
