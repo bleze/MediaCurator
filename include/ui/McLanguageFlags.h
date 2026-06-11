@@ -15,6 +15,9 @@ namespace McLanguageFlags {
 // ISO 3166-1 alpha-2 country code for a language code, or empty if unmapped.
 [[nodiscard]] QString countryForLanguage(const QString& lang);
 
+// Returns the ISO 639-1 (2-letter) code for any ISO 639-1/2 variant, or empty if unmapped.
+[[nodiscard]] QString toIso1(const QString& langCode);
+
 // English language name ("Danish"), or the raw code if unknown.
 [[nodiscard]] QString displayName(const QString& lang);
 

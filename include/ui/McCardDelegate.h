@@ -12,6 +12,7 @@
 
 class QPainter;
 class QAbstractItemView;
+class QVariantAnimation;
 
 namespace Mc {
 
@@ -141,6 +142,8 @@ private:
 	QPersistentModelIndex m_lastHoveredIndex;
 	mutable QPoint        m_lastMousePos     {-1, -1};
 
+	QVariantAnimation*    m_pulseAnim        = nullptr;
+
 	mutable QHash<int, QSize> m_sizeCache;
 	mutable int               m_cacheWidth   = 0;
 	mutable QFont             m_badgeFont;
@@ -157,7 +160,7 @@ private:
 	static constexpr int kBadgeGap  = 4;  // horizontal gap between adjacent badges within a row
 	static constexpr int kPlayBtnW  = 24; // width and height of the play (▶) button on the right
 	static constexpr int kImdbBtnW  = 24; // width and height of the IMDb shortcut button on the right
-	static constexpr int kPosterGap = 0;  // gap between the poster column right edge and the content area
+	static constexpr int kPosterGap = 8;  // gap between the poster column right edge and the content area
 	static constexpr int kMinRowH   = 140; // minimum card height; ensures the poster column never looks cramped
 };
 

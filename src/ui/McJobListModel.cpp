@@ -460,7 +460,7 @@ void McJobListModel::toggleStream(const QModelIndex& index, int streamIndex)
 	if (!index.isValid() || index.row() >= m_entries.size()) return;
 
 	JobCardEntry& filt = m_entries[index.row()];
-	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
+	if (filt.job.status != "proposed" && filt.job.status != "queued" && filt.job.status != "failed") return;
 
 	const qint64 jobId = filt.job.jobId;
 

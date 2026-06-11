@@ -19,6 +19,7 @@
 #include <QStyleOption>
 #include <QStyleOptionButton>
 #include <QToolTip>
+#include <QVariantAnimation>
 #include <QtMath>
 #include <algorithm>
 
@@ -31,6 +32,19 @@ McCardDelegate::McCardDelegate(Mode mode, QObject* parent)
 	if (auto* view = qobject_cast<QAbstractItemView*>(parent)) {
 		m_view = view;
 		view->viewport()->installEventFilter(this);
+	}
+	if (m_mode == Mode::JobQueue) {
+		m_pulseAnim = new QVariantAnimation(this);
+		m_pulseAnim->setDuration(2000);
+		m_pulseAnim->setLoopCount(-1);
+		m_pulseAnim->setEasingCurve(QEasingCurve::InOutSine);
+		m_pulseAnim->setKeyValueAt(0.0, QColor(0x64, 0xb4, 0xf0)); // light blue
+		m_pulseAnim->setKeyValueAt(0.5, QColor(0x10, 0x50, 0xb0)); // dark blue
+		m_pulseAnim->setKeyValueAt(1.0, QColor(0x64, 0xb4, 0xf0)); // light blue
+		connect(m_pulseAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant&) {
+			if (m_view) m_view->viewport()->update();
+		});
+		m_pulseAnim->start();
 	}
 }
 
@@ -68,7 +82,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.durationSec      = index.data(McJobListModel::DurationRole).toDouble();
 		d.progress         = index.data(McJobListModel::ProgressRole).toInt();
 		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
-		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued"));
+		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued") || d.status == QLatin1String("failed"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
 		d.allStreams         = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 		const auto kept    = index.data(McJobListModel::KeptStreamsRole).value<QList<StreamRecord>>();
@@ -458,7 +472,8 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb);
 			if (!overInteractive && m_mode == Mode::JobQueue
 			    && (cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
-			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))) {
+			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
+			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("failed"))) {
 				const auto    streams  = cur.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 				const QString origLang = cur.data(McJobListModel::OriginalLanguageRole).toString();
 				overInteractive = (hitTestBadgeStream(pos, m_view->visualRect(cur),
@@ -512,7 +527,8 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 
 	if (m_mode == Mode::JobQueue
 	    && (index.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
-	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))) {
+	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
+	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("failed"))) {
 		const auto    streams  = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 		const QString origLang = index.data(McJobListModel::OriginalLanguageRole).toString();
 		const int streamIdx = hitTestBadgeStream(pos, itemRect, streams, viewFont, hasImdb, origLang);
@@ -976,9 +992,13 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		                    option.rect.width(), 3);
 		painter->fillRect(barRect, QColor(0x30, 0x30, 0x40));
 		const int fillW = barRect.width() * d.progress / 100;
-		if (fillW > 0)
+		if (fillW > 0) {
+			const QColor fillColor = m_pulseAnim
+				? m_pulseAnim->currentValue().value<QColor>()
+				: QColor(0x10, 0x6a, 0xc0);
 			painter->fillRect(QRect(barRect.left(), barRect.top(), fillW, barRect.height()),
-			                  QColor(0x10, 0x6a, 0xc0));
+			                  fillColor);
+		}
 	}
 
 	painter->restore();

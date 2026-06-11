@@ -285,17 +285,17 @@ void McJobPanel::setupUi()
 	toolbar->addSeparator();
 	toolbar->addWidget(m_btnSummary);
 
-	// Spacer pushes playback controls to the right side of the toolbar
+	m_footerLabel = new QLabel(tr("No jobs"), toolbar);
+	m_footerLabel->setStyleSheet("color: gray; padding: 0 6px;");
+	toolbar->addWidget(m_footerLabel);
+
+	// Spacer absorbs label width changes, keeping Start/Cancel pinned to the right
 	auto* tbSpacer = new QWidget(toolbar);
 	tbSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 	toolbar->addWidget(tbSpacer);
 
 	toolbar->addWidget(m_btnStartPause);
 	toolbar->addWidget(m_btnCancel);
-
-	m_footerLabel = new QLabel(tr("No jobs"), toolbar);
-	m_footerLabel->setStyleSheet("color: gray; padding: 0 6px;");
-	toolbar->addWidget(m_footerLabel);
 
 	root->addWidget(toolbar);
 
@@ -685,8 +685,8 @@ void McJobPanel::setupUi()
 		}
 
 		const QString imdbLabel = selectedFileIds.size() > 1
-		    ? tr("Edit &IMDb Links (%1 files)…").arg(selectedFileIds.size())
-		    : tr("Edit &IMDb Link…");
+		    ? tr("Edit &Movie Metadata (%1 files)…").arg(selectedFileIds.size())
+		    : tr("Edit &Movie Metadata…");
 		auto* imdbAct = menu.addAction(svgIcon(":/icons/link.svg"), imdbLabel);
 		connect(imdbAct, &QAction::triggered, this, [this, fileId, selectedFileIds] {
 			if (selectedFileIds.size() > 1)
@@ -1062,7 +1062,9 @@ void McJobPanel::onPreviewCommand()
 
 void McJobPanel::onShowSummary()
 {
+	QApplication::setOverrideCursor(Qt::WaitCursor);
 	auto* dlg = new McBulkSummaryDialog(this);
+	QApplication::restoreOverrideCursor();
 	dlg->exec();
 }
 

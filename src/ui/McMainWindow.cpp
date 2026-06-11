@@ -425,6 +425,7 @@ void McMainWindow::setupUi()
 		const QString    suggested = smartSuggestedTitle(file);
 		const QString    existing  = NfoParser::readImdbId(file.path);
 		ImdbSearchDialog dlg(file.path, suggested, existing, m_profile->tmdbApiKey(), this);
+		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 		if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
@@ -572,8 +573,8 @@ void McMainWindow::setupUi()
 			if (!alreadyIn) imdbFiles.prepend(file);
 		}
 		const QString imdbLabel = imdbFiles.size() > 1
-		    ? tr("Edit &IMDb Links (%1 files)…").arg(imdbFiles.size())
-		    : tr("Edit &IMDb Link…");
+		    ? tr("Edit &Movie Metadata (%1 files)…").arg(imdbFiles.size())
+		    : tr("Edit &Movie Metadata…");
 		auto* imdbAction = menu.addAction(svgIcon(":/icons/link.svg"), imdbLabel);
 		connect(imdbAction, &QAction::triggered, this, [this, imdbFiles, firstSelRow] {
 			const int total = imdbFiles.size();
@@ -585,6 +586,7 @@ void McMainWindow::setupUi()
 					existing = pr->imdbId;
 				if (existing.isEmpty()) existing = NfoParser::readImdbId(f.path);
 				ImdbSearchDialog dlg(f.path, suggested, existing, m_profile->tmdbApiKey(), this);
+				dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 				if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 				if (total > 1) dlg.setBatchMode(i + 1, total);
 				const int result = dlg.exec();
@@ -780,6 +782,7 @@ void McMainWindow::setupUi()
 		                     smartSuggestedTitle(*fileOpt),
 		                     existingId,
 		                     m_profile->tmdbApiKey(), this);
+		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 		if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
@@ -824,6 +827,7 @@ void McMainWindow::setupUi()
 			                     smartSuggestedTitle(*fileOpt),
 			                     existingId,
 			                     m_profile->tmdbApiKey(), this);
+			dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 			if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 			dlg.setBatchMode(i + 1, total);
 

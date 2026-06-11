@@ -2,15 +2,19 @@
 #include <QByteArray>
 #include <QDialog>
 #include <QHash>
+#include <QJsonObject>
+#include <QList>
 #include <QNetworkAccessManager>
 
 class QCloseEvent;
+class QComboBox;
 class QDialogButtonBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QNetworkReply;
+class QSplitter;
 
 namespace Mc {
 
@@ -40,6 +44,10 @@ public:
 	// When set, auto-accepts if the search returns exactly one result with a valid
 	// IMDb ID. Shows the dialog normally if the result is ambiguous or the fetch fails.
 	void setAutoSelectSingle(bool on) { m_autoSelectSingle = on; }
+
+	// ISO 639-2 codes (e.g. "eng", "dan") — used to request poster images in
+	// languages the user understands. Call before exec().
+	void setUnderstoodLanguages(const QStringList& langs) { m_understoodLanguages = langs; }
 
 	// Adds "Skip" and "Cancel all" buttons and shows progress in the title.
 	// Call before exec(). current/total are 1-based (e.g. "3 of 10").
@@ -72,18 +80,35 @@ private:
 	QNetworkAccessManager*      m_nam = nullptr;
 	QNetworkReply*              m_searchReply  = nullptr;
 	QNetworkReply*              m_extIdsReply  = nullptr;
-	QHash<int, QNetworkReply*>  m_thumbReplyByRow;   // row → in-flight thumbnail reply
-	QHash<int, QNetworkReply*>  m_prefetchByRow;     // row → in-flight external_ids prefetch
-	QHash<int, QString>         m_imdbIdByRow;       // row → cached IMDb ID
+	QHash<int, QNetworkReply*>  m_thumbReplyByRow;
+	QHash<int, QNetworkReply*>  m_prefetchByRow;
+	QHash<int, QString>         m_imdbIdByRow;
 
+	// Poster gallery
+	QSplitter*    m_splitter         = nullptr;
+	QComboBox*    m_langFilter       = nullptr;
+	QListWidget*  m_posterGallery    = nullptr;
+	QLabel*       m_galleryStatus    = nullptr;
+
+	QNetworkReply*                 m_imagesReply = nullptr;
+	QHash<QNetworkReply*, QString> m_galleryThumbReplies;
+	QHash<QString, QByteArray>     m_galleryThumbData;
+	QList<QJsonObject>             m_allPosters;
+	QByteArray                     m_galleryImageData;
+	QString                        m_galleryFilter;
+
+	void fetchPosterImages(int tmdbId, const QString& origLang);
+	void populateGallery();
+
+	QStringList            m_understoodLanguages;
 	QString                m_selectedTitle;
 	QString                m_selectedPosterPath;
-	QHash<int, QByteArray> m_thumbDataByRow;   // row → raw image bytes
+	QHash<int, QByteArray> m_thumbDataByRow;
 	int     m_selectedYear      = 0;
 	bool    m_acceptAfterFetch  = false;
 	bool    m_autoSelectSingle  = false;
 	bool    m_batchMode         = false;
-	bool    m_userHasSearched   = false;  // true once the user manually triggers a search
+	bool    m_userHasSearched   = false;
 };
 
 } // namespace Mc

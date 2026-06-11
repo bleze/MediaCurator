@@ -98,6 +98,22 @@ static const QHash<QString, LangInfo>& langMap()
 	return map;
 }
 
+static const QHash<QString, QString>& iso1Map()
+{
+	static const QHash<QString, QString> map = [] {
+		QHash<QString, QString> m;
+		for (const LangEntry& e : kLangTable) {
+			const QStringList codes = QString::fromLatin1(e.codes).split(QLatin1Char(','));
+			if (codes.isEmpty()) continue;
+			const QString iso1 = codes.first(); // first entry is always ISO 639-1
+			for (const QString& code : codes)
+				m.insert(code, iso1);
+		}
+		return m;
+	}();
+	return map;
+}
+
 } // anonymous namespace
 
 namespace Mc {
@@ -113,6 +129,11 @@ QString displayName(const QString& lang)
 {
 	const auto it = langMap().constFind(lang.toLower().trimmed());
 	return it == langMap().constEnd() ? lang : it->name;
+}
+
+QString toIso1(const QString& langCode)
+{
+	return iso1Map().value(langCode.toLower().trimmed());
 }
 
 QPixmap flag(const QString& lang, int height, qreal dpr)
