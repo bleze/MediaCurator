@@ -88,6 +88,9 @@ jobs:
     - name: Download bundled tools (ffprobe + mkvtoolnix)
       run: bash scripts/setup_tools.sh
 
+    - name: Clear quarantine attributes
+      run: xattr -rc build/ || true
+
     - name: Package (DMG)
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 

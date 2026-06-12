@@ -130,7 +130,8 @@ void RemuxJob::onProcessFinished(int exitCode)
 
 	qint64 savedBytes = 0;
 
-	if (exitCode == 0 && !m_outputPath.isEmpty() && !m_inputPath.isEmpty()) {
+	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
+	if ((exitCode == 0 || exitCode == 1) && !m_outputPath.isEmpty() && !m_inputPath.isEmpty()) {
 		const qint64 outputSize = QFileInfo(m_outputPath).size();
 
 		// Capture the original file's creation timestamp before we rename/delete it
@@ -155,7 +156,7 @@ void RemuxJob::onProcessFinished(int exitCode)
 			exitCode = -2;
 		}
 
-		if (exitCode == 0 && m_writeLog) {
+		if ((exitCode == 0 || exitCode == 1) && m_writeLog) {
 			const QString logPath = m_finalOutputPath + QStringLiteral(".mc-log");
 			QFile logFile(logPath);
 			if (logFile.open(QIODevice::WriteOnly | QIODevice::Text)) {

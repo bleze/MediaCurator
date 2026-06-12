@@ -259,17 +259,12 @@ if(WIN32)
     endif()
 elseif(APPLE)
     install(TARGETS MediaCurator BUNDLE DESTINATION .)
-    # Re-run macdeployqt against the staged .app so the DMG gets Qt frameworks
-    if(MACDEPLOYQT)
-        install(CODE "
-            message(STATUS \"Running macdeployqt for install...\")
-            execute_process(COMMAND
-                \"${MACDEPLOYQT}\"
-                    \"\${CMAKE_INSTALL_PREFIX}/MediaCurator.app\"
-                    -verbose=1
-            )
-        ")
-    endif()
+    # macdeployqt already ran at POST_BUILD and embedded Qt frameworks into the
+    # .app in the build directory.  install(TARGETS BUNDLE) copies the entire
+    # bundle recursively, so the staged .app already has Frameworks/PlugIns.
+    # Running macdeployqt a second time here causes install_name_tool to error
+    # on the duplicate @executable_path/../Frameworks RPATH and leaves the
+    # staging directory in a state that hdiutil refuses to package.
     if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
         install(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/"
             DESTINATION MediaCurator.app/Contents/MacOS/tools)

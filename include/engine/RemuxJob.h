@@ -21,9 +21,11 @@ public:
 	void run();
 	void cancel();
 
-	qint64 jobId()            const { return m_jobId; }
-	QString finalOutputPath() const { return m_finalOutputPath; }
-	QString inputFilePath()   const { return m_inputPath; }
+	qint64  jobId()              const { return m_jobId; }
+	QString finalOutputPath()    const { return m_finalOutputPath; }
+	QString tmpOutputPath()      const { return m_outputPath; }
+	QString inputFilePath()      const { return m_inputPath; }
+	bool    hasTrackMismatch()   const { return m_hasTrackMismatch; }
 
 signals:
 	void progressChanged(int percent);
