@@ -2,6 +2,7 @@
 #include "ui/McCardDelegate.h"
 
 #include <QApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QPixmap>
@@ -190,10 +191,11 @@ void McFileListModel::reload()
 	for (const FileRecord& f : files)
 		m_allEntries.append({ f, streams.value(f.id) });
 
-	m_posterPaths = db.allDonePosterPaths();
-	m_fanartPaths = db.allDoneFanartPaths();
-	m_imdbIds     = db.allKnownImdbIds();
-	m_ratings     = db.allRatings();
+	m_posterPaths    = db.allDonePosterPaths();
+	m_fanartPaths    = db.allDoneFanartPaths();
+	m_imdbIds        = db.allKnownImdbIds();
+	m_ratings        = db.allRatings();
+	m_forcedRemovals = db.allStreamForcedRemovals();
 
 	recomputeFolderCounts();
 	applyFilter();
@@ -219,15 +221,18 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
                                const QHash<qint64, double>& ratings,
                                const QHash<qint64, QString>& fanartPaths)
 {
-	m_posterPaths   = posterPaths;
-	m_imdbIds       = imdbIds;
-	m_filesWithJobs = filesWithJobs;
+	m_posterPaths    = posterPaths;
+	m_imdbIds        = imdbIds;
+	m_filesWithJobs  = filesWithJobs;
+	m_forcedRemovals = DatabaseManager::instance().allStreamForcedRemovals();
 	if (!ratings.isEmpty())     m_ratings     = ratings;
 	if (!fanartPaths.isEmpty()) {
 		m_fanartPaths = fanartPaths;
 		if (!m_entries.isEmpty())
 			emit dataChanged(index(0), index(m_entries.size() - 1), {FanartRole});
 	}
+	if (!m_forcedRemovals.isEmpty() && !m_entries.isEmpty())
+		emit dataChanged(index(0), index(m_entries.size() - 1), {OverridesRole});
 }
 
 void McFileListModel::refreshJobFilter()
@@ -472,10 +477,12 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 void McFileListModel::toggleForcedRemoval(qint64 fileId, int streamIndex)
 {
 	auto& set = m_forcedRemovals[fileId];
-	if (set.contains(streamIndex))
-		set.remove(streamIndex);
-	else
+	const bool nowForced = !set.contains(streamIndex);
+	if (nowForced)
 		set.insert(streamIndex);
+	else
+		set.remove(streamIndex);
+	DatabaseManager::instance().setStreamForcedRemoval(fileId, streamIndex, nowForced);
 
 	for (int row = 0; row < m_entries.size(); ++row) {
 		if (m_entries.at(row).file.id == fileId) {

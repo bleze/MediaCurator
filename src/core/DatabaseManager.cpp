@@ -209,6 +209,12 @@ bool DatabaseManager::initSchema()
 			imdb_id    TEXT NOT NULL DEFAULT '',
 			fetched_at INTEGER NOT NULL DEFAULT 0
 		);
+
+		CREATE TABLE IF NOT EXISTS stream_overrides (
+			file_id      INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+			stream_index INTEGER NOT NULL,
+			PRIMARY KEY (file_id, stream_index)
+		);
 	)";
 
 	// Execute each statement separated by semicolons
@@ -298,6 +304,19 @@ bool DatabaseManager::initSchema()
 		QSqlQuery m(connection());
 		m.exec("ALTER TABLE files ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0");
 		// Ignore errors — means the column already exists
+	}
+
+	// Migration: add per-stream original/commentary disposition flags
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE streams ADD COLUMN is_original INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE streams ADD COLUMN is_commentary INTEGER DEFAULT 0");
+	}
+
+	// Migration: add flag_changes_json to jobs
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE jobs ADD COLUMN flag_changes_json TEXT DEFAULT ''");
 	}
 
 	// One-time migration: reset 'no_poster' records to 'pending' so that newly
@@ -558,6 +577,8 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 		s.hdrFormat         = q.value("hdr_format").toString();
 		s.isDefault         = q.value("is_default").toInt() != 0;
 		s.isForced          = q.value("is_forced").toInt() != 0;
+		s.isOriginal        = q.value("is_original").toInt() != 0;
+		s.isCommentary      = q.value("is_commentary").toInt() != 0;
 		s.isHearingImpaired = q.value("is_hearing_impaired").toInt() != 0;
 		s.isVisualImpaired  = q.value("is_visual_impaired").toInt() != 0;
 		s.pixelFormat       = q.value("pixel_format").toString();
@@ -651,9 +672,10 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 	q.prepare(R"(
 		INSERT INTO streams(file_id, stream_index, codec_type, codec_name, language, title,
 			track_type, type_confidence, channels, sample_rate, bit_rate, width, height,
-			hdr_format, is_default, is_forced, is_hearing_impaired, is_visual_impaired,
+			hdr_format, is_default, is_forced, is_original, is_commentary,
+			is_hearing_impaired, is_visual_impaired,
 			pixel_format, frame_rate, codec_level, codec_profile, extra_json)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 
 	connection().transaction();
@@ -674,6 +696,8 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 		q.addBindValue(s.hdrFormat);
 		q.addBindValue(s.isDefault ? 1 : 0);
 		q.addBindValue(s.isForced ? 1 : 0);
+		q.addBindValue(s.isOriginal ? 1 : 0);
+		q.addBindValue(s.isCommentary ? 1 : 0);
 		q.addBindValue(s.isHearingImpaired ? 1 : 0);
 		q.addBindValue(s.isVisualImpaired ? 1 : 0);
 		q.addBindValue(s.pixelFormat);
@@ -726,6 +750,8 @@ QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 		s.hdrFormat         = q.value("hdr_format").toString();
 		s.isDefault         = q.value("is_default").toInt() != 0;
 		s.isForced          = q.value("is_forced").toInt() != 0;
+		s.isOriginal        = q.value("is_original").toInt() != 0;
+		s.isCommentary      = q.value("is_commentary").toInt() != 0;
 		s.isHearingImpaired = q.value("is_hearing_impaired").toInt() != 0;
 		s.isVisualImpaired  = q.value("is_visual_impaired").toInt() != 0;
 		s.pixelFormat       = q.value("pixel_format").toString();
@@ -762,6 +788,8 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
 		s.hdrFormat         = q.value("hdr_format").toString();
 		s.isDefault         = q.value("is_default").toInt() != 0;
 		s.isForced          = q.value("is_forced").toInt() != 0;
+		s.isOriginal        = q.value("is_original").toInt() != 0;
+		s.isCommentary      = q.value("is_commentary").toInt() != 0;
 		s.isHearingImpaired = q.value("is_hearing_impaired").toInt() != 0;
 		s.isVisualImpaired  = q.value("is_visual_impaired").toInt() != 0;
 		s.pixelFormat       = q.value("pixel_format").toString();
@@ -774,6 +802,46 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
 	return result;
 }
 
+// ── Stream overrides ──────────────────────────────────────────────────────────
+
+void DatabaseManager::setStreamForcedRemoval(qint64 fileId, int streamIndex, bool forced)
+{
+	QSqlQuery q(connection());
+	if (forced) {
+		q.prepare("INSERT OR IGNORE INTO stream_overrides (file_id, stream_index) VALUES (?, ?)");
+		q.addBindValue(fileId);
+		q.addBindValue(streamIndex);
+	} else {
+		q.prepare("DELETE FROM stream_overrides WHERE file_id = ? AND stream_index = ?");
+		q.addBindValue(fileId);
+		q.addBindValue(streamIndex);
+	}
+	if (!q.exec())
+		qWarning() << "[ForcedRemoval] setStreamForcedRemoval failed:" << q.lastError().text()
+		           << "fileId=" << fileId << "streamIndex=" << streamIndex << "forced=" << forced;
+	else
+		qDebug() << "[ForcedRemoval] DB write OK fileId=" << fileId << "streamIndex=" << streamIndex << "forced=" << forced;
+}
+
+QHash<qint64, QSet<int>> DatabaseManager::allStreamForcedRemovals() const
+{
+	QHash<qint64, QSet<int>> result;
+	QSqlQuery q(connection());
+	if (!q.exec("SELECT file_id, stream_index FROM stream_overrides"))
+		qWarning() << "[ForcedRemoval] allStreamForcedRemovals SELECT failed:" << q.lastError().text();
+	while (q.next())
+		result[q.value(0).toLongLong()].insert(q.value(1).toInt());
+	return result;
+}
+
+void DatabaseManager::clearStreamForcedRemovals(qint64 fileId)
+{
+	QSqlQuery q(connection());
+	q.prepare("DELETE FROM stream_overrides WHERE file_id = ?");
+	q.addBindValue(fileId);
+	q.exec();
+}
+
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
 bool DatabaseManager::hasActiveJobForFile(qint64 fileId) const
@@ -784,14 +852,40 @@ bool DatabaseManager::hasActiveJobForFile(qint64 fileId) const
 	return q.exec() && q.next();
 }
 
+std::optional<JobRecord> DatabaseManager::activeJobForFile(qint64 fileId) const
+{
+	QSqlQuery q(connection());
+	q.prepare("SELECT * FROM jobs WHERE file_id=? AND status IN ('proposed','queued') ORDER BY created_at DESC LIMIT 1");
+	q.addBindValue(fileId);
+	if (!q.exec() || !q.next()) return std::nullopt;
+	JobRecord j;
+	j.id                  = q.value("id").toLongLong();
+	j.fileId              = q.value("file_id").toLongLong();
+	j.status              = q.value("status").toString();
+	j.jobType             = q.value("job_type").toString();
+	j.commandArgsJson     = q.value("command_args_json").toString();
+	j.summary             = q.value("summary").toString();
+	j.dryRun              = q.value("dry_run").toInt() != 0;
+	j.createdAt           = q.value("created_at").toLongLong();
+	j.startedAt           = q.value("started_at").toLongLong();
+	j.finishedAt          = q.value("finished_at").toLongLong();
+	j.resultCode          = q.value("result_code").toInt();
+	j.outputLog           = q.value("output_log").toString();
+	j.savedBytes          = q.value("saved_bytes").toLongLong();
+	j.descriptionText     = q.value("description_text").toString();
+	j.originalStreamsJson = q.value("original_streams_json").toString();
+	j.flagChangesJson     = q.value("flag_changes_json").toString();
+	return j;
+}
+
 qint64 DatabaseManager::insertJob(const JobRecord& job)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
 		INSERT INTO jobs(file_id, status, job_type, command_args_json,
 						 summary, dry_run, created_at, description_text, original_streams_json,
-						 saved_bytes)
-		VALUES(?,?,?,?,?,?,?,?,?,?)
+						 saved_bytes, flag_changes_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)
 	)");
 	q.addBindValue(job.fileId > 0 ? QVariant(job.fileId) : QVariant());
 	q.addBindValue(job.status.isEmpty() ? "proposed" : job.status);
@@ -803,6 +897,7 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.addBindValue(job.descriptionText);
 	q.addBindValue(job.originalStreamsJson);
 	q.addBindValue(job.savedBytes);
+	q.addBindValue(job.flagChangesJson);
 	if (!q.exec()) {
 		qWarning() << "insertJob failed:" << q.lastError().text();
 		return -1;
@@ -840,11 +935,38 @@ bool DatabaseManager::updateJobSavedBytes(qint64 jobId, qint64 savedBytes)
 	return q.exec();
 }
 
+bool DatabaseManager::updateJobType(qint64 jobId, const QString& jobType)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET job_type=? WHERE id=? AND status IN ('proposed','queued')");
+	q.addBindValue(jobType);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
 bool DatabaseManager::updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson)
 {
 	QSqlQuery q(connection());
 	q.prepare("UPDATE jobs SET command_args_json=? WHERE id=? AND status IN ('proposed','queued')");
 	q.addBindValue(commandArgsJson);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
+bool DatabaseManager::updateJobFlagChanges(qint64 jobId, const QString& flagChangesJson)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET flag_changes_json=? WHERE id=? AND status IN ('proposed','queued')");
+	q.addBindValue(flagChangesJson);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
+bool DatabaseManager::updateJobSummary(qint64 jobId, const QString& summary)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET summary=? WHERE id=? AND status IN ('proposed','queued')");
+	q.addBindValue(summary);
 	q.addBindValue(jobId);
 	return q.exec();
 }
@@ -987,6 +1109,7 @@ QList<JobRecord> DatabaseManager::queuedJobs(JobSortMode sortMode) const
 		j.outputLog        = q.value("output_log").toString();
 		j.savedBytes       = q.value("saved_bytes").toLongLong();
 		j.descriptionText  = q.value("description_text").toString();
+		j.flagChangesJson  = q.value("flag_changes_json").toString();
 		result.append(j);
 	}
 	return result;
@@ -1014,6 +1137,7 @@ QList<JobRecord> DatabaseManager::allJobs() const
 		j.savedBytes            = q.value("saved_bytes").toLongLong();
 		j.descriptionText       = q.value("description_text").toString();
 		j.originalStreamsJson   = q.value("original_streams_json").toString();
+		j.flagChangesJson       = q.value("flag_changes_json").toString();
 		result.append(j);
 	}
 	return result;
@@ -1041,6 +1165,7 @@ std::optional<JobRecord> DatabaseManager::jobById(qint64 jobId) const
 	j.savedBytes          = q.value("saved_bytes").toLongLong();
 	j.descriptionText     = q.value("description_text").toString();
 	j.originalStreamsJson = q.value("original_streams_json").toString();
+	j.flagChangesJson     = q.value("flag_changes_json").toString();
 	return j;
 }
 
@@ -1058,6 +1183,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.filePath    = q.value(7).toString();
 		r.sizeBytes   = q.value(8).toLongLong();
 		r.imdbId            = q.value(9).toString();
+		r.jobType           = q.value("job_type").toString();
 		r.durationSec       = q.value("duration_s").toDouble();
 		r.voteAverage       = q.value("vote_average").toDouble();
 		r.originalLanguage  = q.value("original_language").toString();
@@ -1076,6 +1202,7 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
 		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
 		"       COALESCE(f.original_language, '') AS original_language"
@@ -1100,6 +1227,7 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
 		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
 		"       COALESCE(f.original_language, '') AS original_language"

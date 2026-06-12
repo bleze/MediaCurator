@@ -53,6 +53,8 @@ struct StreamRecord {
 	QString     hdrFormat;
 	bool        isDefault = false;
 	bool        isForced = false;
+	bool        isOriginal = false;
+	bool        isCommentary = false;
 	bool        isHearingImpaired = false;
 	bool        isVisualImpaired = false;
 	QString     pixelFormat;
@@ -79,6 +81,7 @@ struct JobRecord {
 	qint64      savedBytes = 0;       // actual bytes freed after completion
 	QString     descriptionText;      // human-readable list of removed tracks
 	QString     originalStreamsJson;  // stream snapshot taken before remux — for done-job display
+	QString     flagChangesJson;      // JSON array of {streamIndex, flag, value} flag overrides
 };
 
 // Poster / enrichment cache
@@ -102,6 +105,7 @@ struct JobDisplayRecord {
 	QString filePath;
 	QString summary;
 	QString status;
+	QString jobType;           // "remux" or "tag_edit"
 	qint64  savedBytes = 0;
 	qint64  sizeBytes  = 0;
 	double  durationSec = 0.0;
@@ -160,12 +164,21 @@ public:
 	QHash<qint64, QList<StreamRecord>> allStreamsGrouped() const;
 	QHash<qint64, QList<StreamRecord>> streamsForFiles(const QList<qint64>& fileIds) const;
 
+	// ── Stream overrides (user-forced removals) ───────────────────────────────
+	void setStreamForcedRemoval(qint64 fileId, int streamIndex, bool forced);
+	QHash<qint64, QSet<int>> allStreamForcedRemovals() const;
+	void clearStreamForcedRemovals(qint64 fileId);
+
 	// ── Jobs ─────────────────────────────────────────────────────────────────
 	[[nodiscard]] bool   hasActiveJobForFile(qint64 fileId) const;
+	[[nodiscard]] std::optional<JobRecord> activeJobForFile(qint64 fileId) const;
 	[[nodiscard]] qint64 insertJob(const JobRecord& job);
 	bool updateJobStatus(qint64 jobId, const QString& status, int resultCode = -1, const QString& log = {});
 	bool updateJobSavedBytes(qint64 jobId, qint64 savedBytes);
+	bool updateJobType(qint64 jobId, const QString& jobType);
 	bool updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson);
+	bool updateJobFlagChanges(qint64 jobId, const QString& flagChangesJson);
+	bool updateJobSummary(qint64 jobId, const QString& summary);
 	bool deleteJob(qint64 jobId);
 	bool deleteJobsBatch(const QList<qint64>& jobIds);
 	bool clearJobsByStatus(const QString& status);

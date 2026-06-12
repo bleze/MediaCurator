@@ -201,6 +201,8 @@ StreamRecord FfprobeScanner::parseStreamObject(const QJsonObject& obj)
 	const QJsonObject disp = obj.value("disposition").toObject();
 	s.isDefault         = disp.value("default").toInt() != 0;
 	s.isForced          = disp.value("forced").toInt() != 0;
+	s.isOriginal        = disp.value("original").toInt() != 0;
+	s.isCommentary      = disp.value("comment").toInt() != 0;
 	s.isHearingImpaired = disp.value("hearing_impaired").toInt() != 0;
 	s.isVisualImpaired  = disp.value("visual_impaired").toInt() != 0;
 

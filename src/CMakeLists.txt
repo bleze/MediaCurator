@@ -103,6 +103,7 @@ set(MC_HEADERS
     ../include/ui/McSettingsDialog.h
     ../include/ui/ImdbSearchDialog.h
     ../include/ui/SvgIcon.h
+    ../include/ui/McFlagRowWidget.h
 )
 
 if(WIN32)
@@ -178,6 +179,10 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/visibility_off.svg
         resources/icons/legend_toggle.svg
         resources/icons/copy.svg
+        resources/icons/star.svg
+        resources/icons/push_pin.svg
+        resources/icons/translate.svg
+        resources/icons/chat.svg
 )
 
 # Country flags for track-badge language icons (lipis/flag-icons, MIT —

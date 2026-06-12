@@ -41,6 +41,7 @@ QString ExternalTools::ffprobePath()     const { if (m_ffprobePath.isEmpty())   
 QString ExternalTools::ffmpegPath()      const { if (m_ffmpegPath.isEmpty())      m_ffmpegPath      = findTool("ffmpeg");      return m_ffmpegPath; }
 QString ExternalTools::mkvmergePath()    const { if (m_mkvmergePath.isEmpty())    m_mkvmergePath    = findTool("mkvmerge");    return m_mkvmergePath; }
 QString ExternalTools::mkvextractPath()  const { if (m_mkvextractPath.isEmpty())  m_mkvextractPath  = findTool("mkvextract");  return m_mkvextractPath; }
+QString ExternalTools::mkvpropeditPath() const { if (m_mkvpropeditPath.isEmpty()) m_mkvpropeditPath = findTool("mkvpropedit"); return m_mkvpropeditPath; }
 
 QString ExternalTools::vlcPath() const
 {

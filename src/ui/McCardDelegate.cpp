@@ -8,7 +8,11 @@
 
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QDebug>
 #include <QDir>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QHelpEvent>
@@ -107,6 +111,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		for (const auto& s : kept) keptIdx.insert(s.streamIndex);
 		for (const auto& s : d.allStreams)
 			if (!keptIdx.contains(s.streamIndex)) d.removedIndices.insert(s.streamIndex);
+		d.flagChangesJson   = index.data(McJobListModel::FlagChangesRole).toString();
 	}
 	return d;
 }
@@ -201,12 +206,16 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 			t += "  " + s.language.toUpper();
 		if (s.isDefault)  t += "  \xE2\x98\x85"; // ★
 		if (isOriginal)   t += "  \xE2\x97\x8E"; // ◎
+		if (s.isCommentary || s.trackType == QLatin1String("commentary"))
+			t += "  \xE2\x9C\x8E"; // ✎
 	} else if (s.codecType == "subtitle") {
 		if (!s.language.isEmpty() && s.language != "und"
 		    && McLanguageFlags::countryForLanguage(s.language).isEmpty())
 			t += "  " + s.language.toUpper();
 		if (s.isForced)  t += "  \xE2\x97\x8F";
 		if (s.isDefault) t += "  \xE2\x98\x85"; // ★
+		if (s.isCommentary || s.trackType == QLatin1String("commentary"))
+			t += "  \xE2\x9C\x8E"; // ✎
 	}
 	return t;
 }
@@ -275,7 +284,8 @@ QRect McCardDelegate::imdbButtonRect(const QRect& contentRect)
 int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
                                const QString& text, const QColor& bg, const QFont& font,
                                bool removed, bool hasTip, const QColor& cardBg, bool hovered,
-                               const QString& flagLang)
+                               const QString& flagLang,
+                               const QMap<QString, bool>& streamFlags)
 {
 	const QPixmap flagPm = McLanguageFlags::flag(flagLang, kFlagH,
 	                                             p->device()->devicePixelRatioF());
@@ -313,10 +323,64 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 		textLeft += kFlagW + kFlagGap;
 	}
 
-	p->setPen(removed ? QColor(0xff, 0xff, 0xff, 90) : Qt::white);
 	p->setFont(font);
-	p->drawText(QRect(textLeft, r.top(), r.right() - kBadgePad - textLeft + 1, h),
-	            Qt::AlignVCenter | Qt::AlignLeft, text);
+	// Build set of flag chars to highlight in gold (pending additions, value=true)
+	// Removed tracks always render all-white — no point highlighting a removed track's flags.
+	static const QHash<QString, QChar> kFlagChar = [] {
+		QHash<QString, QChar> m;
+		m.insert(QStringLiteral("default"),    QChar(0x2605)); // ★
+		m.insert(QStringLiteral("original"),   QChar(0x25CE)); // ◎
+		m.insert(QStringLiteral("commentary"), QChar(0x270E)); // ✎
+		m.insert(QStringLiteral("forced"),     QChar(0x25CF)); // ●
+		return m;
+	}();
+	static const QColor kFlagAddedColor(0xFF, 0xB8, 0x00); // gold
+
+	QSet<QChar> goldChars;
+	if (!removed) {
+		for (auto it = streamFlags.constBegin(); it != streamFlags.constEnd(); ++it) {
+			if (it.value()) { // value=true means flag is being added
+				const QChar c = kFlagChar.value(it.key());
+				if (!c.isNull()) goldChars.insert(c);
+			}
+		}
+	}
+
+	const int textRectW = r.right() - kBadgePad - textLeft + 1;
+	const QColor normalColor = removed ? QColor(0xff, 0xff, 0xff, 90) : Qt::white;
+
+	if (goldChars.isEmpty()) {
+		p->setPen(normalColor);
+		p->drawText(QRect(textLeft, r.top(), textRectW, h), Qt::AlignVCenter | Qt::AlignLeft, text);
+	} else {
+		// Draw text in segments, coloring pending-add flag chars gold
+		const QFontMetrics fm(font);
+		int xOff     = 0;
+		int segStart = 0;
+
+		const auto flushSegment = [&](int end) {
+			if (end <= segStart) return;
+			const QString seg = text.mid(segStart, end - segStart);
+			p->setPen(normalColor);
+			p->drawText(QRect(textLeft + xOff, r.top(), textRectW - xOff, h),
+			            Qt::AlignVCenter | Qt::AlignLeft, seg);
+			xOff += fm.horizontalAdvance(seg);
+			segStart = end;
+		};
+
+		for (int i = 0; i < text.size(); ++i) {
+			if (goldChars.contains(text[i])) {
+				flushSegment(i);
+				const QString ch = text.mid(i, 1);
+				p->setPen(kFlagAddedColor);
+				p->drawText(QRect(textLeft + xOff, r.top(), textRectW - xOff, h),
+				            Qt::AlignVCenter | Qt::AlignLeft, ch);
+				xOff += fm.horizontalAdvance(ch);
+				segStart = i + 1;
+			}
+		}
+		flushSegment(text.size()); // flush any trailing normal chars
+	}
 
 	if (removed) {
 		const int mid = r.top() + r.height() / 2;
@@ -357,7 +421,8 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
                                   const QFont& badgeFont,
                                   const QColor& cardBg,
                                   const QString& originalLang,
-                                  int hoveredStreamIndex) const
+                                  int hoveredStreamIndex,
+                                  const QString& flagChangesJson) const
 {
 	if (tracks.isEmpty()) return 0;
 
@@ -365,6 +430,17 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 	std::sort(sorted.begin(), sorted.end(), [](const StreamRecord& a, const StreamRecord& b) {
 		return a.streamIndex < b.streamIndex;
 	});
+
+	// Parse pending flag changes: streamIndex → {flagName → newValue}
+	QHash<int, QMap<QString, bool>> pendingChanges;
+	if (!flagChangesJson.isEmpty()) {
+		const QJsonArray arr = QJsonDocument::fromJson(flagChangesJson.toUtf8()).array();
+		for (const QJsonValue& v : arr) {
+			const QJsonObject o = v.toObject();
+			pendingChanges[o[QLatin1String("streamIndex")].toInt()]
+			              [o[QLatin1String("flag")].toString()] = o[QLatin1String("value")].toBool();
+		}
+	}
 
 	const QColor      color = badgeColor(sorted.first().codecType);
 	const QFontMetrics fm(badgeFont);
@@ -377,12 +453,28 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		const bool          isOrig  = s.codecType == QLatin1String("audio")
 		                           && !originalLang.isEmpty()
 		                           && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
-		const QString       text    = buildBadgeText(s, isOrig);
-		const int           bW      = badgeWidthFor(s, isOrig, fm);
-		const bool          removed = removedIndices.contains(s.streamIndex);
-		const bool          isHov   = (s.streamIndex == hoveredStreamIndex);
-		const bool          hasTip  = !s.title.isEmpty() || s.isDefault || s.isHearingImpaired || isOrig;
-		const bool          isLast  = (i == sorted.size() - 1);
+
+		// Apply pending flag changes to a copy so the badge text reflects desired state
+		// even when allStreams still holds the original DB values (e.g. after restart).
+		StreamRecord displayS = s;
+		const auto   pcIt     = pendingChanges.constFind(s.streamIndex);
+		if (pcIt != pendingChanges.constEnd()) {
+			for (auto fc = pcIt->constBegin(); fc != pcIt->constEnd(); ++fc) {
+				const bool v = fc.value();
+				if      (fc.key() == QLatin1String("default"))    displayS.isDefault    = v;
+				else if (fc.key() == QLatin1String("forced"))     displayS.isForced     = v;
+				else if (fc.key() == QLatin1String("original"))   displayS.isOriginal   = v;
+				else if (fc.key() == QLatin1String("commentary")) displayS.isCommentary = v;
+			}
+		}
+
+		const QString text    = buildBadgeText(displayS, isOrig);
+		const int     bW      = badgeWidthFor(displayS, isOrig, fm);
+		const bool    removed = removedIndices.contains(s.streamIndex);
+		const bool    isHov   = (s.streamIndex == hoveredStreamIndex);
+		const bool    hasTip  = !displayS.title.isEmpty() || displayS.isDefault || displayS.isForced
+		                     || displayS.isOriginal || displayS.isCommentary || displayS.isHearingImpaired || isOrig;
+		const bool    isLast  = (i == sorted.size() - 1);
 
 		if (x > rowRect.left() && x + bW > maxX) {
 			row++;
@@ -391,7 +483,8 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		const int bY = rowRect.top() + row * (kBadgeH + kRowGap);
 		x += drawBadge(p, x, bY, kBadgeH, text, color, badgeFont,
 		               removed, hasTip, cardBg, isHov,
-		               s.codecType == QLatin1String("video") ? QString() : s.language);
+		               s.codecType == QLatin1String("video") ? QString() : s.language,
+		               pendingChanges.value(s.streamIndex));
 		if (!isLast) x += kBadgeGap;
 	}
 	return row + 1;
@@ -634,8 +727,10 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 						         .arg(McLanguageFlags::displayName(s.language), s.language);
 					if (s.isDefault)         lines << tr("\xE2\x98\x85  Default track");
 					if (s.isForced)          lines << tr("\xE2\x97\x8F  Forced");
+					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original language (flag)");
+					else if (isOrig)         lines << tr("\xE2\x97\x8E  Original audio language");
+					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary (flag)");
 					if (s.isHearingImpaired) lines << tr("SDH / Hearing impaired");
-					if (isOrig)              lines << tr("\xE2\x97\x8E  Original audio language");
 					if (cls.type != TrackType::Main) {
 						QString typeName;
 						switch (cls.type) {
@@ -1040,7 +1135,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		const int rows = drawBadgeRow(painter,
 		                              QRect(content.left(), y, badgeAreaW, kBadgeH),
 		                              group, d.removedIndices, badgeFont, bg,
-		                              d.originalLanguage, hoveredStreamIdx);
+		                              d.originalLanguage, hoveredStreamIdx,
+		                              d.flagChangesJson);
 		y += rows * (kBadgeH + kRowGap);
 	};
 

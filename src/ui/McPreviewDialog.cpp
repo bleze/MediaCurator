@@ -13,6 +13,9 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPainter>
 #include <QPalette>
@@ -107,11 +110,15 @@ public:
 		const QColor  color   = McCardDelegate::badgeColor(index.data(Qt::UserRole).toString());
 		const bool    removed = index.data(Qt::UserRole + 1).toBool();
 		const QString lang    = index.data(Qt::UserRole + 2).toString();
+		const QVariantMap flagsVariant = index.data(Qt::UserRole + 3).toMap();
+		QMap<QString, bool> streamFlags;
+		for (auto it = flagsVariant.constBegin(); it != flagsVariant.constEnd(); ++it)
+			streamFlags[it.key()] = it.value().toBool();
 		const int     y       = opt.rect.top() + (opt.rect.height() - McCardDelegate::kBadgeH) / 2;
 		McCardDelegate::drawBadge(p, opt.rect.left() + kCellPadH, y,
 		                          McCardDelegate::kBadgeH, text, color,
 		                          badgeFont(opt.font), removed,
-		                          false, {}, false, lang);
+		                          false, {}, false, lang, streamFlags);
 	}
 
 	QSize sizeHint(const QStyleOptionViewItem& option,
@@ -149,6 +156,12 @@ McPreviewDialog::McPreviewDialog(const FileDecision& decision, QWidget* parent)
 	setupUi(decision);
 }
 
+McPreviewDialog::McPreviewDialog(const FileDecision& decision, const QString& flagChangesJson, QWidget* parent)
+	: QDialog(parent)
+{
+	setupUi(decision, flagChangesJson);
+}
+
 void McPreviewDialog::done(int result)
 {
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
@@ -158,7 +171,7 @@ void McPreviewDialog::done(int result)
 	QDialog::done(result);
 }
 
-void McPreviewDialog::setupUi(const FileDecision& decision)
+void McPreviewDialog::setupUi(const FileDecision& decision, const QString& flagChangesJson)
 {
 	setWindowTitle(tr("Preview — %1").arg(decision.file.filename));
 	setMinimumSize(860, 500);
@@ -266,7 +279,7 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 	beforeTable->verticalHeader()->setVisible(false);
 	beforeTable->verticalHeader()->setDefaultSectionSize(
 	    McCardDelegate::kBadgeH + 2 * McTrackBadgeDelegate::kCellPadV);
-	populateBeforeTable(beforeTable, decision);
+	populateBeforeTable(beforeTable, decision, flagChangesJson);
 	beforeLayout->addWidget(beforeTable);
 	panels->addWidget(beforeGroup);
 	panels->setStretchFactor(0, 1);
@@ -293,7 +306,7 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 	afterTable->verticalHeader()->setVisible(false);
 	afterTable->verticalHeader()->setDefaultSectionSize(
 	    McCardDelegate::kBadgeH + 2 * McTrackBadgeDelegate::kCellPadV);
-	populateAfterTable(afterTable, decision);
+	populateAfterTable(afterTable, decision, flagChangesJson);
 	afterLayout->addWidget(afterTable);
 	panels->addWidget(afterGroup);
 	panels->setStretchFactor(1, 1);
@@ -366,8 +379,36 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 
 // ── Table population ──────────────────────────────────────────────────────────
 
-void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecision& decision)
+static QHash<int, QMap<QString, bool>> parsePendingChanges(const QString& flagChangesJson)
 {
+	QHash<int, QMap<QString, bool>> out;
+	if (flagChangesJson.isEmpty()) return out;
+	const QJsonArray arr = QJsonDocument::fromJson(flagChangesJson.toUtf8()).array();
+	for (const QJsonValue& v : arr) {
+		const QJsonObject o = v.toObject();
+		out[o[QLatin1String("streamIndex")].toInt()]
+		   [o[QLatin1String("flag")].toString()] = o[QLatin1String("value")].toBool();
+	}
+	return out;
+}
+
+static StreamRecord applyPendingFlags(const StreamRecord& s, const QMap<QString, bool>& flags)
+{
+	StreamRecord d = s;
+	for (auto it = flags.constBegin(); it != flags.constEnd(); ++it) {
+		const bool v = it.value();
+		if      (it.key() == QLatin1String("default"))    d.isDefault    = v;
+		else if (it.key() == QLatin1String("forced"))     d.isForced     = v;
+		else if (it.key() == QLatin1String("original"))   d.isOriginal   = v;
+		else if (it.key() == QLatin1String("commentary")) d.isCommentary = v;
+	}
+	return d;
+}
+
+void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecision& decision,
+                                           const QString& flagChangesJson)
+{
+	const auto pendingChanges = parsePendingChanges(flagChangesJson);
 	QList<StreamRecord> allStreams;
 	for (const auto& td : decision.tracks) allStreams << td.stream;
 
@@ -381,12 +422,19 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 		                 && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
 		const bool removed = td.decision == Decision::Remove;
 
-		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(td.stream, isOrig));
+		const QMap<QString, bool> streamFlags = pendingChanges.value(td.stream.streamIndex);
+		const StreamRecord displayS = applyPendingFlags(td.stream, streamFlags);
+		QVariantMap flagsVariant;
+		for (auto it = streamFlags.constBegin(); it != streamFlags.constEnd(); ++it)
+			flagsVariant[it.key()] = it.value();
+
+		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(displayS, isOrig));
 		trackItem->setData(Qt::UserRole, td.stream.codecType);
 		trackItem->setData(Qt::UserRole + 1, removed);
 		trackItem->setData(Qt::UserRole + 2,
 		    td.stream.codecType == QLatin1String("video") ? QString() : td.stream.language);
-		trackItem->setToolTip(buildTrackTooltip(td.stream, isOrig));
+		trackItem->setData(Qt::UserRole + 3, flagsVariant);
+		trackItem->setToolTip(buildTrackTooltip(displayS, isOrig));
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
@@ -427,8 +475,10 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 	}
 }
 
-void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision& decision)
+void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision& decision,
+                                          const QString& flagChangesJson)
 {
+	const auto pendingChanges = parsePendingChanges(flagChangesJson);
 	QList<StreamRecord> allStreams;
 	for (const auto& td : decision.tracks) allStreams << td.stream;
 
@@ -443,12 +493,19 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		                 && !decision.file.originalLanguage.isEmpty()
 		                 && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
 
-		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(td.stream, isOrig));
+		const QMap<QString, bool> streamFlags = pendingChanges.value(td.stream.streamIndex);
+		const StreamRecord displayS = applyPendingFlags(td.stream, streamFlags);
+		QVariantMap flagsVariant;
+		for (auto it = streamFlags.constBegin(); it != streamFlags.constEnd(); ++it)
+			flagsVariant[it.key()] = it.value();
+
+		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(displayS, isOrig));
 		trackItem->setData(Qt::UserRole, td.stream.codecType);
 		trackItem->setData(Qt::UserRole + 1, false);
 		trackItem->setData(Qt::UserRole + 2,
 		    td.stream.codecType == QLatin1String("video") ? QString() : td.stream.language);
-		trackItem->setToolTip(buildTrackTooltip(td.stream, isOrig));
+		trackItem->setData(Qt::UserRole + 3, flagsVariant);
+		trackItem->setToolTip(buildTrackTooltip(displayS, isOrig));
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(

@@ -13,6 +13,7 @@ struct JobCardEntry {
 	JobDisplayRecord    job;
 	QList<StreamRecord> allStreams;   // every stream for the file
 	QList<StreamRecord> keptStreams;  // streams that survive the job
+	QString             flagChangesJson; // cached flag_changes_json; updated by setStreamFlag
 };
 
 class McJobListModel : public QAbstractListModel
@@ -37,6 +38,8 @@ public:
 		RatingRole            = Qt::UserRole + 15,  // double TMDB vote_average, 0 if unknown
 		OriginalLanguageRole  = Qt::UserRole + 16,  // QString ISO 639-2 original audio language
 		FanartRole            = Qt::UserRole + 17,  // QString absolute path to w780 backdrop image
+		FlagChangesRole       = Qt::UserRole + 18,  // QString flag_changes_json for this job
+		JobTypeRole           = Qt::UserRole + 19,  // QString "remux" | "tag_edit"
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -67,6 +70,11 @@ public:
 	// Toggle a stream's inclusion in a Proposed or Queued job's kept-tracks list.
 	// No-op if the job is Running, Done, Failed, or Cancelled. Persists the new command args to DB.
 	void toggleStream(const QModelIndex& index, int streamIndex);
+
+	// Set or clear a disposition flag on a specific stream of a Proposed or Queued job.
+	// Updates the in-memory stream record and persists flag_changes_json to DB.
+	void setStreamFlag(const QModelIndex& index, int streamIndex,
+	                   const QString& flag, bool value);
 
 	static QList<StreamRecord> computeKeptStreams(
 	    const QList<StreamRecord>& all,

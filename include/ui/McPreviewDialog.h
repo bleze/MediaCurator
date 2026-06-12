@@ -23,14 +23,15 @@ class McPreviewDialog : public QDialog
 public:
 	explicit McPreviewDialog(QWidget* parent = nullptr);
 	explicit McPreviewDialog(const FileDecision& decision, QWidget* parent = nullptr);
+	explicit McPreviewDialog(const FileDecision& decision, const QString& flagChangesJson, QWidget* parent = nullptr);
 
 protected:
 	void done(int result) override;
 
 private:
-	void setupUi(const FileDecision& decision);
-	static void populateBeforeTable(QTableWidget* table, const FileDecision& decision);
-	static void populateAfterTable (QTableWidget* table, const FileDecision& decision);
+	void setupUi(const FileDecision& decision, const QString& flagChangesJson = {});
+	static void populateBeforeTable(QTableWidget* table, const FileDecision& decision, const QString& flagChangesJson = {});
+	static void populateAfterTable (QTableWidget* table, const FileDecision& decision, const QString& flagChangesJson = {});
 	static QString formatBitrate(qint64 bps);
 	static QString formatStreamSize(qint64 bytes);
 	static QString decisionText(Decision d);

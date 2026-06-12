@@ -6,6 +6,7 @@
 #include "ui/McJobListModel.h"
 #include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
+#include "engine/ActionEngine.h"
 #include "engine/JobQueue.h"
 #include "engine/PosterManager.h"
 #include "core/DatabaseManager.h"
@@ -34,6 +35,7 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -48,6 +50,8 @@
 #include <QToolBar>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWidgetAction>
+#include "ui/McFlagRowWidget.h"
 
 // ── Status pill helpers ───────────────────────────────────────────────────────
 namespace {
@@ -457,10 +461,11 @@ void McJobPanel::setupUi()
 			    QUrl(QStringLiteral("https://www.imdb.com/title/%1/").arg(id)));
 	});
 
-	// pressed fires unconditionally — routes clicks to handlePress for badge toggle + play
+	// pressed fires for all buttons — only forward left-clicks to handlePress
 	connect(m_listView, &QAbstractItemView::pressed,
 	        this, [this, jobDelegate](const QModelIndex& idx) {
 		if (!idx.isValid()) return;
+		if (!(QApplication::mouseButtons() & Qt::LeftButton)) return;
 		const QPoint pos = m_listView->viewport()->mapFromGlobal(QCursor::pos());
 		jobDelegate->handlePress(pos, m_listView->visualRect(idx), m_listView->font(), idx);
 	});
@@ -564,7 +569,82 @@ void McJobPanel::setupUi()
 		const QString status   = idx.data(McJobListModel::StatusRole).toString();
 		const QString filePath = idx.data(McJobListModel::FilePathRole).toString();
 
+		// Detect whether the right-click landed on a specific track badge.
+		// customContextMenuRequested gives pos in list-view widget coordinates;
+		// hitTestBadgeStream and visualRect() both work in viewport coordinates.
+		const QPoint  vpPos    = m_listView->viewport()->mapFrom(m_listView, pos);
+		const QString origLang = idx.data(McJobListModel::OriginalLanguageRole).toString();
+		int hitStreamIdx = -1;
+		const bool isEditable = (status == QLatin1String("proposed") || status == QLatin1String("queued"));
+		if (isEditable) {
+			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
+				const auto streams = idx.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+				const bool hasImdb = !idx.data(McJobListModel::ImdbIdRole).toString().isEmpty();
+				hitStreamIdx = del->hitTestBadgeStream(
+					vpPos, m_listView->visualRect(idx), streams, m_listView->font(), hasImdb, origLang);
+			}
+		}
+
 		QMenu menu(this);
+
+		// Badge right-click: show ONLY flag toggles, nothing else.
+		if (hitStreamIdx >= 0) {
+			const auto streams = idx.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+			const StreamRecord* hitStream = nullptr;
+			for (const StreamRecord& s : streams) {
+				if (s.streamIndex == hitStreamIdx) { hitStream = &s; break; }
+			}
+			if (hitStream) {
+				const bool isOrigLang = (hitStream->codecType == QLatin1String("audio"))
+					&& !origLang.isEmpty()
+					&& hitStream->language.compare(origLang, Qt::CaseInsensitive) == 0;
+				const QColor trackColor = [&] {
+					if (hitStream->codecType == QLatin1String("audio"))    return QColor(0x10, 0x6a, 0xc0);
+					if (hitStream->codecType == QLatin1String("subtitle")) return QColor(0x1a, 0x86, 0x4a);
+					return QColor(0x60, 0x60, 0x60);
+				}();
+
+				// Build effective flag state: start from DB values, then overlay pending changes.
+				QMap<QString, bool> effectiveFlags;
+				effectiveFlags[QStringLiteral("default")]    = hitStream->isDefault;
+				effectiveFlags[QStringLiteral("forced")]     = hitStream->isForced;
+				effectiveFlags[QStringLiteral("original")]   = hitStream->isOriginal || isOrigLang;
+				effectiveFlags[QStringLiteral("commentary")] = hitStream->isCommentary;
+				const QString fcJson = idx.data(McJobListModel::FlagChangesRole).toString();
+				if (!fcJson.isEmpty()) {
+					const QJsonArray arr = QJsonDocument::fromJson(fcJson.toUtf8()).array();
+					for (const QJsonValue& v : arr) {
+						const QJsonObject o = v.toObject();
+						if (o[QLatin1String("streamIndex")].toInt() == hitStreamIdx)
+							effectiveFlags[o[QLatin1String("flag")].toString()] =
+								o[QLatin1String("value")].toBool();
+					}
+				}
+
+				struct FlagItem { QString flag; const char* badgeChar; bool current; QString label; };
+				const QList<FlagItem> flagItems = {
+					{ QStringLiteral("default"),    "\xe2\x98\x85", effectiveFlags[QStringLiteral("default")],    tr("Default") },
+					{ QStringLiteral("forced"),     "\xe2\x97\x8f", effectiveFlags[QStringLiteral("forced")],     tr("Forced") },
+					{ QStringLiteral("original"),   "\xe2\x97\x8e", effectiveFlags[QStringLiteral("original")],   tr("Original") },
+					{ QStringLiteral("commentary"), "\xe2\x9c\x8e", effectiveFlags[QStringLiteral("commentary")], tr("Commentary") },
+				};
+				for (const FlagItem& fi : flagItems) {
+					auto* wa  = new QWidgetAction(&menu);
+					auto* row = new McFlagRowWidget(
+						QString::fromUtf8(fi.badgeChar), trackColor, fi.label, fi.current);
+					const QString flagName = fi.flag;
+					const int     sIdx     = hitStreamIdx;
+					row->onToggled = [this, &menu, idx, sIdx, flagName](bool newVal) {
+						m_model->setStreamFlag(idx, sIdx, flagName, newVal);
+						menu.close();
+					};
+					wa->setDefaultWidget(row);
+					menu.addAction(wa);
+				}
+			}
+			menu.exec(m_listView->viewport()->mapToGlobal(pos));
+			return;
+		}
 
 		// Collect all selected job IDs grouped by status so batch actions cover the
 		// full selection rather than only the right-clicked item.
@@ -1086,26 +1166,40 @@ void McJobPanel::onPreviewCommand()
 
 	const qint64 jobId = idx.data(McJobListModel::JobIdRole).toLongLong();
 
-	// Fetch the full command args from DB
-	QString commandArgsJson;
-	QString filename;
-	const auto jobs = DatabaseManager::instance().allJobsForPanel();
-	for (const auto& r : jobs) {
-		if (r.jobId == jobId) { filename = r.filename; break; }
-	}
-	const auto allJobs = DatabaseManager::instance().allJobs();
-	for (const auto& j : allJobs) {
-		if (j.id == jobId) { commandArgsJson = j.commandArgsJson; break; }
-	}
+	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
+	if (!jobOpt) return;
+	const JobRecord& job = *jobOpt;
 
-	if (commandArgsJson.isEmpty()) return;
+	const auto fileOpt = DatabaseManager::instance().fileById(job.fileId);
+	const QString filename = fileOpt ? fileOpt->filename : QString();
 
-	// Build a human-readable command line string
-	const QJsonArray arr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
+	QString exePath;
 	QStringList args;
-	for (const auto& v : arr) args << v.toString();
 
-	const QString exePath = ExternalTools::instance().mkvmergePath();
+	if (job.jobType == QLatin1String("tag_edit")) {
+		if (!fileOpt) return;
+		exePath = ExternalTools::instance().mkvpropeditPath();
+		args = ActionEngine::buildPropEditArgs(fileOpt->path, job.flagChangesJson);
+	} else {
+		if (job.commandArgsJson.isEmpty()) return;
+		exePath = ExternalTools::instance().mkvmergePath();
+		const QJsonArray arr = QJsonDocument::fromJson(job.commandArgsJson.toUtf8()).array();
+		for (const auto& v : arr) args << v.toString();
+		if (!job.flagChangesJson.isEmpty() && !args.isEmpty()) {
+			const QList<StreamRecord> streams =
+			    DatabaseManager::instance().streamsForFile(job.fileId);
+			const QString filteredJson = ActionEngine::filterFlagChangesForRemux(
+			    job.flagChangesJson, args, streams);
+			if (!filteredJson.isEmpty()) {
+				const QStringList flagArgs = ActionEngine::buildFlagArgsForRemux(filteredJson);
+				if (!flagArgs.isEmpty()) {
+					const QString inputPath = args.takeLast();
+					args << flagArgs;
+					args << inputPath;
+				}
+			}
+		}
+	}
 	QStringList quoted;
 	for (const QString& a : args)
 		quoted << (a.contains(' ') ? QStringLiteral("\"%1\"").arg(a) : a);

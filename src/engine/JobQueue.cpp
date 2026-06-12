@@ -1,4 +1,5 @@
 #include "engine/JobQueue.h"
+#include "engine/ActionEngine.h"
 #include "engine/RemuxJob.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
@@ -11,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMetaObject>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
 #include <QThreadPool>
@@ -92,14 +94,66 @@ void JobQueue::startJob(const JobRecord& job)
 
 	const qint64  jobId           = job.id;
 	const qint64  fileId          = job.fileId;
+	const QString jobType         = job.jobType;
 	const QString commandArgsJson = job.commandArgsJson;
+	const QString flagChangesJson = job.flagChangesJson;
 	const QString descriptionText = job.descriptionText;
 
-	if (commandArgsJson.isEmpty()) {
-		// Job no longer queued — skip
+	// tag_edit jobs have no commandArgsJson — that's expected; other types must have it.
+	const bool isTagEdit = (jobType == QLatin1String("tag_edit"));
+	if (!isTagEdit && commandArgsJson.isEmpty()) {
 		runNext();
 		return;
 	}
+
+	// ── Flag-only edit via mkvpropedit ───────────────────────────────────────
+	if (isTagEdit) {
+		if (flagChangesJson.isEmpty()) {
+			db.updateJobStatus(jobId, "done", 0);
+			emit jobStarted(jobId);
+			emit jobFinished(jobId, true, 0);
+			if (m_running && !m_paused) runNext();
+			return;
+		}
+
+		const auto fileOpt = db.fileById(fileId);
+		if (!fileOpt) {
+			db.updateJobStatus(jobId, "failed", -1);
+			emit jobStarted(jobId);
+			emit jobFinished(jobId, false, 0);
+			if (m_running && !m_paused) runNext();
+			return;
+		}
+
+		const QStringList args       = ActionEngine::buildPropEditArgs(fileOpt->path, flagChangesJson);
+		const QString mkvpropeditPath = ExternalTools::instance().mkvpropeditPath();
+
+		db.updateJobStatus(jobId, "running");
+		emit jobStarted(jobId);
+
+		// mkvpropedit is near-instant; run it synchronously on this thread.
+		QProcess proc;
+		proc.setProcessChannelMode(QProcess::MergedChannels);
+		proc.start(mkvpropeditPath, args);
+		proc.waitForFinished(-1);
+		const int exitCode = proc.exitCode();
+		const bool ok = (proc.exitStatus() == QProcess::NormalExit && exitCode == 0);
+		const QByteArray rawLog = proc.readAllStandardOutput();
+		const QString log = rawLog.isEmpty()
+			? (ok ? QStringLiteral("mkvpropedit completed (exit 0)")
+			      : QStringLiteral("mkvpropedit failed (exit %1)").arg(exitCode))
+			: QString::fromLocal8Bit(rawLog);
+		db.updateJobStatus(jobId, ok ? "done" : "failed", exitCode, log);
+		emit jobFinished(jobId, ok, 0);
+
+		if (ok && fileId > 0)
+			rescanFile(fileId, {});
+
+		if (m_running && !m_paused) runNext();
+		return;
+	}
+
+	// ── Remux job via mkvmerge ───────────────────────────────────────────────
 
 	// Disk space guard — need at least as much free space as the source file.
 	// Network drives (UNC paths, mapped drives) may return isValid()=false or
@@ -128,6 +182,22 @@ void JobQueue::startJob(const JobRecord& job)
 	QStringList args;
 	const QJsonArray arr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
 	for (const auto& v : arr) args << v.toString();
+
+	// Inject flag changes before the input path (the last arg in the command),
+	// skipping any changes that target tracks being removed by this remux.
+	if (!flagChangesJson.isEmpty() && !args.isEmpty()) {
+		const QList<StreamRecord> streams = db.streamsForFile(fileId);
+		const QString filteredJson = ActionEngine::filterFlagChangesForRemux(
+		    flagChangesJson, args, streams);
+		if (!filteredJson.isEmpty()) {
+			const QStringList flagArgs = ActionEngine::buildFlagArgsForRemux(filteredJson);
+			if (!flagArgs.isEmpty()) {
+				const QString inputPath = args.takeLast();
+				args << flagArgs;
+				args << inputPath;
+			}
+		}
+	}
 
 	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
 	m_currentJob    = new RemuxJob(jobId, mkvmergePath, args, descriptionText, m_writeJobLog, this);
@@ -268,6 +338,7 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	// For non-MKV / ISO jobs the output path differs from the input — update the
 	// DB path first so rescanFile() reads the correct (new) file location.
 	if (ok && fileId > 0) {
+		db.clearStreamForcedRemovals(fileId);
 		if (!finalOutput.isEmpty() && finalOutput != originalInput) {
 			const QFileInfo fi(finalOutput);
 			db.updateFilePath(fileId, finalOutput, fi.fileName());

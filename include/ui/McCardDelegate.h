@@ -4,6 +4,7 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QHash>
+#include <QMap>
 #include <QPersistentModelIndex>
 #include <QRect>
 #include <QSet>
@@ -64,7 +65,8 @@ public:
 	                         bool removed  = false,
 	                         bool hasTip   = false, const QColor& cardBg = {},
 	                         bool hovered  = false,
-	                         const QString& flagLang = {});
+	                         const QString& flagLang = {},
+	                         const QMap<QString, bool>& streamFlags = {});
 	static QPixmap badgePixmap(const QString& text, const QString& codecType,
 	                           const QFont& baseFont, qreal dpr,
 	                           const QString& flagLang = {}, bool removed = false);
@@ -87,6 +89,15 @@ signals:
 	void playRequested(const QModelIndex& index);
 	void imdbPageRequested(const QModelIndex& index);
 	void streamToggleRequested(const QModelIndex& index, int streamIndex);
+	void streamFlagChangeRequested(const QModelIndex& index, int streamIndex,
+	                               const QString& flag, bool value);
+
+public:
+	int  hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
+	                        const QList<StreamRecord>& tracks,
+	                        const QFont& baseFont,
+	                        bool hasImdb,
+	                        const QString& originalLang = {}) const;
 
 private:
 	// Normalised card data populated from whichever model is in use.
@@ -107,6 +118,7 @@ private:
 		QString             fanartPath;             // w780 backdrop; empty if not yet fetched
 		QList<StreamRecord> allStreams;
 		QSet<int>           removedIndices; // stream indices shown struck-through
+		QString             flagChangesJson; // job queue only; empty in library mode
 		// job queue only
 		QString             status;
 		int                 progress       = 0;
@@ -132,13 +144,8 @@ private:
 	                  const QFont& badgeFont,
 	                  const QColor& cardBg,
 	                  const QString& originalLang  = {},
-	                  int hoveredStreamIndex        = -1) const;
-
-	int  hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
-	                        const QList<StreamRecord>& tracks,
-	                        const QFont& baseFont,
-	                        bool hasImdb,
-	                        const QString& originalLang = {}) const;
+	                  int hoveredStreamIndex        = -1,
+	                  const QString& flagChangesJson = {}) const;
 
 	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect, bool hasImdb = false) const;
 

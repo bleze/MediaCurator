@@ -1,7 +1,9 @@
 #include "ui/McJobListModel.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McCardDelegate.h"
+#include "engine/TrackDecision.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -48,10 +50,12 @@ void McJobListModel::reload()
 	const auto allJobRecords = db.allJobs();
 	QHash<qint64, QString> argsMap;
 	QHash<qint64, QString> origStreamsMap;
+	QHash<qint64, QString> flagChangesMap;
 	QSet<qint64> liveJobIds;
 	for (const JobRecord& j : allJobRecords) {
 		argsMap.insert(j.id, j.commandArgsJson);
 		origStreamsMap.insert(j.id, j.originalStreamsJson);
+		flagChangesMap.insert(j.id, j.flagChangesJson);
 		liveJobIds.insert(j.id);
 	}
 
@@ -82,6 +86,7 @@ void McJobListModel::reload()
 			e.allStreams = streamsMap.value(djr.fileId);
 		}
 		e.keptStreams = computeKeptStreams(e.allStreams, argsMap.value(djr.jobId));
+		e.flagChangesJson = flagChangesMap.value(djr.jobId);
 		m_allEntries.append(e);
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
@@ -110,10 +115,12 @@ void McJobListModel::reloadPaged(int limit)
 	const auto allJobRecords = db.allJobs();
 	QHash<qint64, QString> argsMap;
 	QHash<qint64, QString> origStreamsMap;
+	QHash<qint64, QString> flagChangesMap;
 	QSet<qint64> liveJobIds;
 	for (const JobRecord& j : allJobRecords) {
 		argsMap.insert(j.id, j.commandArgsJson);
 		origStreamsMap.insert(j.id, j.originalStreamsJson);
+		flagChangesMap.insert(j.id, j.flagChangesJson);
 		liveJobIds.insert(j.id);
 	}
 
@@ -135,6 +142,7 @@ void McJobListModel::reloadPaged(int limit)
 		else
 			e.allStreams = streamsMap.value(djr.fileId);
 		e.keptStreams = computeKeptStreams(e.allStreams, argsMap.value(djr.jobId));
+		e.flagChangesJson = flagChangesMap.value(djr.jobId);
 		m_allEntries.append(e);
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
@@ -457,6 +465,8 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case DurationRole:      return e.job.durationSec;
 	case RatingRole:           return e.job.voteAverage;
 	case OriginalLanguageRole: return e.job.originalLanguage;
+	case FlagChangesRole: return e.flagChangesJson;
+	case JobTypeRole:     return e.job.jobType;
 	default:                   return {};
 	}
 }
@@ -522,16 +532,170 @@ void McJobListModel::toggleStream(const QModelIndex& index, int streamIndex)
 		}
 	}
 
+	// Compute removed indices from current kept state (needed below for savings + downgrade check)
+	QSet<int> removedIndices;
+	for (const auto& s : filt.allStreams) {
+		bool kept = false;
+		for (const auto& k : filt.keptStreams)
+			if (k.streamIndex == s.streamIndex) { kept = true; break; }
+		if (!kept) removedIndices.insert(s.streamIndex);
+	}
+
 	// Regenerate commandArgsJson and persist
 	const auto allJobs = DatabaseManager::instance().allJobs();
 	QString existingArgs;
 	for (const auto& j : allJobs)
 		if (j.id == jobId) { existingArgs = j.commandArgsJson; break; }
 
-	const QString newArgs = rebuildCommandArgs(existingArgs, filt.allStreams, filt.keptStreams);
+	QString newArgs;
+	const QJsonArray existingArr = QJsonDocument::fromJson(existingArgs.toUtf8()).array();
+	if (existingArr.size() < 3 && !removedIndices.isEmpty()) {
+		// tag_edit job (commandArgsJson="[]") being upgraded: build a fresh mkvmerge command.
+		const QFileInfo fi(filt.job.filePath);
+		const QString   ext   = fi.suffix().toLower();
+		const bool      isMkv = (ext == QLatin1String("mkv") || ext == QLatin1String("mka") || ext == QLatin1String("mks"));
+		const QString   outputPath = isMkv
+			? filt.job.filePath + QLatin1String(".tmp")
+			: fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QLatin1String(".mkv.tmp");
+
+		bool hasAudio = false, hasSub = false;
+		for (const auto& s : filt.allStreams) {
+			if (s.codecType == QLatin1String("audio"))    hasAudio = true;
+			if (s.codecType == QLatin1String("subtitle")) hasSub   = true;
+		}
+		QStringList keepAudio, keepSub;
+		for (const auto& s : filt.keptStreams) {
+			if (s.codecType == QLatin1String("audio"))    keepAudio << QString::number(s.streamIndex);
+			if (s.codecType == QLatin1String("subtitle")) keepSub   << QString::number(s.streamIndex);
+		}
+		QStringList argList = { "-o", outputPath };
+		if (hasAudio) {
+			if (!keepAudio.isEmpty()) argList << "--audio-tracks" << keepAudio.join(',');
+			else                      argList << "--no-audio";
+		}
+		if (hasSub) {
+			if (!keepSub.isEmpty())   argList << "--subtitle-tracks" << keepSub.join(',');
+			else                      argList << "--no-subtitles";
+		}
+		argList << filt.job.filePath;
+		QJsonArray arr;
+		for (const QString& s : argList) arr << s;
+		newArgs = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+
+		DatabaseManager::instance().updateJobType(jobId, QStringLiteral("remux"));
+		filt.job.jobType = QStringLiteral("remux");
+		for (auto& ae : m_allEntries)
+			if (ae.job.jobId == jobId) { ae.job.jobType = QStringLiteral("remux"); break; }
+	} else {
+		newArgs = rebuildCommandArgs(existingArgs, filt.allStreams, filt.keptStreams);
+	}
 	DatabaseManager::instance().updateJobCommandArgs(jobId, newArgs);
 
-	emit dataChanged(index, index, { KeptStreamsRole });
+	// Recalculate and persist estimated savings based on current removals
+	const qint64 newSavedBytes = Mc::estimateSavingBytes(
+		filt.allStreams, removedIndices, filt.job.sizeBytes, filt.job.durationSec);
+	filt.job.savedBytes = newSavedBytes;
+	for (auto& ae : m_allEntries) {
+		if (ae.job.jobId == jobId) { ae.job.savedBytes = newSavedBytes; break; }
+	}
+	DatabaseManager::instance().updateJobSavedBytes(jobId, newSavedBytes);
+
+	// If nothing is left to remove and the job is still typed as a full remux,
+	// downgrade it to tag_edit so any flag changes use mkvpropedit (faster, in-place).
+	if (removedIndices.isEmpty() && filt.job.jobType == QLatin1String("remux")) {
+		DatabaseManager::instance().updateJobType(jobId, QStringLiteral("tag_edit"));
+		DatabaseManager::instance().updateJobCommandArgs(jobId, QStringLiteral("[]"));
+		filt.job.jobType = QStringLiteral("tag_edit");
+		for (auto& ae : m_allEntries) {
+			if (ae.job.jobId == jobId) { ae.job.jobType = QStringLiteral("tag_edit"); break; }
+		}
+	}
+
+	// Regenerate and persist the human-readable summary from the current removal set.
+	{
+		int audioRemoved = 0, subRemoved = 0;
+		for (const auto& s : filt.allStreams) {
+			if (!removedIndices.contains(s.streamIndex)) continue;
+			if (s.codecType == QLatin1String("audio"))    audioRemoved++;
+			if (s.codecType == QLatin1String("subtitle")) subRemoved++;
+		}
+		QStringList parts;
+		if (audioRemoved > 0) parts << QStringLiteral("%1 audio").arg(audioRemoved);
+		if (subRemoved   > 0) parts << QStringLiteral("%1 subtitle").arg(subRemoved);
+		const QString newSummary = parts.isEmpty()
+			? QStringLiteral("Edit track flags")
+			: QStringLiteral("Remove ") + parts.join(QStringLiteral(", "));
+		filt.job.summary = newSummary;
+		for (auto& ae : m_allEntries)
+			if (ae.job.jobId == jobId) { ae.job.summary = newSummary; break; }
+		DatabaseManager::instance().updateJobSummary(jobId, newSummary);
+	}
+
+	emit dataChanged(index, index, { KeptStreamsRole, SavedRole, SummaryRole });
+}
+
+// ── Stream flag toggle ────────────────────────────────────────────────────────
+
+void McJobListModel::setStreamFlag(const QModelIndex& index, int streamIndex,
+                                    const QString& flag, bool value)
+{
+	if (!index.isValid() || index.row() >= m_entries.size()) return;
+
+	JobCardEntry& filt = m_entries[index.row()];
+	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
+
+	const qint64 jobId = filt.job.jobId;
+
+	// Update the in-memory stream record so badges reflect the desired state immediately
+	auto applyFlag = [&](StreamRecord& s) {
+		if (s.streamIndex != streamIndex) return;
+		if (flag == QLatin1String("default"))     s.isDefault    = value;
+		else if (flag == QLatin1String("forced"))  s.isForced     = value;
+		else if (flag == QLatin1String("original")) s.isOriginal  = value;
+		else if (flag == QLatin1String("commentary")) s.isCommentary = value;
+	};
+	for (auto& s : filt.allStreams)   applyFlag(s);
+	for (auto& s : filt.keptStreams)  applyFlag(s);
+	for (auto& ae : m_allEntries) {
+		if (ae.job.jobId != jobId) continue;
+		for (auto& s : ae.allStreams)  applyFlag(s);
+		for (auto& s : ae.keptStreams) applyFlag(s);
+		break;
+	}
+
+	// Load current flag_changes_json, add/update the entry for this stream+flag
+	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
+	QJsonArray changes = jobOpt
+		? QJsonDocument::fromJson(jobOpt->flagChangesJson.toUtf8()).array()
+		: QJsonArray{};
+
+	// Replace existing entry for this (streamIndex, flag) pair or append a new one
+	bool found = false;
+	for (int i = 0; i < changes.size(); ++i) {
+		QJsonObject o = changes[i].toObject();
+		if (o["streamIndex"].toInt() == streamIndex && o["flag"].toString() == flag) {
+			o["value"] = value;
+			changes[i] = o;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		QJsonObject o;
+		o["streamIndex"] = streamIndex;
+		o["flag"]        = flag;
+		o["value"]       = value;
+		changes.append(o);
+	}
+
+	const QString newJson = QString::fromUtf8(
+		QJsonDocument(changes).toJson(QJsonDocument::Compact));
+	filt.flagChangesJson = newJson;
+	for (auto& ae : m_allEntries)
+		if (ae.job.jobId == jobId) { ae.flagChangesJson = newJson; break; }
+	DatabaseManager::instance().updateJobFlagChanges(jobId, newJson);
+
+	emit dataChanged(index, index, { AllStreamsRole, KeptStreamsRole, FlagChangesRole });
 }
 
 QString McJobListModel::rebuildCommandArgs(const QString& existingJson,
@@ -609,6 +773,8 @@ QList<StreamRecord> McJobListModel::streamsFromJson(const QString& json)
 		s.hdrFormat         = o["hdr"].toString();
 		s.isDefault         = o["default"].toBool();
 		s.isForced          = o["forced"].toBool();
+		s.isOriginal        = o["original"].toBool();
+		s.isCommentary      = o["commentary"].toBool();
 		s.isHearingImpaired = o["hi"].toBool();
 		result << s;
 	}

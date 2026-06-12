@@ -16,6 +16,7 @@ public:
 	QString ffmpegPath()      const;
 	QString mkvmergePath()    const;
 	QString mkvextractPath()  const;
+	QString mkvpropeditPath() const;
 
 	// Returns the absolute path to vlc.exe / vlc if found, otherwise empty string.
 	// Checks standard install locations and PATH; result is cached after first call.
@@ -33,6 +34,7 @@ private:
 	mutable QString m_ffmpegPath;
 	mutable QString m_mkvmergePath;
 	mutable QString m_mkvextractPath;
+	mutable QString m_mkvpropeditPath;
 	mutable QString m_vlcPath;
 	mutable bool    m_vlcSearched = false;
 };

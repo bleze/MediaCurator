@@ -71,9 +71,11 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 		o["w"]       = s.width;
 		o["h"]       = s.height;
 		o["hdr"]     = s.hdrFormat;
-		o["default"] = s.isDefault;
-		o["forced"]  = s.isForced;
-		o["hi"]      = s.isHearingImpaired;
+		o["default"]    = s.isDefault;
+		o["forced"]     = s.isForced;
+		o["original"]   = s.isOriginal;
+		o["commentary"] = s.isCommentary;
+		o["hi"]         = s.isHearingImpaired;
 		origArr.append(o);
 	}
 
@@ -134,7 +136,12 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 	QJsonArray        arr;
 	for (const QString& a : args) arr.append(a);
 
-	if (db.hasActiveJobForFile(file.id)) return false;
+	QString inheritedFlagChanges;
+	if (const auto existingJob = db.activeJobForFile(file.id)) {
+		if (existingJob->jobType != QLatin1String("tag_edit")) return false;
+		inheritedFlagChanges = existingJob->flagChangesJson;
+		db.deleteJob(existingJob->id);
+	}
 
 	const qint64 estimatedSavings = decision.estimatedSavingBytes();
 
@@ -147,6 +154,7 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 	job.descriptionText     = descLines.join(QLatin1Char('\n'));
 	job.originalStreamsJson  = QJsonDocument(origArr).toJson(QJsonDocument::Compact);
 	job.savedBytes          = estimatedSavings;
+	job.flagChangesJson     = inheritedFlagChanges;
 	(void)db.insertJob(job);
 
 	emit jobProposed(file.id);
