@@ -46,13 +46,14 @@ if [[ ! -f "$FFPROBE_BIN" ]] || $FORCE; then
         brew install --quiet ffmpeg
         cp "$(brew --prefix ffmpeg)/bin/ffprobe" "$FFPROBE_BIN"
     else
-        echo "  Downloading from johnvansickle.com..."
+        echo "  Downloading from BtbN/FFmpeg-Builds (GitHub)..."
         TMP_TAR=$(mktemp /tmp/ffprobe-XXXXXX.tar.xz)
         TMP_DIR=$(mktemp -d /tmp/ffprobe-XXXXXX)
-        curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" \
+        curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
             -o "$TMP_TAR"
+        # BtbN archive layout: ffmpeg-master-latest-linux64-gpl/bin/{ffmpeg,ffprobe,...}
         tar -xf "$TMP_TAR" -C "$TMP_DIR" --strip-components=1
-        cp "$TMP_DIR/ffprobe" "$FFPROBE_BIN"
+        cp "$TMP_DIR/bin/ffprobe" "$FFPROBE_BIN"
         rm -rf "$TMP_TAR" "$TMP_DIR"
     fi
 
@@ -97,7 +98,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 cat > "$TOOLS_DIR/versions.json" <<EOF
 {
-  "ffprobe":    { "source": "$(if [[ $PLATFORM == macos ]]; then echo brew; else echo johnvansickle; fi)" },
+  "ffprobe":    { "source": "$(if [[ $PLATFORM == macos ]]; then echo brew; else echo btbn-github; fi)" },
   "mkvtoolnix": { "version": "$MKV_VERSION" }
 }
 EOF
