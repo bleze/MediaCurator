@@ -6,9 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
-# Opt into Node.js 24 for all actions (required before June 16 2026).
+# install-qt-action and msvc-dev-cmd don't have Node.js 24 builds yet; allow
+# them to fall back to Node 20 until their maintainers publish Node 24 versions.
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   build-windows:
@@ -17,7 +18,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
@@ -56,7 +57,7 @@ jobs:
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 
     - name: Upload installer
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: MediaCurator-Windows-Installer
         path: build/packages/MediaCurator-*.exe
@@ -68,7 +69,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
@@ -95,7 +96,7 @@ jobs:
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 
     - name: Upload installer
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: MediaCurator-macOS-DMG
         path: build/packages/MediaCurator-*.dmg
@@ -107,7 +108,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install system dependencies
       run: |
@@ -156,7 +157,7 @@ jobs:
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 
     - name: Upload installer
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: MediaCurator-Linux-DEB
         path: build/packages/MediaCurator-*.deb
