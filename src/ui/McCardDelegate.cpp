@@ -237,6 +237,18 @@ static bool isCommentaryTrack(const StreamRecord& s)
 	    || s.title.contains(QLatin1String("director"), Qt::CaseInsensitive);
 }
 
+// Matches RegexClassifier's SDH detection: hearing_impaired disposition flag OR
+// title keywords ("sdh", "hearing", "cc") — same logic used by RuleEngine.
+static bool streamIsSDH(const StreamRecord& s)
+{
+	if (s.codecType != QLatin1String("subtitle")) return false;
+	if (s.isHearingImpaired) return true;
+	const QString lt = s.title.toLower();
+	return lt.contains(QLatin1String("sdh"))
+	    || lt.contains(QLatin1String("hearing"))
+	    || lt.contains(QLatin1String("cc"));
+}
+
 QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 {
 	QString t = codecLabel(s);
@@ -274,7 +286,7 @@ int McCardDelegate::badgeWidthFor(const StreamRecord& s, bool isOriginal, const 
 	if (s.codecType != QLatin1String("video")
 	    && !McLanguageFlags::countryForLanguage(s.language).isEmpty())
 		w += kFlagW + kFlagGap;
-	if (s.isHearingImpaired && s.codecType == QLatin1String("subtitle"))
+	if (streamIsSDH(s))
 		w += kFlagH + kFlagGap; // SDH icon drawn as pixmap on the right side of the badge
 	return w;
 }
@@ -541,8 +553,7 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		const bool    hasTip  = !displayS.title.isEmpty() || displayS.isDefault || displayS.isForced
 		                     || displayS.isOriginal || displayS.isCommentary || displayS.isHearingImpaired || isOrig;
 		const bool    isLast  = (i == sorted.size() - 1);
-		const bool    isSDH   = displayS.isHearingImpaired
-		                     && s.codecType == QLatin1String("subtitle");
+		const bool    isSDH   = streamIsSDH(displayS);
 
 		if (x > rowRect.left() && x + bW > maxX) {
 			row++;
@@ -799,7 +810,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original language (flag)");
 					else if (isOrig)         lines << tr("\xE2\x97\x8E  Original audio language");
 					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary");
-					if (s.isHearingImpaired) lines << tr("SDH / Hearing impaired");
+					if (streamIsSDH(s)) lines << tr("SDH / Hearing impaired");
 					if (cls.type != TrackType::Main) {
 						QString typeName;
 						switch (cls.type) {

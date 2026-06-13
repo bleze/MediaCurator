@@ -17,12 +17,26 @@
 #include <QMessageBox>
 #include <QModelIndex>
 #include <QPalette>
+#include <QStyledItemDelegate>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QToolBar>
 #include <QVBoxLayout>
 
 namespace Mc {
+
+namespace {
+class NoFocusDelegate : public QStyledItemDelegate {
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+	void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& idx) const override
+	{
+		QStyleOptionViewItem o = opt;
+		o.state &= ~QStyle::State_HasFocus;
+		QStyledItemDelegate::paint(p, o, idx);
+	}
+};
+} // namespace
 
 McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	: QDialog(parent)
@@ -70,7 +84,7 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 	m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 	m_table->horizontalHeader()->setMinimumSectionSize(100);
-	m_table->setStyleSheet("QTableWidget::item:focus { outline: none; }");
+	m_table->setItemDelegate(new NoFocusDelegate(m_table));
 
 	connect(m_table, &QTableWidget::customContextMenuRequested,
 	        this, &McManageFoldersDialog::showContextMenu);

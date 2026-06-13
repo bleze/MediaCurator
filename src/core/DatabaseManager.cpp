@@ -282,6 +282,16 @@ bool DatabaseManager::initSchema()
 		m.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_file_proposed ON jobs(file_id) WHERE status='proposed'");
 	}
 
+	// Migration: deduplicate done jobs — keep only the most-recent per file.
+	{
+		QSqlQuery m(connection());
+		m.exec(R"(
+			DELETE FROM jobs WHERE id NOT IN (
+				SELECT MAX(id) FROM jobs WHERE status='done' GROUP BY file_id
+			) AND status='done'
+		)");
+	}
+
 	// Migration: add rating columns to poster_cache
 	{
 		QSqlQuery m(connection());
@@ -941,7 +951,20 @@ bool DatabaseManager::updateJobStatus(qint64 jobId, const QString& status, int r
 		q.addBindValue(jobId);
 	}
 	const bool ok = q.exec();
-	if (ok) emit jobStatusChanged(jobId, status);
+	if (ok) {
+		emit jobStatusChanged(jobId, status);
+		if (status == QLatin1String("done")) {
+			// Keep only the most-recent done job per file — drop all older ones now.
+			QSqlQuery prune(connection());
+			prune.prepare(
+				"DELETE FROM jobs WHERE status='done'"
+				" AND file_id=(SELECT file_id FROM jobs WHERE id=?)"
+				" AND id!=?");
+			prune.addBindValue(jobId);
+			prune.addBindValue(jobId);
+			prune.exec();
+		}
+	}
 	return ok;
 }
 

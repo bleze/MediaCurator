@@ -35,6 +35,7 @@ namespace Mc {
 
 RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
 				   const QStringList& args,
+				   const QString& sourceFilePath,
 				   const QString& descriptionText,
 				   bool writeLog,
 				   QObject* parent)
@@ -56,15 +57,14 @@ RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
 
 	// Real input filesystem path — ISO files have a "bluray://" or "dvd://" prefix
 	// that mkvmerge needs but the filesystem does not understand.
-	if (!args.isEmpty()) {
-		const QString last = args.last();
-		if (last.startsWith(QLatin1String("bluray://")))
-			m_inputPath = last.mid(9);
-		else if (last.startsWith(QLatin1String("dvd://")))
-			m_inputPath = last.mid(6);
-		else
-			m_inputPath = last;
-	}
+	// sourceFilePath is captured before any sidecar args are appended to the command,
+	// so it always refers to the primary MKV/ISO source rather than a sidecar file.
+	if (sourceFilePath.startsWith(QLatin1String("bluray://")))
+		m_inputPath = sourceFilePath.mid(9);
+	else if (sourceFilePath.startsWith(QLatin1String("dvd://")))
+		m_inputPath = sourceFilePath.mid(6);
+	else
+		m_inputPath = sourceFilePath;
 }
 
 RemuxJob::~RemuxJob()

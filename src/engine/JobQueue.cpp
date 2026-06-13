@@ -13,6 +13,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QMetaObject>
 #include <QProcess>
 #include <QRegularExpression>
@@ -248,6 +249,9 @@ void JobQueue::startJob(const JobRecord& job)
 	for (const auto& v : arr) args << v.toString();
 
 	// Inject flag changes and sidecar subtitle files into the mkvmerge command.
+	// Capture the source path before sidecar args are appended — each sidecar block
+	// ends with its file path, which would otherwise corrupt args.last().
+	QString sourcePath;
 	if (!args.isEmpty()) {
 		const QList<StreamRecord> streams = db.streamsForFile(fileId);
 
@@ -269,6 +273,10 @@ void JobQueue::startJob(const JobRecord& job)
 			}
 		}
 
+		// args.last() is the primary source file at this point — record it before
+		// sidecar args push their own file paths onto the end of the list.
+		sourcePath = args.last();
+
 		// External (sidecar) subtitles: always absorb all of them into the remux output.
 		// Flag changes (if any) are applied per-sidecar inside buildSidecarArgsForRemux.
 		const QStringList sidecarArgs = ActionEngine::buildSidecarArgsForRemux(
@@ -277,7 +285,7 @@ void JobQueue::startJob(const JobRecord& job)
 	}
 
 	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
-	m_currentJob    = new RemuxJob(jobId, mkvmergePath, args, descriptionText, m_writeJobLog, this);
+	m_currentJob    = new RemuxJob(jobId, mkvmergePath, args, sourcePath, descriptionText, m_writeJobLog, this);
 	m_currentJobId  = jobId;
 	m_currentFileId = fileId;
 
@@ -336,7 +344,7 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	auto& db = DatabaseManager::instance();
 
 	if (ok && mismatch) {
-		// .tmp is still on disk — probe both files and ask user to verify
+		// .tmp is still on disk — probe it and ask user to verify
 		const QString tmpPath    = m_currentJob->tmpOutputPath();
 		const QString finalPath  = m_currentJob->finalOutputPath();
 		const QString srcPath    = m_currentJob->inputFilePath();
@@ -376,14 +384,43 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 			? tr("A requested track was not found in the source file.")
 			: warnLines.join('\n');
 
-		// Probe both files on a background thread, then surface the review dialog
+		// Source streams: use the snapshot stored at job-creation time so the source
+		// card is always correct even when the file was modified by an earlier job run.
+		const QList<StreamRecord> srcStreams = [&]() -> QList<StreamRecord> {
+			if (!jobOpt || jobOpt->originalStreamsJson.isEmpty())
+				return {};
+			QList<StreamRecord> streams;
+			const QJsonArray arr = QJsonDocument::fromJson(
+				jobOpt->originalStreamsJson.toUtf8()).array();
+			for (const auto& v : arr) {
+				const QJsonObject o = v.toObject();
+				StreamRecord s;
+				s.streamIndex       = o["idx"].toInt();
+				s.codecType         = o["type"].toString();
+				s.codecName         = o["codec"].toString();
+				s.codecProfile      = o["profile"].toString();
+				s.language          = o["lang"].toString();
+				s.title             = o["title"].toString();
+				s.channels          = o["ch"].toInt();
+				s.width             = o["w"].toInt();
+				s.height            = o["h"].toInt();
+				s.hdrFormat         = o["hdr"].toString();
+				s.isDefault         = o["default"].toBool();
+				s.isForced          = o["forced"].toBool();
+				s.isOriginal        = o["original"].toBool();
+				s.isCommentary      = o["commentary"].toBool();
+				s.isHearingImpaired = o["hi"].toBool();
+				streams << s;
+			}
+			return streams;
+		}();
+
+		// Probe only the .tmp output file on a background thread, then open the dialog
 		const QString ffprobePath = ExternalTools::instance().ffprobePath();
 		QThreadPool::globalInstance()->start(
-		    [this, jobId, filename, warningText, cmdArgs, tmpPath, srcPath, ffprobePath]() {
+		    [this, jobId, filename, warningText, cmdArgs, tmpPath, srcStreams, ffprobePath]() {
 			FfprobeScanner scanner(ffprobePath);
-			const auto srcResult = scanner.scanFile(srcPath);
 			const auto tmpResult = scanner.scanFile(tmpPath);
-			const QList<StreamRecord> srcStreams = srcResult.success ? srcResult.streams : QList<StreamRecord>{};
 			const QList<StreamRecord> tmpStreams = tmpResult.success ? tmpResult.streams : QList<StreamRecord>{};
 			QMetaObject::invokeMethod(this,
 			    [this, jobId, filename, warningText, cmdArgs, srcStreams, tmpStreams]() {

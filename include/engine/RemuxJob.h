@@ -13,6 +13,7 @@ class RemuxJob : public QObject
 public:
 	explicit RemuxJob(qint64 jobId, const QString& mkvmergePath,
 	                  const QStringList& args,
+	                  const QString& sourceFilePath,
 	                  const QString& descriptionText = {},
 	                  bool writeLog = false,
 	                  QObject* parent = nullptr);
