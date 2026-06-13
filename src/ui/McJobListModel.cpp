@@ -560,11 +560,13 @@ void McJobListModel::toggleStream(const QModelIndex& index, int streamIndex)
 
 		bool hasAudio = false, hasSub = false;
 		for (const auto& s : filt.allStreams) {
+			if (s.isExternal) continue;
 			if (s.codecType == QLatin1String("audio"))    hasAudio = true;
 			if (s.codecType == QLatin1String("subtitle")) hasSub   = true;
 		}
 		QStringList keepAudio, keepSub;
 		for (const auto& s : filt.keptStreams) {
+			if (s.isExternal) continue;  // sidecar — not a container track
 			if (s.codecType == QLatin1String("audio"))    keepAudio << QString::number(s.streamIndex);
 			if (s.codecType == QLatin1String("subtitle")) keepSub   << QString::number(s.streamIndex);
 		}
@@ -600,9 +602,29 @@ void McJobListModel::toggleStream(const QModelIndex& index, int streamIndex)
 	}
 	DatabaseManager::instance().updateJobSavedBytes(jobId, newSavedBytes);
 
-	// If nothing is left to remove and the job is still typed as a full remux,
-	// downgrade it to tag_edit so any flag changes use mkvpropedit (faster, in-place).
-	if (removedIndices.isEmpty() && filt.job.jobType == QLatin1String("remux")) {
+	// Rebuild sidecar deletions list: paths of external streams now in the remove set
+	{
+		QJsonArray sidecarPaths;
+		for (const auto& s : filt.allStreams) {
+			if (s.isExternal && removedIndices.contains(s.streamIndex) && !s.externalPath.isEmpty())
+				sidecarPaths << s.externalPath;
+		}
+		const QString sidecarJson = sidecarPaths.isEmpty()
+			? QString{}
+			: QString::fromUtf8(QJsonDocument(sidecarPaths).toJson(QJsonDocument::Compact));
+		DatabaseManager::instance().updateJobSidecarDeletions(jobId, sidecarJson);
+	}
+
+	// If no CONTAINER tracks remain removed, downgrade to tag_edit.
+	// External-only removals don't need mkvmerge — sidecar_deletions_json handles them.
+	bool containerTracksRemoved = false;
+	for (const auto& s : filt.allStreams) {
+		if (!s.isExternal && removedIndices.contains(s.streamIndex)) {
+			containerTracksRemoved = true;
+			break;
+		}
+	}
+	if (!containerTracksRemoved && filt.job.jobType == QLatin1String("remux")) {
 		DatabaseManager::instance().updateJobType(jobId, QStringLiteral("tag_edit"));
 		DatabaseManager::instance().updateJobCommandArgs(jobId, QStringLiteral("[]"));
 		filt.job.jobType = QStringLiteral("tag_edit");
@@ -711,12 +733,14 @@ QString McJobListModel::rebuildCommandArgs(const QString& existingJson,
 
 	bool hasAudio = false, hasSub = false;
 	for (const auto& s : all) {
+		if (s.isExternal) continue;
 		if (s.codecType == "audio")    hasAudio = true;
 		if (s.codecType == "subtitle") hasSub   = true;
 	}
 
 	QStringList keepAudio, keepSub;
 	for (const auto& s : kept) {
+		if (s.isExternal) continue;  // sidecar — not a container track
 		if (s.codecType == "audio")    keepAudio << QString::number(s.streamIndex);
 		if (s.codecType == "subtitle") keepSub   << QString::number(s.streamIndex);
 	}

@@ -1,8 +1,11 @@
 ﻿#include "engine/ActionEngine.h"
 
+#include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QString>
 
 namespace Mc {
@@ -36,6 +39,7 @@ QStringList ActionEngine::buildCommand(const FileDecision& decision, const QStri
 	bool anyVideoRemoved = false;
 
 	for (const TrackDecision& td : decision.tracks) {
+		if (td.stream.isExternal) continue;  // sidecar file — not in container, handled separately
 		if (td.stream.codecType == "audio")    hasAudio = true;
 		if (td.stream.codecType == "subtitle") hasSub   = true;
 		if (td.stream.codecType == "video" && td.decision == Decision::Remove)
@@ -160,6 +164,7 @@ QString ActionEngine::filterFlagChangesForRemux(const QString& flagChangesJson,
 
 	QSet<int> removedIndices;
 	for (const StreamRecord& s : streams) {
+		if (s.isExternal) continue;  // sidecar — not a container track, no mkvmerge flag to filter
 		if      (s.codecType == QLatin1String("audio")    && hasAudioFilter && !keptAudio.contains(s.streamIndex))
 			removedIndices.insert(s.streamIndex);
 		else if (s.codecType == QLatin1String("subtitle") && hasSubFilter   && !keptSub.contains(s.streamIndex))
@@ -179,5 +184,65 @@ QString ActionEngine::filterFlagChangesForRemux(const QString& flagChangesJson,
 	if (filtered.size() == changes.size()) return flagChangesJson;
 	return filtered.isEmpty() ? QString{} : QJsonDocument(filtered).toJson(QJsonDocument::Compact);
 }
+
+QString ActionEngine::filterInternalFlagChanges(const QString& flagChangesJson,
+                                                  const QList<StreamRecord>& streams)
+{
+	if (flagChangesJson.isEmpty()) return {};
+	QSet<int> externalIdxs;
+	for (const StreamRecord& s : streams)
+		if (s.isExternal) externalIdxs.insert(s.streamIndex);
+	if (externalIdxs.isEmpty()) return flagChangesJson;
+
+	const QJsonArray input = QJsonDocument::fromJson(flagChangesJson.toUtf8()).array();
+	QJsonArray output;
+	for (const QJsonValue& v : input) {
+		if (!externalIdxs.contains(v.toObject()[QLatin1String("streamIndex")].toInt()))
+			output.append(v);
+	}
+	if (output.size() == input.size()) return flagChangesJson;
+	return output.isEmpty() ? QString{} : QString::fromUtf8(QJsonDocument(output).toJson(QJsonDocument::Compact));
+}
+
+QStringList ActionEngine::buildSidecarArgsForRemux(const QList<StreamRecord>& streams,
+                                                     const QString& flagChangesJson)
+{
+	// Build map: streamIndex → {flag → value} for any pending flag overrides.
+	QHash<int, QHash<QString, bool>> changesByStream;
+	for (const QJsonValue& v : QJsonDocument::fromJson(flagChangesJson.toUtf8()).array()) {
+		const QJsonObject o = v.toObject();
+		changesByStream[o[QLatin1String("streamIndex")].toInt()]
+		               [o[QLatin1String("flag")].toString()] = o[QLatin1String("value")].toBool();
+	}
+
+	QStringList args;
+	for (const StreamRecord& s : streams) {
+		if (!s.isExternal || s.externalPath.isEmpty()) continue;
+
+		// Include all sidecar subtitles; apply pending flag changes where present.
+		const auto& ch = changesByStream.value(s.streamIndex);
+		const bool wantDefault = ch.value(QLatin1String("default"), s.isDefault);
+		const bool wantForced  = ch.value(QLatin1String("forced"),  s.isForced);
+
+		// Per-file mkvmerge options targeting track 0 (the only track in a sidecar)
+		args << QStringLiteral("--default-track-flag")  << QStringLiteral("0:%1").arg(wantDefault ? 1 : 0);
+		args << QStringLiteral("--forced-display-flag") << QStringLiteral("0:%1").arg(wantForced  ? 1 : 0);
+		if (!s.language.isEmpty())
+			args << QStringLiteral("--language") << QStringLiteral("0:%1").arg(s.language);
+		args << s.externalPath;
+	}
+	return args;
+}
+
+QString ActionEngine::computeRenamedSidecarPath(const QString& currentPath, bool wantForced)
+{
+	const QFileInfo fi(currentPath);
+	QStringList     parts = fi.completeBaseName().split(QLatin1Char('.'));
+	parts.removeAll(QStringLiteral("forced"));
+	if (wantForced) parts.append(QStringLiteral("forced"));
+	return fi.absolutePath() + QLatin1Char('/')
+	       + parts.join(QLatin1Char('.')) + QLatin1Char('.') + fi.suffix();
+}
+
 
 } // namespace Mc

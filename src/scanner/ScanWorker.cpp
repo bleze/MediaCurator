@@ -4,10 +4,12 @@
 #include "scanner/NfoParser.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QDebug>
+#include <QRegularExpression>
 #include <QSet>
 
 namespace Mc {
@@ -29,6 +31,103 @@ const QStringList& ScanWorker::videoExtensions()
 		"iso",                      // Blu-ray / DVD disc image
 	};
 	return exts;
+}
+
+// Subtitle file extensions → codec name for StreamRecord
+static const QHash<QString, QString>& subtitleExtToCodec()
+{
+	static const QHash<QString, QString> m = {
+		{"srt",  "subrip"},
+		{"ass",  "ass"},
+		{"ssa",  "ass"},
+		{"vtt",  "webvtt"},
+		{"sub",  "dvd_subtitle"},
+	};
+	return m;
+}
+
+// Language token → ISO 639-2 code (covers ISO 639-1 two-letter codes and common full names)
+static const QHash<QString, QString>& subtitleLangMap()
+{
+	static const QHash<QString, QString> m = {
+		// ISO 639-1
+		{"en","eng"},{"da","dan"},{"de","deu"},{"fr","fra"},{"es","spa"},
+		{"it","ita"},{"nl","nld"},{"sv","swe"},{"nb","nor"},{"nn","nor"},
+		{"fi","fin"},{"pl","pol"},{"pt","por"},{"ru","rus"},{"zh","zho"},
+		{"ja","jpn"},{"ko","kor"},{"ar","ara"},{"cs","ces"},{"sk","slk"},
+		{"hu","hun"},{"ro","ron"},{"el","ell"},{"tr","tur"},{"he","heb"},
+		{"uk","ukr"},{"hr","hrv"},{"sr","srp"},{"bg","bul"},{"lt","lit"},
+		{"lv","lav"},{"et","est"},{"sl","slv"},{"is","isl"},{"ca","cat"},
+		{"hi","hin"},{"th","tha"},{"vi","vie"},{"id","ind"},{"ms","msa"},
+		// Full names
+		{"english","eng"},{"danish","dan"},{"german","deu"},{"french","fra"},
+		{"spanish","spa"},{"italian","ita"},{"dutch","nld"},{"swedish","swe"},
+		{"norwegian","nor"},{"finnish","fin"},{"polish","pol"},{"portuguese","por"},
+		{"russian","rus"},{"chinese","zho"},{"japanese","jpn"},{"korean","kor"},
+		{"arabic","ara"},{"czech","ces"},{"slovak","slk"},{"hungarian","hun"},
+		{"romanian","ron"},{"greek","ell"},{"turkish","tur"},{"hebrew","heb"},
+		{"ukrainian","ukr"},{"croatian","hrv"},{"serbian","srp"},{"bulgarian","bul"},
+	};
+	return m;
+}
+
+QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, int startIndex)
+{
+	const QFileInfo videoFi(videoPath);
+	const QString dir      = videoFi.absolutePath();
+	const QString baseName = videoFi.completeBaseName();  // filename without last extension
+
+	const QStringList nameFilters = {"*.srt","*.ass","*.ssa","*.vtt","*.sub"};
+	const QFileInfoList candidates = QDir(dir).entryInfoList(nameFilters, QDir::Files);
+
+	static const QRegularExpression separatorRe(QStringLiteral("[._\\-]"));
+
+	QList<StreamRecord> result;
+	int idx = startIndex;
+
+	for (const QFileInfo& fi : candidates) {
+		const QString subBase = fi.completeBaseName();
+		// Must start with the video's complete base name (case-insensitive)
+		if (!subBase.startsWith(baseName, Qt::CaseInsensitive)) continue;
+		const QString remainder = subBase.mid(baseName.length()); // "" | ".en" | "-en" | ".en.forced" …
+
+		QString lang;
+		bool isForced = false;
+		bool isSDH    = false;
+
+		if (!remainder.isEmpty()) {
+			// Strip leading separator, then split further parts
+			QString rest = remainder;
+			if (!rest.isEmpty() && (rest[0] == '.' || rest[0] == '-' || rest[0] == '_'))
+				rest = rest.mid(1);
+			const QStringList parts = rest.split(separatorRe, Qt::SkipEmptyParts);
+			for (const QString& part : parts) {
+				const QString lower = part.toLower();
+				if (lower == QLatin1String("forced"))                         { isForced = true; continue; }
+				if (lower == QLatin1String("sdh") || lower == QLatin1String("hi") || lower == QLatin1String("cc")) { isSDH = true; continue; }
+				if (lang.isEmpty()) {
+					const QString mapped = subtitleLangMap().value(lower);
+					if (!mapped.isEmpty())
+						lang = mapped;
+					else if (lower.length() == 3)
+						lang = lower;  // assume it's already ISO 639-2
+				}
+			}
+		}
+
+		StreamRecord s;
+		s.streamIndex       = idx++;
+		s.codecType         = QStringLiteral("subtitle");
+		s.codecName         = subtitleExtToCodec().value(fi.suffix().toLower());
+		s.language          = lang;
+		s.trackType         = QStringLiteral("main");
+		s.isForced          = isForced;
+		s.isHearingImpaired = isSDH;
+		s.isExternal        = true;
+		s.externalPath      = fi.absoluteFilePath();
+		result.append(s);
+	}
+	return result;
 }
 
 ScanWorker::ScanWorker(const QString& ffprobePath, QObject* parent)
@@ -116,7 +215,11 @@ void ScanWorker::run()
 			continue;
 		}
 
-		db.insertStreams(*fileId, result.streams);
+		// Combine container streams with any sidecar subtitle files found alongside
+		const auto sidecars  = scanSidecarSubtitles(path, result.streams.size());
+		auto allStreams       = result.streams;
+		allStreams.append(sidecars);
+		db.insertStreams(*fileId, allStreams);
 
 		if (existed) ++updated;
 		else         ++added;
@@ -134,7 +237,7 @@ void ScanWorker::run()
 		// Emit the data we already have in memory — no DB round-trip needed on the UI side.
 		FileRecord fileWithId = result.file;
 		fileWithId.id = *fileId;
-		emit fileProcessed(fileWithId, result.streams);
+		emit fileProcessed(fileWithId, allStreams);
 
 		// Kick off poster lookup in parallel with the next FFprobe call.
 		PosterManager::instance().enqueue(*fileId);

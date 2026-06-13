@@ -51,6 +51,9 @@ private:
 	QCheckBox*   m_chkKeepOriginalSub;
 	QCheckBox*   m_chkWriteLog;
 	QLineEdit*   m_editTmdbKey;
+	QLineEdit*   m_editOsApiKey;
+	QLineEdit*   m_editOsUsername;
+	QLineEdit*   m_editOsPassword;
 	QCheckBox*   m_chkAutoTrack;
 };
 

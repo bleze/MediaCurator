@@ -1,4 +1,4 @@
-﻿#include "ui/McSettingsDialog.h"
+#include "ui/McSettingsDialog.h"
 #include "ui/McCardDelegate.h"
 #include "ui/McLanguageFlags.h"
 #include "core/AppSettings.h"
@@ -253,6 +253,33 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	fmtGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	left->addWidget(fmtGroup, 1);
 
+	// ── LEFT: Analysis ────────────────────────────────────────────────────────
+	auto* analysisGroup  = new QGroupBox(tr("Analysis"), this);
+	auto* analysisLayout = new QVBoxLayout(analysisGroup);
+
+	m_chkRemoveMjpeg = new QCheckBox(tr("Remove embedded MJPEG cover-art video streams"), analysisGroup);
+	m_chkRemoveMjpeg->setToolTip(tr(
+		"Some MKV files contain an MJPEG video stream used as embedded cover art or a thumbnail. "
+		"These streams are not playable content and add unnecessary size. "
+		"Enable to mark them for removal during Analyze."));
+	m_chkRemoveMjpeg->setChecked(profile->removeMjpegCoverArt());
+	analysisLayout->addWidget(m_chkRemoveMjpeg);
+
+	m_chkSkipSubOnly = new QCheckBox(tr("Skip jobs where only subtitle tracks would be removed"), analysisGroup);
+	m_chkSkipSubOnly->setToolTip(tr(
+		"Subtitle tracks are tiny — removing them saves almost no space but still requires "
+		"a full remux. Enable this to ignore those files during Analyze."));
+	m_chkSkipSubOnly->setChecked(profile->skipSubtitleOnlyJobs());
+	analysisLayout->addWidget(m_chkSkipSubOnly);
+
+	m_chkWriteLog = new QCheckBox(tr("Write .mc-log file alongside each processed file"), analysisGroup);
+	m_chkWriteLog->setToolTip(tr(
+		"After each successful remux, writes a plain-text report next to the output file. "
+		"Contains the filename, date, space reclaimed, removed tracks, and the exact mkvmerge command."));
+	m_chkWriteLog->setChecked(profile->writeJobLog());
+	analysisLayout->addWidget(m_chkWriteLog);
+	left->addWidget(analysisGroup);
+
 	// ── RIGHT: Subtitles ──────────────────────────────────────────────────────
 	auto* subGroup  = new QGroupBox(tr("Subtitles"), this);
 	auto* subLayout = new QVBoxLayout(subGroup);
@@ -328,39 +355,55 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subFmtGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	right->addWidget(subFmtGroup, 1);
 
-	// ── RIGHT: Analysis ───────────────────────────────────────────────────────
-	auto* analysisGroup  = new QGroupBox(tr("Analysis"), this);
-	auto* analysisLayout = new QVBoxLayout(analysisGroup);
+	// ── RIGHT: OpenSubtitles ──────────────────────────────────────────────────
+	auto* osGroup  = new QGroupBox(tr("OpenSubtitles"), this);
+	auto* osLayout = new QVBoxLayout(osGroup);
 
-	m_chkRemoveMjpeg = new QCheckBox(tr("Remove embedded MJPEG cover-art video streams"), analysisGroup);
-	m_chkRemoveMjpeg->setToolTip(tr(
-		"Some MKV files contain an MJPEG video stream used as embedded cover art or a thumbnail. "
-		"These streams are not playable content and add unnecessary size. "
-		"Enable to mark them for removal during Analyze."));
-	m_chkRemoveMjpeg->setChecked(profile->removeMjpegCoverArt());
-	analysisLayout->addWidget(m_chkRemoveMjpeg);
+	auto* osApiRow   = new QHBoxLayout;
+	auto* osApiLabel = new QLabel(tr("API Key:"), osGroup);
+	m_editOsApiKey   = new QLineEdit(osGroup);
+	m_editOsApiKey->setPlaceholderText(tr("OpenSubtitles.com API key"));
+	m_editOsApiKey->setText(profile->openSubtitlesApiKey());
+	osApiRow->addWidget(osApiLabel);
+	osApiRow->addWidget(m_editOsApiKey, 1);
+	osLayout->addLayout(osApiRow);
 
-	m_chkSkipSubOnly = new QCheckBox(tr("Skip jobs where only subtitle tracks would be removed"), analysisGroup);
-	m_chkSkipSubOnly->setToolTip(tr(
-		"Subtitle tracks are tiny — removing them saves almost no space but still requires "
-		"a full remux. Enable this to ignore those files during Analyze."));
-	m_chkSkipSubOnly->setChecked(profile->skipSubtitleOnlyJobs());
-	analysisLayout->addWidget(m_chkSkipSubOnly);
+	auto* osUserRow   = new QHBoxLayout;
+	auto* osUserLabel = new QLabel(tr("Username:"), osGroup);
+	m_editOsUsername  = new QLineEdit(osGroup);
+	m_editOsUsername->setPlaceholderText(tr("Optional — leave empty for anonymous downloads"));
+	m_editOsUsername->setText(profile->openSubtitlesUsername());
+	osUserRow->addWidget(osUserLabel);
+	osUserRow->addWidget(m_editOsUsername, 1);
+	osLayout->addLayout(osUserRow);
 
-	m_chkWriteLog = new QCheckBox(tr("Write .mc-log file alongside each processed file"), analysisGroup);
-	m_chkWriteLog->setToolTip(tr(
-		"After each successful remux, writes a plain-text report next to the output file. "
-		"Contains the filename, date, space reclaimed, removed tracks, and the exact mkvmerge command."));
-	m_chkWriteLog->setChecked(profile->writeJobLog());
-	analysisLayout->addWidget(m_chkWriteLog);
-	right->addWidget(analysisGroup);
+	auto* osPassRow   = new QHBoxLayout;
+	auto* osPassLabel = new QLabel(tr("Password:"), osGroup);
+	m_editOsPassword  = new QLineEdit(osGroup);
+	m_editOsPassword->setEchoMode(QLineEdit::Password);
+	m_editOsPassword->setPlaceholderText(tr("Optional"));
+	m_editOsPassword->setText(profile->openSubtitlesPassword());
+	osPassRow->addWidget(osPassLabel);
+	osPassRow->addWidget(m_editOsPassword, 1);
+	osLayout->addLayout(osPassRow);
 
-	// ── RIGHT: Enrichment ─────────────────────────────────────────────────────
-	auto* enrichGroup  = new QGroupBox(tr("Enrichment"), this);
+	auto* osHint = new QLabel(
+		tr("The API key identifies the app. Without credentials, up to 100 anonymous "
+		   "downloads per day are available. Add your account for a larger personal quota.\n"
+		   "Get a free account at <a href=\"https://www.opensubtitles.com\">opensubtitles.com</a>."),
+		osGroup);
+	osHint->setTextFormat(Qt::RichText);
+	osHint->setOpenExternalLinks(true);
+	osHint->setWordWrap(true);
+	osLayout->addWidget(osHint);
+	right->addWidget(osGroup);
+
+	// ── RIGHT: The Movie Database (TMDB) ─────────────────────────────────────
+	auto* enrichGroup  = new QGroupBox(tr("The Movie Database (TMDB)"), this);
 	auto* enrichLayout = new QVBoxLayout(enrichGroup);
 
 	auto* tmdbRow   = new QHBoxLayout;
-	auto* tmdbLabel = new QLabel(tr("TMDB API Key:"), enrichGroup);
+	auto* tmdbLabel = new QLabel(tr("API Key:"), enrichGroup);
 	m_editTmdbKey   = new QLineEdit(enrichGroup);
 	m_editTmdbKey->setPlaceholderText(tr("Leave empty to skip poster lookup"));
 	m_editTmdbKey->setText(profile->tmdbApiKey());
@@ -371,6 +414,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	auto* tmdbHint = new QLabel(
 		tr("Get a free key at <a href=\"https://www.themoviedb.org/settings/api\">themoviedb.org</a>."),
 		enrichGroup);
+	tmdbHint->setTextFormat(Qt::RichText);
 	tmdbHint->setOpenExternalLinks(true);
 	enrichLayout->addWidget(tmdbHint);
 	right->addWidget(enrichGroup);
@@ -510,6 +554,9 @@ void McSettingsDialog::accept()
 	m_profile->setKeepOriginalLanguageSubtitle(m_chkKeepOriginalSub->isChecked());
 	m_profile->setWriteJobLog(m_chkWriteLog->isChecked());
 	m_profile->setTmdbApiKey(m_editTmdbKey->text().trimmed());
+	m_profile->setOpenSubtitlesApiKey(m_editOsApiKey->text().trimmed());
+	m_profile->setOpenSubtitlesUsername(m_editOsUsername->text().trimmed());
+	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());
 	m_profile->save();
 
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());

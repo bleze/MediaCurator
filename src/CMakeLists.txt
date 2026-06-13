@@ -32,6 +32,7 @@ set(MC_SOURCES
     ui/McWhatIfDialog.cpp
     ui/McJobStatsBar.cpp
     ui/ImdbSearchDialog.cpp
+    ui/McSubtitleDownloadDialog.cpp
     ui/SvgIcon.cpp
 
     # Engine
@@ -42,6 +43,7 @@ set(MC_SOURCES
     engine/JobQueue.cpp
     engine/RemuxJob.cpp
     engine/PosterManager.cpp
+    engine/OpenSubtitlesClient.cpp
 
     # Classifier
     classifier/RegexClassifier.cpp
@@ -75,6 +77,7 @@ set(MC_HEADERS
     ../include/engine/RemuxJob.h
     ../include/engine/TrackDecision.h
     ../include/engine/PosterManager.h
+    ../include/engine/OpenSubtitlesClient.h
 
     # Classifier
     ../include/classifier/TrackClassifier.h
@@ -102,6 +105,7 @@ set(MC_HEADERS
     ../include/ui/McJobStatsBar.h
     ../include/ui/McSettingsDialog.h
     ../include/ui/ImdbSearchDialog.h
+    ../include/ui/McSubtitleDownloadDialog.h
     ../include/ui/SvgIcon.h
     ../include/ui/McFlagRowWidget.h
 )

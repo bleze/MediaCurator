@@ -28,6 +28,20 @@ public:
 	                                          const QStringList& commandArgs,
 	                                          const QList<StreamRecord>& streams);
 
+	// Returns flagChangesJson with external (sidecar) stream entries removed.
+	// Use this before passing to buildFlagArgsForRemux / buildPropEditArgs.
+	static QString filterInternalFlagChanges(const QString& flagChangesJson,
+	                                          const QList<StreamRecord>& streams);
+
+	// Returns mkvmerge per-file args for sidecar subtitles that have pending flag changes.
+	// Append these AFTER the main input path in the mkvmerge command.
+	static QStringList buildSidecarArgsForRemux(const QList<StreamRecord>& streams,
+	                                             const QString& flagChangesJson);
+
+	// Returns the new sidecar path with the forced indicator added or removed.
+	// E.g. "movie.da.srt" + forced=true → "movie.da.forced.srt"
+	static QString computeRenamedSidecarPath(const QString& currentPath, bool wantForced);
+
 private:
 	QString m_mkvmergePath;
 };

@@ -621,12 +621,15 @@ void McJobPanel::setupUi()
 				}
 
 				struct FlagItem { QString flag; const char* badgeChar; bool current; QString label; };
+				const bool isAudio = hitStream->codecType == QLatin1String("audio");
 				const QList<FlagItem> flagItems = {
 					{ QStringLiteral("default"),  "\xe2\x98\x85", effectiveFlags[QStringLiteral("default")],  tr("Default") },
 					{ QStringLiteral("forced"),   "\xe2\x97\x8f", effectiveFlags[QStringLiteral("forced")],   tr("Forced") },
 					{ QStringLiteral("original"), "\xe2\x97\x8e", effectiveFlags[QStringLiteral("original")], tr("Original") },
 				};
+				// "Original" is only meaningful for audio tracks — skip it for subtitles/video.
 				for (const FlagItem& fi : flagItems) {
+					if (fi.flag == QLatin1String("original") && !isAudio) continue;
 					auto* wa  = new QWidgetAction(&menu);
 					auto* row = new McFlagRowWidget(
 						QString::fromUtf8(fi.badgeChar), trackColor, fi.label, fi.current);
@@ -679,6 +682,13 @@ void McJobPanel::setupUi()
 		}
 
 		if (status == QLatin1String("proposed")) {
+			// Run this specific job immediately, bypassing queue order.
+			auto* runNowAct = menu.addAction(svgIcon(":/icons/play_arrow.svg"), tr("&Start Now"));
+			runNowAct->setEnabled(m_queue && !m_queue->hasActiveJob());
+			connect(runNowAct, &QAction::triggered, this, [this, jobId] {
+				if (m_queue) m_queue->runJob(jobId);
+			});
+
 			const QString queueLabel = selectedProposedJobIds.size() > 1
 			    ? tr("&Queue %1 Files").arg(selectedProposedJobIds.size())
 			    : tr("&Queue File");
@@ -697,6 +707,13 @@ void McJobPanel::setupUi()
 			});
 			menu.addSeparator();
 		} else if (status == QLatin1String("queued")) {
+			// Run this specific job immediately, bypassing queue order.
+			auto* runNowAct = menu.addAction(svgIcon(":/icons/play_arrow.svg"), tr("&Start Now"));
+			runNowAct->setEnabled(m_queue && !m_queue->hasActiveJob());
+			connect(runNowAct, &QAction::triggered, this, [this, jobId] {
+				if (m_queue) m_queue->runJob(jobId);
+			});
+
 			const QString unqueueLabel = selectedQueuedJobIds.size() > 1
 			    ? tr("&Unqueue %1 Files").arg(selectedQueuedJobIds.size())
 			    : tr("&Unqueue File");

@@ -319,6 +319,14 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE jobs ADD COLUMN flag_changes_json TEXT DEFAULT ''");
 	}
 
+	// Migration: add sidecar subtitle support
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE streams ADD COLUMN is_external INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE streams ADD COLUMN external_path TEXT DEFAULT ''");
+		m.exec("ALTER TABLE jobs ADD COLUMN sidecar_deletions_json TEXT DEFAULT ''");
+	}
+
 	// One-time migration: reset 'no_poster' records to 'pending' so that newly
 	// bundled tools (ffmpeg, mkvextract) get a chance to extract embedded art.
 	// Uses a preferences key so this only runs once per installation upgrade.
@@ -586,6 +594,8 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 		s.codecLevel        = q.value("codec_level").toString();
 		s.codecProfile      = q.value("codec_profile").toString();
 		s.extraJson         = q.value("extra_json").toString();
+		s.isExternal        = q.value("is_external").toInt() != 0;
+		s.externalPath      = q.value("external_path").toString();
 		result[s.fileId].append(s);
 	}
 	return result;
@@ -674,8 +684,9 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 			track_type, type_confidence, channels, sample_rate, bit_rate, width, height,
 			hdr_format, is_default, is_forced, is_original, is_commentary,
 			is_hearing_impaired, is_visual_impaired,
-			pixel_format, frame_rate, codec_level, codec_profile, extra_json)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			pixel_format, frame_rate, codec_level, codec_profile, extra_json,
+			is_external, external_path)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 
 	connection().transaction();
@@ -705,6 +716,8 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 		q.addBindValue(s.codecLevel);
 		q.addBindValue(s.codecProfile);
 		q.addBindValue(s.extraJson);
+		q.addBindValue(s.isExternal ? 1 : 0);
+		q.addBindValue(s.externalPath);
 		if (!q.exec()) {
 			qWarning() << "insertStreams row failed:" << q.lastError().text();
 			connection().rollback();
@@ -759,6 +772,8 @@ QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 		s.codecLevel        = q.value("codec_level").toString();
 		s.codecProfile      = q.value("codec_profile").toString();
 		s.extraJson         = q.value("extra_json").toString();
+		s.isExternal        = q.value("is_external").toInt() != 0;
+		s.externalPath      = q.value("external_path").toString();
 		result.append(s);
 	}
 	return result;
@@ -797,6 +812,8 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
 		s.codecLevel        = q.value("codec_level").toString();
 		s.codecProfile      = q.value("codec_profile").toString();
 		s.extraJson         = q.value("extra_json").toString();
+		s.isExternal        = q.value("is_external").toInt() != 0;
+		s.externalPath      = q.value("external_path").toString();
 		result[s.fileId].append(s);
 	}
 	return result;
@@ -873,8 +890,9 @@ std::optional<JobRecord> DatabaseManager::activeJobForFile(qint64 fileId) const
 	j.outputLog           = q.value("output_log").toString();
 	j.savedBytes          = q.value("saved_bytes").toLongLong();
 	j.descriptionText     = q.value("description_text").toString();
-	j.originalStreamsJson = q.value("original_streams_json").toString();
-	j.flagChangesJson     = q.value("flag_changes_json").toString();
+	j.originalStreamsJson    = q.value("original_streams_json").toString();
+	j.flagChangesJson        = q.value("flag_changes_json").toString();
+	j.sidecarDeletionsJson   = q.value("sidecar_deletions_json").toString();
 	return j;
 }
 
@@ -884,8 +902,8 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.prepare(R"(
 		INSERT INTO jobs(file_id, status, job_type, command_args_json,
 						 summary, dry_run, created_at, description_text, original_streams_json,
-						 saved_bytes, flag_changes_json)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+						 saved_bytes, flag_changes_json, sidecar_deletions_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 	q.addBindValue(job.fileId > 0 ? QVariant(job.fileId) : QVariant());
 	q.addBindValue(job.status.isEmpty() ? "proposed" : job.status);
@@ -898,6 +916,7 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.addBindValue(job.originalStreamsJson);
 	q.addBindValue(job.savedBytes);
 	q.addBindValue(job.flagChangesJson);
+	q.addBindValue(job.sidecarDeletionsJson);
 	if (!q.exec()) {
 		qWarning() << "insertJob failed:" << q.lastError().text();
 		return -1;
@@ -958,6 +977,15 @@ bool DatabaseManager::updateJobFlagChanges(qint64 jobId, const QString& flagChan
 	QSqlQuery q(connection());
 	q.prepare("UPDATE jobs SET flag_changes_json=? WHERE id=? AND status IN ('proposed','queued')");
 	q.addBindValue(flagChangesJson);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
+bool DatabaseManager::updateJobSidecarDeletions(qint64 jobId, const QString& sidecarDeletionsJson)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET sidecar_deletions_json=? WHERE id=? AND status IN ('proposed','queued')");
+	q.addBindValue(sidecarDeletionsJson);
 	q.addBindValue(jobId);
 	return q.exec();
 }
@@ -1088,7 +1116,8 @@ QList<JobRecord> DatabaseManager::queuedJobs(JobSortMode sortMode) const
 	const QString sql = QStringLiteral(
 		"SELECT j.id, j.file_id, j.status, j.job_type, j.command_args_json,"
 		"       j.summary, j.dry_run, j.created_at, j.started_at, j.finished_at,"
-		"       j.result_code, j.output_log, j.saved_bytes, j.description_text"
+		"       j.result_code, j.output_log, j.saved_bytes, j.description_text,"
+		"       j.flag_changes_json, j.sidecar_deletions_json"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" WHERE j.status = 'queued'"
 		" ORDER BY %1").arg(orderBy);
@@ -1108,8 +1137,9 @@ QList<JobRecord> DatabaseManager::queuedJobs(JobSortMode sortMode) const
 		j.resultCode       = q.value("result_code").toInt();
 		j.outputLog        = q.value("output_log").toString();
 		j.savedBytes       = q.value("saved_bytes").toLongLong();
-		j.descriptionText  = q.value("description_text").toString();
-		j.flagChangesJson  = q.value("flag_changes_json").toString();
+		j.descriptionText       = q.value("description_text").toString();
+		j.flagChangesJson       = q.value("flag_changes_json").toString();
+		j.sidecarDeletionsJson  = q.value("sidecar_deletions_json").toString();
 		result.append(j);
 	}
 	return result;
@@ -1138,6 +1168,7 @@ QList<JobRecord> DatabaseManager::allJobs() const
 		j.descriptionText       = q.value("description_text").toString();
 		j.originalStreamsJson   = q.value("original_streams_json").toString();
 		j.flagChangesJson       = q.value("flag_changes_json").toString();
+		j.sidecarDeletionsJson  = q.value("sidecar_deletions_json").toString();
 		result.append(j);
 	}
 	return result;
@@ -1163,9 +1194,10 @@ std::optional<JobRecord> DatabaseManager::jobById(qint64 jobId) const
 	j.resultCode          = q.value("result_code").toInt();
 	j.outputLog           = q.value("output_log").toString();
 	j.savedBytes          = q.value("saved_bytes").toLongLong();
-	j.descriptionText     = q.value("description_text").toString();
-	j.originalStreamsJson = q.value("original_streams_json").toString();
-	j.flagChangesJson     = q.value("flag_changes_json").toString();
+	j.descriptionText       = q.value("description_text").toString();
+	j.originalStreamsJson   = q.value("original_streams_json").toString();
+	j.flagChangesJson       = q.value("flag_changes_json").toString();
+	j.sidecarDeletionsJson  = q.value("sidecar_deletions_json").toString();
 	return j;
 }
 

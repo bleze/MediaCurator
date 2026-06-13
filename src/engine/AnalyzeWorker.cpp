@@ -99,7 +99,7 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 
 	int audioRemoved = 0, subRemoved = 0;
 	for (const auto& td : decision.tracks) {
-		if (td.decision != Decision::Remove) continue;
+		if (td.decision != Decision::Remove || td.stream.isExternal) continue;
 		if (td.stream.codecType == "audio")    ++audioRemoved;
 		if (td.stream.codecType == "subtitle") ++subRemoved;
 	}
@@ -113,7 +113,7 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 
 	QStringList descLines;
 	for (const auto& td : decision.tracks) {
-		if (td.decision != Decision::Remove) continue;
+		if (td.decision != Decision::Remove || td.stream.isExternal) continue;
 		const StreamRecord& s = td.stream;
 		QString line = QStringLiteral("  [%1] %2").arg(s.codecType.toUpper(), s.codecName);
 		if (!s.language.isEmpty() && s.language != QLatin1String("und"))

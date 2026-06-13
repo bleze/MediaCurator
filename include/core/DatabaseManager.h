@@ -62,6 +62,8 @@ struct StreamRecord {
 	QString     codecLevel;
 	QString     codecProfile;
 	QString     extraJson;
+	bool        isExternal = false;   // sidecar file, not embedded in container
+	QString     externalPath;         // absolute path to sidecar file if isExternal
 };
 
 // Mirrors the 'jobs' table row
@@ -82,6 +84,7 @@ struct JobRecord {
 	QString     descriptionText;      // human-readable list of removed tracks
 	QString     originalStreamsJson;  // stream snapshot taken before remux — for done-job display
 	QString     flagChangesJson;      // JSON array of {streamIndex, flag, value} flag overrides
+	QString     sidecarDeletionsJson; // JSON array of sidecar file paths to delete alongside this job
 };
 
 // Poster / enrichment cache
@@ -178,6 +181,7 @@ public:
 	bool updateJobType(qint64 jobId, const QString& jobType);
 	bool updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson);
 	bool updateJobFlagChanges(qint64 jobId, const QString& flagChangesJson);
+	bool updateJobSidecarDeletions(qint64 jobId, const QString& sidecarDeletionsJson);
 	bool updateJobSummary(qint64 jobId, const QString& summary);
 	bool deleteJob(qint64 jobId);
 	bool deleteJobsBatch(const QList<qint64>& jobIds);

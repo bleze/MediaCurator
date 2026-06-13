@@ -223,6 +223,7 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 		if (s.isForced)           t += "  \xE2\x97\x8F";
 		if (s.isDefault)          t += "  \xE2\x98\x85"; // ★
 		if (isCommentaryTrack(s)) t += "  \xE2\x9C\x8E"; // ✎
+		if (s.isExternal)         t += "  \xE2\x86\x93"; // ↓ = sidecar file
 	}
 	return t;
 }

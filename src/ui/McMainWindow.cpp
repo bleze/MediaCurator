@@ -16,6 +16,8 @@
 #include "engine/SimulateWorker.h"
 #include "ui/McWhatIfDialog.h"
 #include "engine/JobQueue.h"
+#include "engine/OpenSubtitlesClient.h"
+#include "ui/McSubtitleDownloadDialog.h"
 #include "engine/PosterManager.h"
 #include "engine/RuleEngine.h"
 #include "engine/TrackDecision.h"
@@ -587,6 +589,87 @@ void McMainWindow::setupUi()
 		                                            tr("Refresh &Poster"));
 		connect(refreshPosterAction, &QAction::triggered, this, [file] {
 			PosterManager::instance().refresh(file.id);
+		});
+
+		auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"),
+		                                     tr("&Download Subtitles…"));
+		dlSubsAction->setEnabled(selCount == 1);
+		connect(dlSubsAction, &QAction::triggered, this, [this, file] {
+			// Check API key
+			if (m_profile->openSubtitlesApiKey().isEmpty()) {
+				QMessageBox::information(this, tr("Download Subtitles"),
+					tr("No OpenSubtitles API key configured.\n"
+					   "Go to Settings → OpenSubtitles to add your key."));
+				return;
+			}
+
+			// Resolve IMDB ID (poster_cache first, then NFO file fallback)
+			QString imdbId;
+			if (const auto pr = DatabaseManager::instance().posterForFile(file.id))
+				imdbId = pr->imdbId;
+			if (imdbId.isEmpty())
+				imdbId = NfoParser::readImdbId(file.path);
+			if (imdbId.isEmpty()) {
+				QMessageBox::information(this, tr("Download Subtitles"),
+					tr("No IMDb ID found for \"%1\".\n"
+					   "Use \"Edit Movie Metadata\" to identify the movie first.").arg(file.filename));
+				return;
+			}
+
+			// Find which understood languages have no subtitle coverage
+			const auto streams = DatabaseManager::instance().streamsForFile(file.id);
+			QSet<QString> coveredIso6391;
+			for (const auto& s : streams) {
+				if (s.codecType != QLatin1String("subtitle")) continue;
+				if (s.language.isEmpty() || s.language == QLatin1String("und")) continue;
+				const QString c = Mc::iso6392to6391(s.language);
+				if (!c.isEmpty()) coveredIso6391.insert(c);
+				else if (s.language.length() == 2) coveredIso6391.insert(s.language.toLower());
+			}
+
+			QStringList missingIso6392;
+			for (const QString& lang6392 : m_profile->understoodLanguages()) {
+				if (lang6392 == QLatin1String("mul")) continue;
+				const QString lang6391 = Mc::iso6392to6391(lang6392);
+				if (!lang6391.isEmpty() && !coveredIso6391.contains(lang6391))
+					missingIso6392 << lang6392;
+			}
+
+			if (missingIso6392.isEmpty()) {
+				QMessageBox::information(this, tr("Download Subtitles"),
+					tr("All subtitle languages are already covered for \"%1\".").arg(file.filename));
+				return;
+			}
+
+			const qint64  fileId   = file.id;
+			const QString filePath = file.path;
+			auto* dlg = new Mc::McSubtitleDownloadDialog(
+				m_profile->openSubtitlesApiKey(),
+				m_profile->openSubtitlesUsername(),
+				m_profile->openSubtitlesPassword(),
+				imdbId, missingIso6392, filePath, this);
+			dlg->setAttribute(Qt::WA_DeleteOnClose);
+			connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
+				[this, fileId, filePath](int downloaded) {
+					if (downloaded == 0) return;
+					// Refresh sidecar streams in DB so the card reflects new files.
+					auto& db = DatabaseManager::instance();
+					const auto existing = db.streamsForFile(fileId);
+					QList<StreamRecord> containerStreams;
+					for (const auto& s : existing)
+						if (!s.isExternal) containerStreams << s;
+					const auto sidecars = ScanWorker::scanSidecarSubtitles(
+						filePath, containerStreams.size());
+					auto allStreams = containerStreams;
+					allStreams.append(sidecars);
+					db.insertStreams(fileId, allStreams);
+					m_listModel->reloadFile(fileId);
+					m_listView->viewport()->repaint();
+					m_statusLabel->setText(
+						tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
+							.arg(QFileInfo(filePath).fileName()));
+				});
+			dlg->open();
 		});
 
 		// Collect selected files so right-clicking on a multi-selection gives a batch action.

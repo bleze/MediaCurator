@@ -16,6 +16,9 @@ public:
 	void start();
 	void pause();
 	void cancel();
+	// Start a specific job immediately, bypassing the normal sort order.
+	// No-op if a job is already running.
+	void runJob(qint64 jobId);
 
 	void setWriteJobLog(bool v) { m_writeJobLog = v; }
 	void setSortMode(JobSortMode mode) { m_sortMode = mode; }

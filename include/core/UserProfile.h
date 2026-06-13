@@ -69,6 +69,14 @@ public:
 	QString tmdbApiKey() const { return m_tmdbApiKey; }
 	void setTmdbApiKey(const QString& key);
 
+	// OpenSubtitles.com credentials (opensubtitles.com REST API v1)
+	QString openSubtitlesApiKey()  const { return m_openSubtitlesApiKey; }
+	QString openSubtitlesUsername() const { return m_openSubtitlesUsername; }
+	QString openSubtitlesPassword() const { return m_openSubtitlesPassword; }
+	void setOpenSubtitlesApiKey(const QString& key);
+	void setOpenSubtitlesUsername(const QString& username);
+	void setOpenSubtitlesPassword(const QString& password);
+
 	// Audio format priority — ordered list of format IDs, best first.
 	// Each ID corresponds to a specific codec variant (e.g. "atmos", "dtshdma").
 	// When multiple tracks of the same language exist, the highest-priority one is kept.
@@ -121,6 +129,9 @@ private:
 	bool        m_removeMjpegCoverArt       = true;
 	bool        m_writeJobLog               = false;
 	QString     m_tmdbApiKey;
+	QString     m_openSubtitlesApiKey;
+	QString     m_openSubtitlesUsername;
+	QString     m_openSubtitlesPassword;
 	QStringList m_audioFormatOrder      = defaultAudioFormatOrder();
 	QStringList m_disabledAudioFormats  = {};
 	QStringList m_subtitleFormatOrder   = defaultSubtitleFormatOrder();

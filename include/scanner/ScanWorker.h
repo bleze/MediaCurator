@@ -36,6 +36,10 @@ public:
 	// File extensions considered as video files
 	static const QStringList& videoExtensions();
 
+	// Discover subtitle sidecar files next to a video file and return synthetic StreamRecords.
+	// startIndex is the first stream_index to assign (should be result.streams.size() so indices don't collide).
+	static QList<StreamRecord> scanSidecarSubtitles(const QString& videoPath, int startIndex);
+
 public slots:
 	void run();
 

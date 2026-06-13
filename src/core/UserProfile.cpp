@@ -121,6 +121,30 @@ void UserProfile::setTmdbApiKey(const QString& key)
 	}
 }
 
+void UserProfile::setOpenSubtitlesApiKey(const QString& key)
+{
+	if (m_openSubtitlesApiKey != key) {
+		m_openSubtitlesApiKey = key;
+		emit profileChanged();
+	}
+}
+
+void UserProfile::setOpenSubtitlesUsername(const QString& username)
+{
+	if (m_openSubtitlesUsername != username) {
+		m_openSubtitlesUsername = username;
+		emit profileChanged();
+	}
+}
+
+void UserProfile::setOpenSubtitlesPassword(const QString& password)
+{
+	if (m_openSubtitlesPassword != password) {
+		m_openSubtitlesPassword = password;
+		emit profileChanged();
+	}
+}
+
 void UserProfile::setAudioFormatOrder(const QStringList& order)
 {
 	if (m_audioFormatOrder != order) {
@@ -220,6 +244,9 @@ QJsonObject UserProfile::toJson() const
 	o["disabled_subtitle_formats"]  = QJsonArray::fromStringList(m_disabledSubtitleFormats);
 	o["write_job_log"]                  = m_writeJobLog;
 	o["tmdb_api_key"]                   = m_tmdbApiKey;
+	o["opensubtitles_api_key"]          = m_openSubtitlesApiKey;
+	o["opensubtitles_username"]         = m_openSubtitlesUsername;
+	o["opensubtitles_password"]         = m_openSubtitlesPassword;
 	return o;
 }
 
@@ -252,6 +279,9 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_removeMjpegCoverArt        = json["remove_mjpeg_cover_art"].toBool(true);
 	m_writeJobLog                = json["write_job_log"].toBool(false);
 	m_tmdbApiKey                 = json["tmdb_api_key"].toString();
+	m_openSubtitlesApiKey        = json["opensubtitles_api_key"].toString();
+	m_openSubtitlesUsername      = json["opensubtitles_username"].toString();
+	m_openSubtitlesPassword      = json["opensubtitles_password"].toString();
 
 	if (json.contains("audio_format_order")) {
 		QStringList order;
