@@ -690,13 +690,6 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 		m_view->viewport()->setCursor(Qt::ArrowCursor);
 		break;
 
-	case QEvent::Resize:
-		// Proactively clear the size cache when the viewport is resized so
-		// sizeHint() always recomputes at the new width on the next layout pass.
-		m_sizeCache.clear();
-		m_cacheWidth = 0;
-		break;
-
 	default: break;
 	}
 	return false;
