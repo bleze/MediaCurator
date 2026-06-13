@@ -13,15 +13,96 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMap>
 #include <QMessageBox>
+#include <QPainter>
 #include <QPushButton>
 #include <QSettings>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QtMath>
 
 namespace Mc {
 
-// ISO 639-2 codes and display names for the language picker
+// ── Badge-styled tab bar ──────────────────────────────────────────────────────
+// Draws each tab as a colored rectangle with 3px corner radius — matching the
+// badge style used on library cards. Selected tab is full color + bold;
+// unselected is darker + dimmed text. Tabs touch the pane at the bottom to
+// read as tabs rather than floating pills.
+class McBadgeTabBar : public QTabBar
+{
+public:
+	static constexpr int kHPad    = 12; // horizontal text padding inside tab
+	static constexpr int kTabH    = 30; // total height of the tab bar row
+	static constexpr int kTopGap  = 3;  // gap above the colored rectangle
+	static constexpr int kSideGap = 2;  // half-gap between adjacent tabs
+
+	explicit McBadgeTabBar(QWidget* parent = nullptr) : QTabBar(parent)
+	{
+		setExpanding(false);
+		setDrawBase(false);
+	}
+
+	void setTabColor(int idx, const QColor& c) { m_colors[idx] = c; update(); }
+
+protected:
+	QSize tabSizeHint(int idx) const override
+	{
+		const QFontMetrics fm(font());
+		const int w = fm.horizontalAdvance(tabText(idx)) + kHPad * 2;
+		return { qMax(w, 56), kTabH };
+	}
+
+	void paintEvent(QPaintEvent*) override
+	{
+		QPainter p(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		for (int i = 0; i < count(); ++i) {
+			const bool   sel  = (i == currentIndex());
+			const QColor base = m_colors.value(i, QColor(0x55, 0x55, 0x65));
+			const QColor bg   = sel ? base : base.darker(150);
+			const QColor fg   = sel ? QColor(Qt::white) : QColor(185, 185, 185);
+
+			// Badge rect: top gap + side gaps, no bottom gap so it sits on the pane.
+			const QRect badge = tabRect(i).adjusted(kSideGap, kTopGap, -kSideGap, 0);
+			p.setBrush(bg);
+			p.setPen(Qt::NoPen);
+			p.drawRoundedRect(badge, 3, 3); // 3px radius — matches card badges
+
+			p.setPen(fg);
+			if (sel) {
+				QFont f = font();
+				f.setBold(true);
+				p.setFont(f);
+			}
+			p.drawText(badge, Qt::AlignCenter, tabText(i));
+			if (sel)
+				p.setFont(font());
+		}
+	}
+
+private:
+	QMap<int, QColor> m_colors;
+};
+
+// QTabWidget::setTabBar is protected — use a subclass to install the bar.
+class McBadgeTabWidget : public QTabWidget
+{
+public:
+	explicit McBadgeTabWidget(QWidget* parent = nullptr)
+		: QTabWidget(parent), m_bar(new McBadgeTabBar(this))
+	{
+		setTabBar(m_bar);
+	}
+
+	void setTabColor(int idx, const QColor& c) { m_bar->setTabColor(idx, c); }
+
+private:
+	McBadgeTabBar* m_bar;
+};
+
+// ── ISO 639-2 language list ───────────────────────────────────────────────────
 static const QList<QPair<QString,QString>> kKnownLanguages = {
 	{"mul", "Multiple languages"},
 	{"ara", "Arabic"},
@@ -63,8 +144,6 @@ static QString displayName(const QString& code)
 	return code;
 }
 
-// Flag icon for the language list and picker. Unmapped codes ("mul") get a
-// transparent placeholder of the same size so all rows align.
 static QIcon langFlagIcon(const QString& code, qreal dpr)
 {
 	QPixmap pm = McLanguageFlags::flag(code, McCardDelegate::kFlagH, dpr);
@@ -76,7 +155,6 @@ static QIcon langFlagIcon(const QString& code, qreal dpr)
 	return QIcon(pm);
 }
 
-// Short badge label per format id — matches what codecLabel shows on cards.
 static QString formatBadgeText(const QString& id)
 {
 	static const QHash<QString, QString> texts = {
@@ -100,7 +178,6 @@ static QString formatBadgeText(const QString& id)
 	return texts.value(id, id.toUpper());
 }
 
-// Longer description shown next to the badge in the priority lists.
 static QString formatDescription(const QString& id)
 {
 	static const QHash<QString, QString> texts = {
@@ -124,11 +201,12 @@ static QString formatDescription(const QString& id)
 	return texts.value(id, id);
 }
 
+// ── Constructor ───────────────────────────────────────────────────────────────
 McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	: QDialog(parent), m_profile(profile)
 {
 	setWindowTitle(tr("Settings"));
-	setMinimumSize(800, 540);
+	setMinimumSize(760, 520);
 
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty())
@@ -138,78 +216,76 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	root->setSpacing(10);
 	root->setContentsMargins(10, 10, 10, 10);
 
-	// ── Two-column body ───────────────────────────────────────────────────────
-	auto* cols  = new QHBoxLayout;
-	cols->setSpacing(10);
-	auto* left  = new QVBoxLayout;
-	auto* right = new QVBoxLayout;
-	left->setSpacing(10);
-	right->setSpacing(10);
-	cols->addLayout(left,  1);
-	cols->addLayout(right, 1);
-	root->addLayout(cols, 1);
+	// ── Tab widget ────────────────────────────────────────────────────────────
+	auto* tabs = new McBadgeTabWidget(this);
+	tabs->setStyleSheet(
+		"QTabWidget::pane { border: 1px solid palette(mid); padding: 4px; }");
+	root->addWidget(tabs, 1);
 
-	// ── LEFT: Understood Languages ────────────────────────────────────────────
-	auto* langGroup  = new QGroupBox(tr("Understood Languages"), this);
-	auto* langLayout = new QVBoxLayout(langGroup);
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 0 — Video
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* videoPage   = new QWidget;
+	auto* videoPageLo = new QVBoxLayout(videoPage);
+	videoPageLo->setSpacing(8);
+	videoPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(videoPage, tr("Video"));
+	tabs->setTabColor(0, QColor(0xa0, 0x50, 0x00));
 
-	m_langList = new QListWidget(langGroup);
-	m_langList->setSelectionMode(QAbstractItemView::SingleSelection);
-	m_langList->setMaximumHeight(110);
-	for (const QString& code : profile->understoodLanguages()) {
-		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
-		                                 displayName(code), m_langList);
-		item->setData(Qt::UserRole, code);
-	}
-	langLayout->addWidget(m_langList);
+	auto* videoGroup  = new QGroupBox(tr("Video Streams"), videoPage);
+	auto* videoLayout = new QVBoxLayout(videoGroup);
 
-	auto* addRow = new QHBoxLayout;
-	m_langCombo  = new QComboBox(langGroup);
-	for (const auto& [code, name] : kKnownLanguages)
-		m_langCombo->addItem(langFlagIcon(code, devicePixelRatioF()),
-		                     QStringLiteral("%1 — %2").arg(code, name), code);
-	m_langCombo->setEditable(true);
-	m_langCombo->setInsertPolicy(QComboBox::NoInsert);
-	m_langCombo->lineEdit()->setPlaceholderText(tr("ISO 639-2 code (e.g. eng, dan)"));
+	m_chkRemoveMjpeg = new QCheckBox(tr("Remove embedded MJPEG cover-art video streams"), videoGroup);
+	m_chkRemoveMjpeg->setToolTip(tr(
+		"Some MKV files contain an MJPEG video stream used as embedded cover art or a thumbnail. "
+		"These streams are not playable content and add unnecessary size. "
+		"Enable to mark them for removal during Analyze."));
+	m_chkRemoveMjpeg->setChecked(profile->removeMjpegCoverArt());
+	videoLayout->addWidget(m_chkRemoveMjpeg);
 
-	auto* addBtn    = new QPushButton(tr("Add"),    langGroup);
-	auto* removeBtn = new QPushButton(tr("Remove"), langGroup);
-	addRow->addWidget(m_langCombo, 1);
-	addRow->addWidget(addBtn);
-	addRow->addWidget(removeBtn);
-	langLayout->addLayout(addRow);
+	videoPageLo->addWidget(videoGroup);
+	videoPageLo->addStretch();
 
-	connect(addBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddLanguage);
-	connect(removeBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveLanguage);
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 1 — Audio
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* audioPage   = new QWidget;
+	auto* audioPageLo = new QHBoxLayout(audioPage);
+	audioPageLo->setSpacing(8);
+	audioPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(audioPage, tr("Audio"));
+	tabs->setTabColor(1, QColor(0x10, 0x6a, 0xc0));
 
-	left->addWidget(langGroup);
+	auto* audioLeft  = new QVBoxLayout;
+	auto* audioRight = new QVBoxLayout;
+	audioLeft->setSpacing(8);
+	audioRight->setSpacing(8);
+	audioPageLo->addLayout(audioLeft,  1);
+	audioPageLo->addLayout(audioRight, 1);
 
-	// ── LEFT: Audio ───────────────────────────────────────────────────────────
-	auto* audioGroup  = new QGroupBox(tr("Audio"), this);
-	auto* audioLayout = new QVBoxLayout(audioGroup);
-
-	m_chkKeepOriginalAudio = new QCheckBox(tr("Always keep audio in the file's original language"), audioGroup);
-	m_chkKeepCommentary    = new QCheckBox(tr("Keep commentary tracks if in an understood language"), audioGroup);
-	m_chkStereoCommentary  = new QCheckBox(tr("Treat stereo as commentary when a surround track exists"), audioGroup);
+	// Left: Audio behaviour options
+	auto* audioOptGroup  = new QGroupBox(tr("Audio"), audioPage);
+	auto* audioOptLayout = new QVBoxLayout(audioOptGroup);
+	m_chkKeepOriginalAudio = new QCheckBox(tr("Always keep audio in the file's original language"), audioOptGroup);
+	m_chkKeepCommentary    = new QCheckBox(tr("Keep commentary tracks if in an understood language"), audioOptGroup);
+	m_chkStereoCommentary  = new QCheckBox(tr("Treat stereo as commentary when a surround track exists"), audioOptGroup);
 	m_chkStereoCommentary->setToolTip(tr(
 		"When a file has a surround (5.1+) audio track, any stereo track in the same language "
 		"is assumed to be a commentary or secondary mix — even without a title or flag indicating it. "
 		"The commentary keep/remove policy above still applies."));
-
 	m_chkKeepOriginalAudio->setChecked(profile->alwaysKeepOriginalAudio());
 	m_chkKeepCommentary->setChecked(profile->keepCommentaryIfUnderstood());
 	m_chkStereoCommentary->setChecked(profile->stereoAsCommentaryHeuristic());
+	audioOptLayout->addWidget(m_chkKeepOriginalAudio);
+	audioOptLayout->addWidget(m_chkKeepCommentary);
+	audioOptLayout->addWidget(m_chkStereoCommentary);
+	audioLeft->addWidget(audioOptGroup);
+	audioLeft->addStretch();
 
-	audioLayout->addWidget(m_chkKeepOriginalAudio);
-	audioLayout->addWidget(m_chkKeepCommentary);
-	audioLayout->addWidget(m_chkStereoCommentary);
-	left->addWidget(audioGroup);
-
-	// ── LEFT: Audio Format Priority ───────────────────────────────────────────
-	auto* fmtGroup  = new QGroupBox(tr("Audio Format Priority"), this);
+	// Right: Audio Format Priority
+	auto* fmtGroup  = new QGroupBox(tr("Format Priority"), audioPage);
 	auto* fmtLayout = new QVBoxLayout(fmtGroup);
-
-	auto* fmtHint = new QLabel(
+	auto* fmtHint   = new QLabel(
 		tr("Drag or use buttons to reorder. Topmost = most preferred when multiple "
 		   "tracks exist in the same language. Uncheck formats your player cannot "
 		   "decode — those are removed when a checked alternative is available."),
@@ -235,7 +311,6 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
 		item->setCheckState(disabled.contains(id) ? Qt::Unchecked : Qt::Checked);
 	}
-	// Reserve the widest badge so descriptions align in one column
 	m_audioFormatList->setIconSize(QSize(audioBadgeW, McCardDelegate::kBadgeH));
 
 	auto* fmtBtnRow = new QHBoxLayout;
@@ -244,54 +319,41 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	fmtBtnRow->addWidget(m_btnFormatUp);
 	fmtBtnRow->addWidget(m_btnFormatDown);
 	fmtBtnRow->addStretch();
-
 	connect(m_btnFormatUp,   &QPushButton::clicked, this, &McSettingsDialog::onAudioFormatUp);
 	connect(m_btnFormatDown, &QPushButton::clicked, this, &McSettingsDialog::onAudioFormatDown);
-
 	fmtLayout->addWidget(m_audioFormatList);
 	fmtLayout->addLayout(fmtBtnRow);
 	fmtGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	left->addWidget(fmtGroup, 1);
+	audioRight->addWidget(fmtGroup, 1);
 
-	// ── LEFT: Analysis ────────────────────────────────────────────────────────
-	auto* analysisGroup  = new QGroupBox(tr("Analysis"), this);
-	auto* analysisLayout = new QVBoxLayout(analysisGroup);
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 2 — Subtitles
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* subPage   = new QWidget;
+	auto* subPageLo = new QHBoxLayout(subPage);
+	subPageLo->setSpacing(8);
+	subPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(subPage, tr("Subtitles"));
+	tabs->setTabColor(2, QColor(0x1a, 0x86, 0x4a));
 
-	m_chkRemoveMjpeg = new QCheckBox(tr("Remove embedded MJPEG cover-art video streams"), analysisGroup);
-	m_chkRemoveMjpeg->setToolTip(tr(
-		"Some MKV files contain an MJPEG video stream used as embedded cover art or a thumbnail. "
-		"These streams are not playable content and add unnecessary size. "
-		"Enable to mark them for removal during Analyze."));
-	m_chkRemoveMjpeg->setChecked(profile->removeMjpegCoverArt());
-	analysisLayout->addWidget(m_chkRemoveMjpeg);
+	auto* subLeft  = new QVBoxLayout;
+	auto* subRight = new QVBoxLayout;
+	subLeft->setSpacing(8);
+	subRight->setSpacing(8);
+	subPageLo->addLayout(subLeft,  1);
+	subPageLo->addLayout(subRight, 1);
 
-	m_chkSkipSubOnly = new QCheckBox(tr("Skip jobs where only subtitle tracks would be removed"), analysisGroup);
-	m_chkSkipSubOnly->setToolTip(tr(
-		"Subtitle tracks are tiny — removing them saves almost no space but still requires "
-		"a full remux. Enable this to ignore those files during Analyze."));
-	m_chkSkipSubOnly->setChecked(profile->skipSubtitleOnlyJobs());
-	analysisLayout->addWidget(m_chkSkipSubOnly);
-
-	m_chkWriteLog = new QCheckBox(tr("Write .mc-log file alongside each processed file"), analysisGroup);
-	m_chkWriteLog->setToolTip(tr(
-		"After each successful remux, writes a plain-text report next to the output file. "
-		"Contains the filename, date, space reclaimed, removed tracks, and the exact mkvmerge command."));
-	m_chkWriteLog->setChecked(profile->writeJobLog());
-	analysisLayout->addWidget(m_chkWriteLog);
-	left->addWidget(analysisGroup);
-
-	// ── RIGHT: Subtitles ──────────────────────────────────────────────────────
-	auto* subGroup  = new QGroupBox(tr("Subtitles"), this);
-	auto* subLayout = new QVBoxLayout(subGroup);
-
-	m_chkKeepForced      = new QCheckBox(tr("Always keep forced subtitle tracks"), subGroup);
-	m_chkKeepOriginalSub = new QCheckBox(tr("Keep original-language subtitle even if not understood"), subGroup);
+	// Left top: Subtitle behaviour options
+	auto* subOptGroup  = new QGroupBox(tr("Subtitles"), subPage);
+	auto* subOptLayout = new QVBoxLayout(subOptGroup);
+	m_chkKeepForced      = new QCheckBox(tr("Always keep forced subtitle tracks"), subOptGroup);
+	m_chkKeepOriginalSub = new QCheckBox(tr("Keep original-language subtitle even if not understood"), subOptGroup);
 	m_chkKeepForced->setChecked(profile->keepForcedSubtitlesAlways());
 	m_chkKeepOriginalSub->setChecked(profile->keepOriginalLanguageSubtitle());
 
 	auto* sdhRow   = new QHBoxLayout;
-	auto* sdhLabel = new QLabel(tr("SDH / hearing-impaired subtitles:"), subGroup);
-	m_cmbSdhMode   = new QComboBox(subGroup);
+	auto* sdhLabel = new QLabel(tr("SDH / hearing-impaired:"), subOptGroup);
+	m_cmbSdhMode   = new QComboBox(subOptGroup);
 	m_cmbSdhMode->addItem(tr("Always keep"),                          0);
 	m_cmbSdhMode->addItem(tr("Always remove"),                        1);
 	m_cmbSdhMode->addItem(tr("Remove SDH if a regular track exists"), 2);
@@ -304,16 +366,59 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	sdhRow->addWidget(sdhLabel);
 	sdhRow->addWidget(m_cmbSdhMode, 1);
 
-	subLayout->addWidget(m_chkKeepForced);
-	subLayout->addLayout(sdhRow);
-	subLayout->addWidget(m_chkKeepOriginalSub);
-	right->addWidget(subGroup);
+	subOptLayout->addWidget(m_chkKeepForced);
+	subOptLayout->addLayout(sdhRow);
+	subOptLayout->addWidget(m_chkKeepOriginalSub);
+	subLeft->addWidget(subOptGroup);
 
-	// ── RIGHT: Subtitle Format Priority ───────────────────────────────────────
-	auto* subFmtGroup  = new QGroupBox(tr("Subtitle Format Priority"), this);
+	// Left bottom: OpenSubtitles
+	auto* osGroup  = new QGroupBox(tr("OpenSubtitles"), subPage);
+	auto* osLayout = new QVBoxLayout(osGroup);
+
+	auto* osApiRow   = new QHBoxLayout;
+	auto* osApiLabel = new QLabel(tr("API Key:"), osGroup);
+	m_editOsApiKey   = new QLineEdit(osGroup);
+	m_editOsApiKey->setPlaceholderText(tr("OpenSubtitles.com API key"));
+	m_editOsApiKey->setText(profile->openSubtitlesApiKey());
+	osApiRow->addWidget(osApiLabel);
+	osApiRow->addWidget(m_editOsApiKey, 1);
+	osLayout->addLayout(osApiRow);
+
+	auto* osUserRow   = new QHBoxLayout;
+	auto* osUserLabel = new QLabel(tr("Username:"), osGroup);
+	m_editOsUsername  = new QLineEdit(osGroup);
+	m_editOsUsername->setPlaceholderText(tr("Optional — leave empty for anonymous downloads"));
+	m_editOsUsername->setText(profile->openSubtitlesUsername());
+	osUserRow->addWidget(osUserLabel);
+	osUserRow->addWidget(m_editOsUsername, 1);
+	osLayout->addLayout(osUserRow);
+
+	auto* osPassRow   = new QHBoxLayout;
+	auto* osPassLabel = new QLabel(tr("Password:"), osGroup);
+	m_editOsPassword  = new QLineEdit(osGroup);
+	m_editOsPassword->setEchoMode(QLineEdit::Password);
+	m_editOsPassword->setPlaceholderText(tr("Optional"));
+	m_editOsPassword->setText(profile->openSubtitlesPassword());
+	osPassRow->addWidget(osPassLabel);
+	osPassRow->addWidget(m_editOsPassword, 1);
+	osLayout->addLayout(osPassRow);
+
+	auto* osHint = new QLabel(
+		tr("Without credentials, up to 100 anonymous downloads per day are available. "
+		   "Add your account for a larger personal quota.\n"
+		   "Get a free account at <a href=\"https://www.opensubtitles.com\">opensubtitles.com</a>."),
+		osGroup);
+	osHint->setTextFormat(Qt::RichText);
+	osHint->setOpenExternalLinks(true);
+	osHint->setWordWrap(true);
+	osLayout->addWidget(osHint);
+	subLeft->addWidget(osGroup);
+	subLeft->addStretch();
+
+	// Right: Subtitle Format Priority
+	auto* subFmtGroup  = new QGroupBox(tr("Format Priority"), subPage);
 	auto* subFmtLayout = new QVBoxLayout(subFmtGroup);
-
-	auto* subFmtHint = new QLabel(
+	auto* subFmtHint   = new QLabel(
 		tr("When multiple formats exist for the same language and type (regular / SDH / forced), "
 		   "only the topmost enabled format is kept. Uncheck formats you never want."),
 		subFmtGroup);
@@ -346,60 +451,61 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subBtnRow->addWidget(m_btnSubFmtUp);
 	subBtnRow->addWidget(m_btnSubFmtDown);
 	subBtnRow->addStretch();
-
 	connect(m_btnSubFmtUp,   &QPushButton::clicked, this, &McSettingsDialog::onSubFmtUp);
 	connect(m_btnSubFmtDown, &QPushButton::clicked, this, &McSettingsDialog::onSubFmtDown);
-
 	subFmtLayout->addWidget(m_subFormatList);
 	subFmtLayout->addLayout(subBtnRow);
 	subFmtGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	right->addWidget(subFmtGroup, 1);
+	subRight->addWidget(subFmtGroup, 1);
 
-	// ── RIGHT: OpenSubtitles ──────────────────────────────────────────────────
-	auto* osGroup  = new QGroupBox(tr("OpenSubtitles"), this);
-	auto* osLayout = new QVBoxLayout(osGroup);
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 3 — General
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* genPage   = new QWidget;
+	auto* genPageLo = new QVBoxLayout(genPage);
+	genPageLo->setSpacing(8);
+	genPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(genPage, tr("Other"));
+	tabs->setTabColor(3, QColor(0x55, 0x55, 0x65));
 
-	auto* osApiRow   = new QHBoxLayout;
-	auto* osApiLabel = new QLabel(tr("API Key:"), osGroup);
-	m_editOsApiKey   = new QLineEdit(osGroup);
-	m_editOsApiKey->setPlaceholderText(tr("OpenSubtitles.com API key"));
-	m_editOsApiKey->setText(profile->openSubtitlesApiKey());
-	osApiRow->addWidget(osApiLabel);
-	osApiRow->addWidget(m_editOsApiKey, 1);
-	osLayout->addLayout(osApiRow);
+	// Understood Languages
+	auto* langGroup  = new QGroupBox(tr("Understood Languages"), genPage);
+	auto* langLayout = new QVBoxLayout(langGroup);
+	langLayout->setContentsMargins(4, 4, 4, 4);
+	langLayout->setSpacing(4);
 
-	auto* osUserRow   = new QHBoxLayout;
-	auto* osUserLabel = new QLabel(tr("Username:"), osGroup);
-	m_editOsUsername  = new QLineEdit(osGroup);
-	m_editOsUsername->setPlaceholderText(tr("Optional — leave empty for anonymous downloads"));
-	m_editOsUsername->setText(profile->openSubtitlesUsername());
-	osUserRow->addWidget(osUserLabel);
-	osUserRow->addWidget(m_editOsUsername, 1);
-	osLayout->addLayout(osUserRow);
+	m_langList = new QListWidget(langGroup);
+	m_langList->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_langList->setFixedHeight(110);
+	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	for (const QString& code : profile->understoodLanguages()) {
+		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
+		                                 displayName(code), m_langList);
+		item->setData(Qt::UserRole, code);
+	}
+	langLayout->addWidget(m_langList);
 
-	auto* osPassRow   = new QHBoxLayout;
-	auto* osPassLabel = new QLabel(tr("Password:"), osGroup);
-	m_editOsPassword  = new QLineEdit(osGroup);
-	m_editOsPassword->setEchoMode(QLineEdit::Password);
-	m_editOsPassword->setPlaceholderText(tr("Optional"));
-	m_editOsPassword->setText(profile->openSubtitlesPassword());
-	osPassRow->addWidget(osPassLabel);
-	osPassRow->addWidget(m_editOsPassword, 1);
-	osLayout->addLayout(osPassRow);
+	auto* addRow = new QHBoxLayout;
+	m_langCombo  = new QComboBox(langGroup);
+	for (const auto& [code, name] : kKnownLanguages)
+		m_langCombo->addItem(langFlagIcon(code, devicePixelRatioF()),
+		                     QStringLiteral("%1 — %2").arg(code, name), code);
+	m_langCombo->setEditable(true);
+	m_langCombo->setInsertPolicy(QComboBox::NoInsert);
+	m_langCombo->lineEdit()->setPlaceholderText(tr("ISO 639-2 code (e.g. eng, dan)"));
+	auto* addBtn    = new QPushButton(tr("Add"),    langGroup);
+	auto* removeBtn = new QPushButton(tr("Remove"), langGroup);
+	addRow->addWidget(m_langCombo, 1);
+	addRow->addWidget(addBtn);
+	addRow->addWidget(removeBtn);
+	langLayout->addLayout(addRow);
+	langGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+	connect(addBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddLanguage);
+	connect(removeBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveLanguage);
+	genPageLo->addWidget(langGroup);
 
-	auto* osHint = new QLabel(
-		tr("The API key identifies the app. Without credentials, up to 100 anonymous "
-		   "downloads per day are available. Add your account for a larger personal quota.\n"
-		   "Get a free account at <a href=\"https://www.opensubtitles.com\">opensubtitles.com</a>."),
-		osGroup);
-	osHint->setTextFormat(Qt::RichText);
-	osHint->setOpenExternalLinks(true);
-	osHint->setWordWrap(true);
-	osLayout->addWidget(osHint);
-	right->addWidget(osGroup);
-
-	// ── RIGHT: The Movie Database (TMDB) ─────────────────────────────────────
-	auto* enrichGroup  = new QGroupBox(tr("The Movie Database (TMDB)"), this);
+	// The Movie Database (TMDB)
+	auto* enrichGroup  = new QGroupBox(tr("The Movie Database (TMDB)"), genPage);
 	auto* enrichLayout = new QVBoxLayout(enrichGroup);
 
 	auto* tmdbRow   = new QHBoxLayout;
@@ -417,21 +523,38 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	tmdbHint->setTextFormat(Qt::RichText);
 	tmdbHint->setOpenExternalLinks(true);
 	enrichLayout->addWidget(tmdbHint);
-	right->addWidget(enrichGroup);
+	genPageLo->addWidget(enrichGroup);
 
-	// ── RIGHT: Job Queue ──────────────────────────────────────────────────────
-	auto* jobGroup  = new QGroupBox(tr("Job Queue"), this);
+	// Analysis
+	auto* analysisGroup  = new QGroupBox(tr("Analysis"), genPage);
+	auto* analysisLayout = new QVBoxLayout(analysisGroup);
+
+	m_chkSkipSubOnly = new QCheckBox(tr("Skip jobs where only subtitle tracks would be removed"), analysisGroup);
+	m_chkSkipSubOnly->setToolTip(tr(
+		"Subtitle tracks are tiny — removing them saves almost no space but still requires "
+		"a full remux. Enable this to ignore those files during Analyze."));
+	m_chkSkipSubOnly->setChecked(profile->skipSubtitleOnlyJobs());
+	analysisLayout->addWidget(m_chkSkipSubOnly);
+
+	m_chkWriteLog = new QCheckBox(tr("Write .mc-log file alongside each processed file"), analysisGroup);
+	m_chkWriteLog->setToolTip(tr(
+		"After each successful remux, writes a plain-text report next to the output file. "
+		"Contains the filename, date, space reclaimed, removed tracks, and the exact mkvmerge command."));
+	m_chkWriteLog->setChecked(profile->writeJobLog());
+	analysisLayout->addWidget(m_chkWriteLog);
+	genPageLo->addWidget(analysisGroup);
+
+	// Job Queue
+	auto* jobGroup  = new QGroupBox(tr("Job Queue"), genPage);
 	auto* jobLayout = new QVBoxLayout(jobGroup);
-
-	m_chkAutoTrack = new QCheckBox(tr("Track running job"), jobGroup);
+	m_chkAutoTrack  = new QCheckBox(tr("Track running job"), jobGroup);
 	m_chkAutoTrack->setToolTip(tr(
-	    "When a job starts: scroll it into view, switching the filter to Running "
-	    "first if another filter is active"));
+		"When a job starts: scroll it into view, switching the filter to Running "
+		"first if another filter is active"));
 	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
 	jobLayout->addWidget(m_chkAutoTrack);
-	right->addWidget(jobGroup);
-
-	right->addStretch();
+	genPageLo->addWidget(jobGroup);
+	genPageLo->addStretch();
 
 	// ── Buttons ───────────────────────────────────────────────────────────────
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -457,7 +580,6 @@ void McSettingsDialog::onAddLanguage()
 
 	if (code.isEmpty()) return;
 
-	// Check for duplicates
 	for (int i = 0; i < m_langList->count(); ++i)
 		if (m_langList->item(i)->data(Qt::UserRole).toString() == code) return;
 
