@@ -364,7 +364,7 @@ void McWhatIfDialog::buildResults(const QList<FileDecision>& decisions)
 	items << McJobStatsBar::StatItem{QString::number(totalTracks), tr("tracks\nremoved")};
 	if (s.audioRemoved  > 0) items << McJobStatsBar::StatItem{QString::number(s.audioRemoved),  tr("audio\nremoved")};
 	if (s.subRemoved    > 0) items << McJobStatsBar::StatItem{QString::number(s.subRemoved),    tr("subtitle\nremoved")};
-	if (s.videoRemoved  > 0) items << McJobStatsBar::StatItem{QString::number(s.videoRemoved),  tr("MJPEG\nremoved")};
+	if (s.videoRemoved  > 0) items << McJobStatsBar::StatItem{QString::number(s.videoRemoved),  tr("cover art\nremoved")};
 	layout->addWidget(new McJobStatsBar(items, s.savedBytes, body));
 	layout->addWidget(separator(body));
 
@@ -384,7 +384,7 @@ void McWhatIfDialog::buildResults(const QList<FileDecision>& decisions)
 		if (s.reasonRedundancy > 0) addBarRow(sec->rowLayout(), tr("Codec redundancy"),       s.reasonRedundancy, maxReason, colRed,   sec);
 		if (s.reasonSdh        > 0) addBarRow(sec->rowLayout(), tr("SDH subtitle"),           s.reasonSdh,        maxReason, colSdh,   sec);
 		if (s.reasonCommentary > 0) addBarRow(sec->rowLayout(), tr("Commentary"),             s.reasonCommentary, maxReason, colCom,   sec);
-		if (s.reasonMjpeg      > 0) addBarRow(sec->rowLayout(), tr("MJPEG cover art"),        s.reasonMjpeg,      maxReason, colMjpeg, sec);
+		if (s.reasonMjpeg      > 0) addBarRow(sec->rowLayout(), tr("Cover art"),               s.reasonMjpeg,      maxReason, colMjpeg, sec);
 		if (s.reasonOther      > 0) addBarRow(sec->rowLayout(), tr("Other"),                  s.reasonOther,      maxReason, colOther, sec);
 		layout->addWidget(sec);
 		layout->addWidget(separator(body));

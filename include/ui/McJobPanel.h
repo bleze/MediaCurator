@@ -56,7 +56,7 @@ private slots:
 	void onQueueAll();
 	void onUnqueueSelected();
 	void onRemoveSelected();
-	void onPreviewCommand();
+	void onPreviewCommand(qint64 jobId);
 	void onShowSummary();
 	void onStartPause();
 	void onCancel();
@@ -77,7 +77,6 @@ private:
 	QPushButton*    m_btnStartPause        = nullptr;
 	QPushButton*    m_btnCancel           = nullptr;
 	QPushButton*    m_btnRemove           = nullptr;
-	QPushButton*    m_btnPreviewCmd       = nullptr;
 	QPushButton*    m_btnSummary          = nullptr;
 	QLineEdit*      m_filterEdit          = nullptr;
 	QComboBox*      m_statusFilter        = nullptr;

@@ -281,10 +281,11 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 		const ClassificationResult cls = classifier.classify(s.title, s.language, s.codecName);
 
 		if (s.codecType == "video") {
+			const QString cn = s.codecName.toLower();
 			if (m_profile && m_profile->removeMjpegCoverArt()
-					&& s.codecName.toLower() == QStringLiteral("mjpeg")) {
+					&& (cn == QStringLiteral("mjpeg") || cn == QStringLiteral("png"))) {
 				td.decision = Decision::Remove;
-				td.reason   = QStringLiteral("Embedded cover-art (MJPEG video stream)");
+				td.reason   = QStringLiteral("Embedded cover-art (%1 video stream)").arg(s.codecName.toUpper());
 			}
 		}
 		else if (s.codecType == "audio") {

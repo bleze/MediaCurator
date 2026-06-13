@@ -235,9 +235,9 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	auto* videoGroup  = new QGroupBox(tr("Video Streams"), videoPage);
 	auto* videoLayout = new QVBoxLayout(videoGroup);
 
-	m_chkRemoveMjpeg = new QCheckBox(tr("Remove embedded MJPEG cover-art video streams"), videoGroup);
+	m_chkRemoveMjpeg = new QCheckBox(tr("Remove embedded cover-art streams (MJPEG, PNG)"), videoGroup);
 	m_chkRemoveMjpeg->setToolTip(tr(
-		"Some MKV files contain an MJPEG video stream used as embedded cover art or a thumbnail. "
+		"Some MKV files contain an MJPEG or PNG video stream used as embedded cover art or a thumbnail. "
 		"These streams are not playable content and add unnecessary size. "
 		"Enable to mark them for removal during Analyze."));
 	m_chkRemoveMjpeg->setChecked(profile->removeMjpegCoverArt());

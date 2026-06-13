@@ -287,7 +287,7 @@ McBulkSummaryDialog::McBulkSummaryDialog(QWidget* parent)
 		if (s.subtitleRemoved > 0)
 			statItems << McJobStatsBar::StatItem{QString::number(s.subtitleRemoved), tr("subtitle\nremoved")};
 		if (s.videoRemoved > 0)
-			statItems << McJobStatsBar::StatItem{QString::number(s.videoRemoved),    tr("MJPEG\nremoved")};
+			statItems << McJobStatsBar::StatItem{QString::number(s.videoRemoved),    tr("cover art\nremoved")};
 		layout->addWidget(new McJobStatsBar(statItems, s.estimatedSavedBytes, body));
 		layout->addWidget(separator(body));
 
@@ -310,7 +310,7 @@ McBulkSummaryDialog::McBulkSummaryDialog(QWidget* parent)
 			if (s.reasonRedundancy > 0) addBarRow(sec->rowLayout(), tr("Codec redundancy"),       s.reasonRedundancy, maxReason, colRed,   sec);
 			if (s.reasonSdh        > 0) addBarRow(sec->rowLayout(), tr("SDH (no regular track)"), s.reasonSdh,        maxReason, colSdh,   sec);
 			if (s.reasonCommentary > 0) addBarRow(sec->rowLayout(), tr("Commentary"),              s.reasonCommentary, maxReason, colCom,   sec);
-			if (s.reasonMjpeg      > 0) addBarRow(sec->rowLayout(), tr("MJPEG cover art"),         s.reasonMjpeg,      maxReason, colMjpeg, sec);
+			if (s.reasonMjpeg      > 0) addBarRow(sec->rowLayout(), tr("Cover art"),                s.reasonMjpeg,      maxReason, colMjpeg, sec);
 			if (s.reasonOther      > 0) addBarRow(sec->rowLayout(), tr("Other"),                   s.reasonOther,      maxReason, colOther, sec);
 			layout->addWidget(separator(body));
 		}

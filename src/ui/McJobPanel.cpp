@@ -241,7 +241,6 @@ void McJobPanel::setupUi()
 	m_btnUnqueue       = new QPushButton(tr("Unqueue"),        toolbar);
 	m_btnQueueAll      = new QPushButton(tr("Queue All"),      toolbar);
 	m_btnRemove        = new QPushButton(tr("Remove"),         toolbar);
-	m_btnPreviewCmd    = new QPushButton(tr("Preview Command"), toolbar);
 	m_btnSummary       = new QPushButton(tr("Summary"),        toolbar);
 	m_btnStartPause    = new QPushButton(tr("Start"),          toolbar);
 	m_btnCancel        = new QPushButton(tr("Cancel"),         toolbar);
@@ -255,8 +254,6 @@ void McJobPanel::setupUi()
 	m_btnQueueAll->setIconSize(kIconSz);
 	m_btnRemove->setIcon(svgIcon(":/icons/delete.svg"));
 	m_btnRemove->setIconSize(kIconSz);
-	m_btnPreviewCmd->setIcon(svgIcon(":/icons/terminal.svg"));
-	m_btnPreviewCmd->setIconSize(kIconSz);
 	m_btnSummary->setIcon(svgIcon(":/icons/manage_search.svg"));
 	m_btnSummary->setIconSize(kIconSz);
 	m_btnStartPause->setIcon(svgIcon(":/icons/play_arrow.svg"));
@@ -270,7 +267,6 @@ void McJobPanel::setupUi()
 	m_btnStartPause->setEnabled(false);
 	m_btnCancel->setEnabled(false);
 	m_btnRemove->setEnabled(false);
-	m_btnPreviewCmd->setEnabled(false);
 	m_btnSummary->setEnabled(false);
 
 	m_btnQueueSelected->setToolTip(tr("Move selected proposed jobs to the processing queue"));
@@ -279,7 +275,6 @@ void McJobPanel::setupUi()
 	m_btnStartPause->setToolTip(tr("Start processing — runs all queued jobs in order"));
 	m_btnCancel->setToolTip(tr("Stop the current job — queued jobs remain and can be restarted"));
 	m_btnRemove->setToolTip(tr("Remove selected jobs from the queue"));
-	m_btnPreviewCmd->setToolTip(tr("Show the mkvmerge command for the selected job"));
 	m_btnSummary->setToolTip(tr("Show aggregate statistics for all proposed jobs"));
 
 	toolbar->addWidget(m_btnQueueSelected);
@@ -288,8 +283,6 @@ void McJobPanel::setupUi()
 	toolbar->addWidget(m_btnUnqueue);
 	toolbar->addSeparator();
 	toolbar->addWidget(m_btnRemove);
-	toolbar->addSeparator();
-	toolbar->addWidget(m_btnPreviewCmd);
 	toolbar->addSeparator();
 	toolbar->addWidget(m_btnSummary);
 
@@ -412,7 +405,6 @@ void McJobPanel::setupUi()
 	connect(m_btnUnqueue,       &QPushButton::clicked, this, &McJobPanel::onUnqueueSelected);
 	connect(m_btnQueueAll,      &QPushButton::clicked, this, &McJobPanel::onQueueAll);
 	connect(m_btnRemove,      &QPushButton::clicked, this, &McJobPanel::onRemoveSelected);
-	connect(m_btnPreviewCmd,  &QPushButton::clicked, this, &McJobPanel::onPreviewCommand);
 	connect(m_btnSummary,     &QPushButton::clicked, this, &McJobPanel::onShowSummary);
 	connect(m_btnStartPause,  &QPushButton::clicked, this, &McJobPanel::onStartPause);
 	connect(m_btnCancel,      &QPushButton::clicked, this, &McJobPanel::onCancel);
@@ -482,7 +474,6 @@ void McJobPanel::setupUi()
 		m_btnQueueSelected->setEnabled(false);
 		m_btnUnqueue->setEnabled(false);
 		m_btnRemove->setEnabled(false);
-		m_btnPreviewCmd->setEnabled(false);
 		updateStatusCombo();
 	});
 
@@ -491,7 +482,6 @@ void McJobPanel::setupUi()
 		const auto selected = m_listView->selectionModel()->selectedIndexes();
 		const bool has = !selected.isEmpty();
 		m_btnRemove->setEnabled(has);
-		m_btnPreviewCmd->setEnabled(has);
 		const bool hasProposed = std::any_of(selected.cbegin(), selected.cend(),
 		    [](const QModelIndex& idx) {
 		        return idx.data(McJobListModel::StatusRole).toString() == "proposed";
@@ -750,6 +740,12 @@ void McJobPanel::setupUi()
 			emit previewRequested(fileId);
 		});
 
+		auto* previewCmdAct = menu.addAction(svgIcon(":/icons/terminal.svg"),
+		                                     tr("Preview &Command…"));
+		connect(previewCmdAct, &QAction::triggered, this, [this, jobId] {
+			onPreviewCommand(jobId);
+		});
+
 		menu.addSeparator();
 
 		auto* refreshPosterAct = menu.addAction(svgIcon(":/icons/refresh.svg"),
@@ -833,6 +829,35 @@ void McJobPanel::setupUi()
 					.arg(fmtTime(rec->finishedAt)));
 				infoLabel->setTextFormat(Qt::RichText);
 				vlay->addWidget(infoLabel);
+
+				// Savings accuracy row — shown for completed jobs that have both values
+				const bool showSavings = (rec->status == QLatin1String("done"))
+				                      && rec->savedBytes > 0
+				                      && rec->estimatedSavedBytes > 0;
+				if (showSavings) {
+					const auto fmtMB = [](qint64 b) {
+						return QStringLiteral("%1 MB").arg(b / 1048576.0, 0, 'f', 2);
+					};
+					const qint64 diff   = rec->savedBytes - rec->estimatedSavedBytes;
+					const double pct    = 100.0 * rec->savedBytes / rec->estimatedSavedBytes;
+					const QString sign  = diff >= 0 ? QStringLiteral("+") : QString();
+					const QString color = qAbs(diff) < 1048576          ? QStringLiteral("green")
+					                    : diff > 0                       ? QStringLiteral("darkorange")
+					                    :                                  QStringLiteral("crimson");
+					auto* savingsLabel = new QLabel(dlg);
+					savingsLabel->setTextFormat(Qt::RichText);
+					savingsLabel->setText(
+						tr("Estimated savings: <b>~%1</b>  |  Actual savings: <b>%2</b>  |  "
+						   "Delta: <b><span style='color:%3'>%4%5</span></b>  |  "
+						   "Accuracy: <b><span style='color:%3'>%6%</span></b>")
+						.arg(fmtMB(rec->estimatedSavedBytes))
+						.arg(fmtMB(rec->savedBytes))
+						.arg(color)
+						.arg(sign)
+						.arg(fmtMB(qAbs(diff)))
+						.arg(pct, 0, 'f', 1));
+					vlay->addWidget(savingsLabel);
+				}
 
 				auto* logEdit = new QPlainTextEdit(dlg);
 				logEdit->setReadOnly(true);
@@ -1195,20 +1220,8 @@ void McJobPanel::onCancel()
 	refresh();
 }
 
-void McJobPanel::onPreviewCommand()
+void McJobPanel::onPreviewCommand(qint64 jobId)
 {
-	// Use the first selected row, or the first job if nothing is selected
-	QModelIndex idx;
-	const auto selected = m_listView->selectionModel()->selectedIndexes();
-	if (!selected.isEmpty())
-		idx = selected.first();
-	else if (m_model->rowCount() > 0)
-		idx = m_model->index(0);
-
-	if (!idx.isValid()) return;
-
-	const qint64 jobId = idx.data(McJobListModel::JobIdRole).toLongLong();
-
 	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
 	if (!jobOpt) return;
 	const JobRecord& job = *jobOpt;

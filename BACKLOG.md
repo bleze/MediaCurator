@@ -86,7 +86,7 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 - [x] `[P1]` **RegexClassifier** — keyword matching on track title; classifies commentary/SDH/forced/signs/main
 - [x] `[P1]` Commentary tracks — keep/remove policy based on understood languages + user toggle
 - [x] `[P2]` SDH/HI subtitles — 4-mode preference (Keep / Remove / PreferNonSdh / PreferSdh) + subtitle format priority (PGS vs SRT vs ASS etc.) with per-language redundancy removal
-- [x] `[P2]` **MJPEG cover-art removal** — detect video streams with codec `mjpeg` (embedded cover/thumbnail art); add toggle in Settings (default ON); RuleEngine marks them for removal; they appear in the job queue badge row with the red strikethrough like any other removed track
+- [x] `[P2]` **Cover-art removal** — detect video streams with codec `mjpeg` or `png` (embedded cover/thumbnail art); add toggle in Settings (default ON); RuleEngine marks them for removal; they appear in the job queue badge row with the red strikethrough like any other removed track
 - [x] `[P2]` Forced subtitle detection — flag + title heuristic
 - [x] `[P2]` Classifier confidence shown as tooltip on badge in card view
 - [-] `[P3]` **OnnxClassifier** — deferred; regex classifier sufficient for current needs

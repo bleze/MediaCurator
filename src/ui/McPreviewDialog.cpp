@@ -224,7 +224,7 @@ void McPreviewDialog::setupUi(const FileDecision& decision, const QString& flagC
 		if (subtitleRemoved > 0)
 			statItems << McJobStatsBar::StatItem{QString::number(subtitleRemoved), tr("subtitle\nremoved")};
 		if (videoRemoved > 0)
-			statItems << McJobStatsBar::StatItem{QString::number(videoRemoved),    tr("MJPEG\nremoved")};
+			statItems << McJobStatsBar::StatItem{QString::number(videoRemoved),    tr("cover art\nremoved")};
 		if (!statItems.isEmpty() || estimatedSaving > 0)
 			root->addWidget(new McJobStatsBar(statItems, estimatedSaving, this));
 	}

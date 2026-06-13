@@ -80,7 +80,8 @@ struct JobRecord {
 	qint64      finishedAt = 0;
 	int         resultCode = -1;
 	QString     outputLog;
-	qint64      savedBytes = 0;       // actual bytes freed after completion
+	qint64      savedBytes = 0;          // actual bytes freed after completion
+	qint64      estimatedSavedBytes = 0; // estimate recorded at job-creation time
 	QString     descriptionText;      // human-readable list of removed tracks
 	QString     originalStreamsJson;  // stream snapshot taken before remux — for done-job display
 	QString     flagChangesJson;      // JSON array of {streamIndex, flag, value} flag overrides

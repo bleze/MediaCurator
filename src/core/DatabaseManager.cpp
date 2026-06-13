@@ -261,6 +261,7 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE files ADD COLUMN created_ms INTEGER DEFAULT 0");
 		m.exec("ALTER TABLE jobs ADD COLUMN description_text TEXT DEFAULT ''");
 		m.exec("ALTER TABLE jobs ADD COLUMN original_streams_json TEXT DEFAULT ''");
+		m.exec("ALTER TABLE jobs ADD COLUMN estimated_saved_bytes INTEGER DEFAULT 0");
 		// Ignore errors — they just mean the column already exists
 	}
 
@@ -897,9 +898,10 @@ std::optional<JobRecord> DatabaseManager::activeJobForFile(qint64 fileId) const
 	j.startedAt           = q.value("started_at").toLongLong();
 	j.finishedAt          = q.value("finished_at").toLongLong();
 	j.resultCode          = q.value("result_code").toInt();
-	j.outputLog           = q.value("output_log").toString();
-	j.savedBytes          = q.value("saved_bytes").toLongLong();
-	j.descriptionText     = q.value("description_text").toString();
+	j.outputLog              = q.value("output_log").toString();
+	j.savedBytes             = q.value("saved_bytes").toLongLong();
+	j.estimatedSavedBytes    = q.value("estimated_saved_bytes").toLongLong();
+	j.descriptionText        = q.value("description_text").toString();
 	j.originalStreamsJson    = q.value("original_streams_json").toString();
 	j.flagChangesJson        = q.value("flag_changes_json").toString();
 	j.sidecarDeletionsJson   = q.value("sidecar_deletions_json").toString();
@@ -912,8 +914,8 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.prepare(R"(
 		INSERT INTO jobs(file_id, status, job_type, command_args_json,
 						 summary, dry_run, created_at, description_text, original_streams_json,
-						 saved_bytes, flag_changes_json, sidecar_deletions_json)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+						 saved_bytes, estimated_saved_bytes, flag_changes_json, sidecar_deletions_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 	q.addBindValue(job.fileId > 0 ? QVariant(job.fileId) : QVariant());
 	q.addBindValue(job.status.isEmpty() ? "proposed" : job.status);
@@ -924,7 +926,8 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.addBindValue(QDateTime::currentSecsSinceEpoch());
 	q.addBindValue(job.descriptionText);
 	q.addBindValue(job.originalStreamsJson);
-	q.addBindValue(job.savedBytes);
+	q.addBindValue(job.savedBytes);          // estimate at creation; overwritten on completion
+	q.addBindValue(job.savedBytes);          // estimated_saved_bytes: frozen at creation
 	q.addBindValue(job.flagChangesJson);
 	q.addBindValue(job.sidecarDeletionsJson);
 	if (!q.exec()) {
@@ -1139,8 +1142,8 @@ QList<JobRecord> DatabaseManager::queuedJobs(JobSortMode sortMode) const
 	const QString sql = QStringLiteral(
 		"SELECT j.id, j.file_id, j.status, j.job_type, j.command_args_json,"
 		"       j.summary, j.dry_run, j.created_at, j.started_at, j.finished_at,"
-		"       j.result_code, j.output_log, j.saved_bytes, j.description_text,"
-		"       j.flag_changes_json, j.sidecar_deletions_json"
+		"       j.result_code, j.output_log, j.saved_bytes, j.estimated_saved_bytes,"
+		"       j.description_text, j.flag_changes_json, j.sidecar_deletions_json"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" WHERE j.status = 'queued'"
 		" ORDER BY %1").arg(orderBy);
@@ -1157,12 +1160,13 @@ QList<JobRecord> DatabaseManager::queuedJobs(JobSortMode sortMode) const
 		j.createdAt        = q.value("created_at").toLongLong();
 		j.startedAt        = q.value("started_at").toLongLong();
 		j.finishedAt       = q.value("finished_at").toLongLong();
-		j.resultCode       = q.value("result_code").toInt();
-		j.outputLog        = q.value("output_log").toString();
-		j.savedBytes       = q.value("saved_bytes").toLongLong();
-		j.descriptionText       = q.value("description_text").toString();
-		j.flagChangesJson       = q.value("flag_changes_json").toString();
-		j.sidecarDeletionsJson  = q.value("sidecar_deletions_json").toString();
+		j.resultCode             = q.value("result_code").toInt();
+		j.outputLog              = q.value("output_log").toString();
+		j.savedBytes             = q.value("saved_bytes").toLongLong();
+		j.estimatedSavedBytes    = q.value("estimated_saved_bytes").toLongLong();
+		j.descriptionText        = q.value("description_text").toString();
+		j.flagChangesJson        = q.value("flag_changes_json").toString();
+		j.sidecarDeletionsJson   = q.value("sidecar_deletions_json").toString();
 		result.append(j);
 	}
 	return result;
@@ -1214,13 +1218,14 @@ std::optional<JobRecord> DatabaseManager::jobById(qint64 jobId) const
 	j.createdAt           = q.value("created_at").toLongLong();
 	j.startedAt           = q.value("started_at").toLongLong();
 	j.finishedAt          = q.value("finished_at").toLongLong();
-	j.resultCode          = q.value("result_code").toInt();
-	j.outputLog           = q.value("output_log").toString();
-	j.savedBytes          = q.value("saved_bytes").toLongLong();
-	j.descriptionText       = q.value("description_text").toString();
-	j.originalStreamsJson   = q.value("original_streams_json").toString();
-	j.flagChangesJson       = q.value("flag_changes_json").toString();
-	j.sidecarDeletionsJson  = q.value("sidecar_deletions_json").toString();
+	j.resultCode             = q.value("result_code").toInt();
+	j.outputLog              = q.value("output_log").toString();
+	j.savedBytes             = q.value("saved_bytes").toLongLong();
+	j.estimatedSavedBytes    = q.value("estimated_saved_bytes").toLongLong();
+	j.descriptionText        = q.value("description_text").toString();
+	j.originalStreamsJson    = q.value("original_streams_json").toString();
+	j.flagChangesJson        = q.value("flag_changes_json").toString();
+	j.sidecarDeletionsJson   = q.value("sidecar_deletions_json").toString();
 	return j;
 }
 
