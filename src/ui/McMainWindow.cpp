@@ -998,6 +998,88 @@ void McMainWindow::setupUi()
 		PosterManager::instance().refresh(fileId);
 	});
 
+	connect(m_jobPanel, &McJobPanel::downloadSubtitlesRequested,
+	        this, [this](qint64 fileId) {
+		const auto fileOpt = DatabaseManager::instance().fileById(fileId);
+		if (!fileOpt) return;
+		const FileRecord& file = *fileOpt;
+
+		if (m_profile->openSubtitlesApiKey().isEmpty()) {
+			QMessageBox::information(this, tr("Download Subtitles"),
+				tr("No OpenSubtitles API key configured.\n"
+				   "Go to Settings → OpenSubtitles to add your key."));
+			return;
+		}
+
+		QString imdbId;
+		if (const auto pr = DatabaseManager::instance().posterForFile(file.id))
+			imdbId = pr->imdbId;
+		if (imdbId.isEmpty())
+			imdbId = NfoParser::readImdbId(file.path);
+		if (imdbId.isEmpty()) {
+			QMessageBox::information(this, tr("Download Subtitles"),
+				tr("No IMDb ID found for \"%1\".\n"
+				   "Use \"Edit Movie Metadata\" to identify the movie first.").arg(file.filename));
+			return;
+		}
+
+		const auto streams = DatabaseManager::instance().streamsForFile(file.id);
+		QSet<QString> coveredIso6391;
+		for (const auto& s : streams) {
+			if (s.codecType != QLatin1String("subtitle")) continue;
+			if (s.language.isEmpty() || s.language == QLatin1String("und")) continue;
+			const QString c = Mc::iso6392to6391(s.language);
+			if (!c.isEmpty()) coveredIso6391.insert(c);
+			else if (s.language.length() == 2) coveredIso6391.insert(s.language.toLower());
+		}
+
+		QStringList missingIso6392;
+		for (const QString& lang6392 : m_profile->understoodLanguages()) {
+			if (lang6392 == QLatin1String("mul")) continue;
+			const QString lang6391 = Mc::iso6392to6391(lang6392);
+			if (!lang6391.isEmpty() && !coveredIso6391.contains(lang6391))
+				missingIso6392 << lang6392;
+		}
+
+		if (missingIso6392.isEmpty()) {
+			QMessageBox::information(this, tr("Download Subtitles"),
+				tr("All subtitle languages are already covered for \"%1\".").arg(file.filename));
+			return;
+		}
+
+		const QString filePath = file.path;
+		const QString movieTitle = file.displayTitle.isEmpty()
+		    ? QFileInfo(filePath).completeBaseName()
+		    : (file.displayYear > 0
+		        ? QStringLiteral("%1 (%2)").arg(file.displayTitle).arg(file.displayYear)
+		        : file.displayTitle);
+		auto* dlg = new Mc::McSubtitleDownloadDialog(
+			m_profile->openSubtitlesApiKey(),
+			m_profile->openSubtitlesUsername(),
+			m_profile->openSubtitlesPassword(),
+			imdbId, missingIso6392, filePath, movieTitle, this);
+		dlg->setAttribute(Qt::WA_DeleteOnClose);
+		connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
+			[this, fileId, filePath](int downloaded) {
+				if (downloaded == 0) return;
+				auto& db = DatabaseManager::instance();
+				const auto existing = db.streamsForFile(fileId);
+				QList<StreamRecord> containerStreams;
+				for (const auto& s : existing)
+					if (!s.isExternal) containerStreams << s;
+				const auto sidecars = ScanWorker::scanSidecarSubtitles(
+					filePath, containerStreams.size());
+				auto allStreams = containerStreams;
+				allStreams.append(sidecars);
+				db.insertStreams(fileId, allStreams);
+				m_jobPanel->refresh();
+				m_statusLabel->setText(
+					tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
+						.arg(QFileInfo(filePath).fileName()));
+			});
+		dlg->open();
+	});
+
 #ifdef QT_DEBUG
 	connect(m_jobPanel, &McJobPanel::debugReviewRequested,
 	        this, [this](qint64 jobId) {

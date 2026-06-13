@@ -12,10 +12,18 @@ MediaCurator scans your library, identifies which tracks you actually want, and 
 
 ## Features
 
-- **Library scanning** — Point MediaCurator at a folder and it catalogues every video file with full stream information (codec, language, channels, resolution, HDR format).
+- **Library scanning** — Point MediaCurator at a folder and it catalogues every video file with full stream information (codec, language, channels, resolution, HDR format). Incremental rescans skip unchanged files.
 - **Smart rule engine** — Configurable rules decide which tracks to keep. Examples: keep any English audio, keep the highest-quality track regardless of language, never remove the only audio track, always keep forced subtitles.
-- **File card view** — Each file is shown as a card with colour-coded badges for video, audio, and subtitle streams. Streams proposed for removal are shown with a strikethrough. Click any badge to manually override the rule decision.
-- **Job queue** — Proposed removals are queued as jobs. Review them before running. Cancel individual jobs or the whole queue.
+- **File card view** — Each file is shown as a card with colour-coded badges for video, audio, and subtitle streams. Streams proposed for removal are shown with a strikethrough. Right-click any badge to manually override the rule decision.
+- **Stream flag editing** — Toggle Default, Forced, SDH, Commentary, and Original flags on any track directly from the card. Changes are applied losslessly via mkvpropedit (tag edit) or embedded into the next remux — no re-encode needed.
+- **Subtitle download** — Right-click any file and choose "Download Subtitles…" to fetch missing subtitle languages from [OpenSubtitles.com](https://www.opensubtitles.com). Searches by IMDb ID, downloads in parallel, and saves Kodi/Plex-compatible `.srt` sidecar files (e.g. `Movie.Title.2001.en.srt`). Requires a free OpenSubtitles API key.
+- **Sidecar subtitle support** — External `.srt`/`.ass`/`.sup` files alongside a video are detected automatically, shown as subtitle badges on the card, and absorbed into the output `.mkv` when a remux job runs.
+- **ISO and non-MKV support** — Blu-ray ISO, DVD ISO, MP4, AVI, and other container formats are fully supported. The output is always a clean `.mkv`; the original file is replaced on success.
+- **MJPEG cover-art removal** — Embedded cover-art video streams (common in rips) are detected and can be stripped to save a few MB per file.
+- **Job queue** — Proposed removals are queued as jobs. Review them before running. Right-click any queued job to start it immediately, retry failed jobs, or remove it. Cancel individual jobs or the whole queue.
+- **Advanced filtering & sorting** — Quick-filter pills for 4K, Dolby Vision, HDR, Atmos, TrueHD, DTS-HD, and DTS:X. Text search covers filenames, folder names, and stream metadata. Sort by name, newest, oldest, or largest. Status filter shows all files, only those with pending proposals, or only those missing a poster.
+- **"What If" simulation** — Run the rule engine across your entire library without creating any jobs. Preview the number of affected files, tracks to be removed, and estimated GB saved before committing to anything.
+- **Ignore files** — Right-click any card to hide a file from the library (useful for extras and bonus content). Ignored files can be revealed again with a toggle.
 - **Poster art** — Posters are fetched from TMDB automatically when an NFO/IMDb ID is available, or you can double-click the poster column to search and link a movie. Posters are cached locally.
 - **IMDb / TMDB integration** — Search TMDB by title, browse results with poster thumbnails, and save the IMDb ID to a Kodi-compatible NFO file alongside the video.
 - **VLC integration** — Play any file directly from the library view.
@@ -36,6 +44,8 @@ Hard drives are not cheap. A 16 TB NAS drive for home media storage costs upward
 | VLC | In-app playback | Optional — auto-detected if installed |
 
 For a TMDB API key (free), visit [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). Enter it in **Settings** to enable poster art and movie search. The app works without it.
+
+For subtitle download, a free OpenSubtitles API key is required. Register at [opensubtitles.com](https://www.opensubtitles.com) and enter the key in **Settings → OpenSubtitles**.
 
 ### Platform support
 
@@ -91,6 +101,10 @@ If MediaCurator saves you money on storage or just makes managing your media lib
 
 ## Roadmap
 
-- Subtitle download — find and save `.srt` files for movies with no subtitles (Kodi/Plex-compatible naming)
-- Poster selection — browse all available TMDB posters and pick the best one
-- Fanart / backdrop selection — fetch and save backdrop images as `fanart.jpg` for Plex and Kodi
+- **Poster selection** — browse all available TMDB posters for a movie and pick the best one
+- **Fanart / backdrop selection** — fetch and save backdrop images as `fanart.jpg` for Plex and Kodi
+- **Rating display and filter** — show IMDb/TMDB ratings as badges on cards; filter library by rating range
+- **Job history** — persistent log of all completed jobs, viewable in a separate History tab
+- **Undo to recycle bin** — move the original file to the OS recycle bin before overwriting, so jobs can be undone
+- **Parallel jobs** — configurable worker count (2–4) for faster processing on NAS/RAID setups
+- **Automatic update check** — notify when a new GitHub release is available

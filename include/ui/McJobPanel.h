@@ -46,6 +46,7 @@ signals:
 	void editImdbLinkRequested(qint64 fileId);
 	void editImdbLinksRequested(const QList<qint64>& fileIds);  // batch: multiple selected
 	void refreshPosterRequested(qint64 fileId);
+	void downloadSubtitlesRequested(qint64 fileId);
 #ifdef QT_DEBUG
 	void debugReviewRequested(qint64 jobId);
 #endif

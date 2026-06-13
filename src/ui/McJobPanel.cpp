@@ -764,6 +764,12 @@ void McJobPanel::setupUi()
 			emit refreshPosterRequested(fileId);
 		});
 
+		auto* dlSubsAct = menu.addAction(svgIcon(":/icons/translate.svg"),
+		                                 tr("&Download Subtitles…"));
+		connect(dlSubsAct, &QAction::triggered, this, [this, fileId] {
+			emit downloadSubtitlesRequested(fileId);
+		});
+
 		// Collect all selected file IDs so the context menu can trigger a batch flow.
 		QList<qint64> selectedFileIds;
 		{
