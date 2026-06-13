@@ -226,10 +226,13 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 	m_filesWithJobs  = filesWithJobs;
 	m_forcedRemovals = DatabaseManager::instance().allStreamForcedRemovals();
 	if (!ratings.isEmpty())     m_ratings     = ratings;
-	if (!fanartPaths.isEmpty()) {
-		m_fanartPaths = fanartPaths;
-		if (!m_entries.isEmpty())
-			emit dataChanged(index(0), index(m_entries.size() - 1), {FanartRole});
+	if (!fanartPaths.isEmpty()) m_fanartPaths = fanartPaths;
+	if (!m_entries.isEmpty()) {
+		const QList<int> roles = {
+			FanartRole, PosterRole, PosterVersionRole,
+			DisplayTitleRole, DisplayYearRole, RatingRole, ImdbRole
+		};
+		emit dataChanged(index(0), index(m_entries.size() - 1), roles);
 	}
 	if (!m_forcedRemovals.isEmpty() && !m_entries.isEmpty())
 		emit dataChanged(index(0), index(m_entries.size() - 1), {OverridesRole});

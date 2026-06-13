@@ -4,7 +4,6 @@
 #include "ui/McFilterPanel.h"
 #include "ui/McManageFoldersDialog.h"
 #include "ui/SvgIcon.h"
-#include "ui/McFlagRowWidget.h"
 #include "ui/McFileCardDelegate.h"
 #include "ui/McFileListModel.h"
 #include "ui/McJobPanel.h"
@@ -261,6 +260,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        this, [this](qint64 fid) {
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			d->invalidateSizeCacheFor(fid);
+		PosterManager::instance().enqueue(fid);
 	});
 
 	m_analyzeRefreshTimer = new QTimer(this);
@@ -503,128 +503,7 @@ void McMainWindow::setupUi()
 		}
 		const int selCount = selRows.size();
 
-		// Detect whether the right-click landed on a specific track badge.
-		// customContextMenuRequested gives pos in list-view widget coordinates;
-		// hitTestBadgeStream and visualRect() both work in viewport coordinates.
-		const QPoint vpPos = m_listView->viewport()->mapFrom(m_listView, pos);
-		const QString origLang = file.originalLanguage;
-		int hitStreamIdx = -1;
-		if (selCount == 1) {
-			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
-				const auto streams = idx.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
-				const bool hasImdb = !idx.data(McFileListModel::ImdbRole).toString().isEmpty();
-				hitStreamIdx = del->hitTestBadgeStream(
-					vpPos, m_listView->visualRect(idx), streams, m_listView->font(), hasImdb, origLang);
-			}
-		}
-
 		QMenu menu(this);
-
-		// Per-badge flag toggles — shown when right-clicking a specific track badge
-		if (hitStreamIdx >= 0) {
-			const auto streams = idx.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
-			const StreamRecord* hitStream = nullptr;
-			for (const StreamRecord& s : streams) {
-				if (s.streamIndex == hitStreamIdx) { hitStream = &s; break; }
-			}
-			if (hitStream) {
-				const bool isOrigLang = (hitStream->codecType == QLatin1String("audio"))
-					&& !origLang.isEmpty()
-					&& hitStream->language.compare(origLang, Qt::CaseInsensitive) == 0;
-				const QColor trackColor = [&] {
-					if (hitStream->codecType == QLatin1String("audio"))    return QColor(0x10, 0x6a, 0xc0);
-					if (hitStream->codecType == QLatin1String("subtitle")) return QColor(0x1a, 0x86, 0x4a);
-					return QColor(0x60, 0x60, 0x60);
-				}();
-
-				// Helper to merge a flag change into an existing flag_changes_json blob
-				const auto mergeFlag = [](const QString& existingJson, int sIdx, const QString& flagName, bool val) -> QString {
-					QJsonArray arr = QJsonDocument::fromJson(existingJson.toUtf8()).array();
-					for (int i = arr.size() - 1; i >= 0; --i) {
-						const QJsonObject o = arr[i].toObject();
-						if (o[QStringLiteral("streamIndex")].toInt() == sIdx
-						        && o[QStringLiteral("flag")].toString() == flagName)
-							arr.removeAt(i);
-					}
-					QJsonObject entry;
-					entry[QStringLiteral("streamIndex")] = sIdx;
-					entry[QStringLiteral("flag")]        = flagName;
-					entry[QStringLiteral("value")]       = val;
-					arr.append(entry);
-					return QJsonDocument(arr).toJson(QJsonDocument::Compact);
-				};
-
-				struct FlagItem { QString flag; const char* badgeChar; bool current; QString label; };
-				const QList<FlagItem> flagItems = {
-					{ QStringLiteral("default"),    "\xe2\x98\x85", hitStream->isDefault,                tr("Default") },
-					{ QStringLiteral("forced"),     "\xe2\x97\x8f", hitStream->isForced,                 tr("Forced") },
-					{ QStringLiteral("original"),   "\xe2\x97\x8e", hitStream->isOriginal || isOrigLang, tr("Original") },
-					{ QStringLiteral("commentary"), "\xe2\x9c\x8e", hitStream->isCommentary,             tr("Commentary") },
-				};
-				for (const FlagItem& fi : flagItems) {
-					auto* wa  = new QWidgetAction(&menu);
-					auto* row = new McFlagRowWidget(
-						QString::fromUtf8(fi.badgeChar), trackColor, fi.label, fi.current);
-					const QString flagName = fi.flag;
-					const int     sIdx     = hitStreamIdx;
-					row->onToggled = [this, &menu, idx, sIdx, flagName, mergeFlag, file](bool newVal) {
-						auto& db = DatabaseManager::instance();
-						if (const auto existJob = db.activeJobForFile(file.id)) {
-							const QString newJson = mergeFlag(existJob->flagChangesJson, sIdx, flagName, newVal);
-							db.updateJobFlagChanges(existJob->id, newJson);
-						} else {
-							const auto streams2 = idx.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
-							QJsonArray origArr;
-							for (const StreamRecord& s : streams2) {
-								QJsonObject o;
-								o[QStringLiteral("idx")]         = s.streamIndex;
-								o[QStringLiteral("type")]        = s.codecType;
-								o[QStringLiteral("codec")]       = s.codecName;
-								o[QStringLiteral("profile")]     = s.codecProfile;
-								o[QStringLiteral("lang")]        = s.language;
-								o[QStringLiteral("title")]       = s.title;
-								o[QStringLiteral("ch")]          = s.channels;
-								o[QStringLiteral("w")]           = s.width;
-								o[QStringLiteral("h")]           = s.height;
-								o[QStringLiteral("hdr")]         = s.hdrFormat;
-								o[QStringLiteral("default")]     = s.isDefault;
-								o[QStringLiteral("forced")]      = s.isForced;
-								o[QStringLiteral("original")]    = s.isOriginal;
-								o[QStringLiteral("commentary")]  = s.isCommentary;
-								o[QStringLiteral("hi")]          = s.isHearingImpaired;
-								origArr.append(o);
-							}
-							const QString sr = [&]() -> QString {
-								for (const StreamRecord& s : streams2)
-									if (s.streamIndex == sIdx) return s.codecType.toUpper();
-								return {};
-							}();
-							JobRecord job;
-							job.fileId             = file.id;
-							job.status             = QStringLiteral("proposed");
-							job.jobType            = QStringLiteral("tag_edit");
-							job.commandArgsJson    = QStringLiteral("[]");
-							job.flagChangesJson    = mergeFlag({}, sIdx, flagName, newVal);
-							job.summary            = tr("Edit track flags");
-							job.descriptionText    = sr.isEmpty()
-								? tr("Set %1 flag").arg(flagName)
-								: tr("Set %1 on [%2]").arg(flagName, sr);
-							job.originalStreamsJson = QJsonDocument(origArr).toJson(QJsonDocument::Compact);
-							(void)db.insertJob(job);
-						}
-						m_jobPanel->refresh();
-						updateJobPanelVisibility(/*forceShow=*/true);
-						m_jobPanel->scrollToFileJob(file.id);
-						m_listModel->refreshJobFilter();
-						menu.close();
-					};
-					wa->setDefaultWidget(row);
-					menu.addAction(wa);
-				}
-				menu.exec(m_listView->viewport()->mapToGlobal(vpPos));
-				return;
-			}
-		}
 
 		auto* analyzeAction = menu.addAction(svgIcon(":/icons/manage_search.svg"),
 		                                      tr("&Analyze File"));

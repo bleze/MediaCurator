@@ -649,10 +649,9 @@ void McJobListModel::setStreamFlag(const QModelIndex& index, int streamIndex,
 	// Update the in-memory stream record so badges reflect the desired state immediately
 	auto applyFlag = [&](StreamRecord& s) {
 		if (s.streamIndex != streamIndex) return;
-		if (flag == QLatin1String("default"))     s.isDefault    = value;
-		else if (flag == QLatin1String("forced"))  s.isForced     = value;
-		else if (flag == QLatin1String("original")) s.isOriginal  = value;
-		else if (flag == QLatin1String("commentary")) s.isCommentary = value;
+		if (flag == QLatin1String("default"))      s.isDefault  = value;
+		else if (flag == QLatin1String("forced"))   s.isForced   = value;
+		else if (flag == QLatin1String("original")) s.isOriginal = value;
 	};
 	for (auto& s : filt.allStreams)   applyFlag(s);
 	for (auto& s : filt.keptStreams)  applyFlag(s);

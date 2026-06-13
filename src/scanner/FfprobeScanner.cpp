@@ -202,7 +202,9 @@ StreamRecord FfprobeScanner::parseStreamObject(const QJsonObject& obj)
 	s.isDefault         = disp.value("default").toInt() != 0;
 	s.isForced          = disp.value("forced").toInt() != 0;
 	s.isOriginal        = disp.value("original").toInt() != 0;
-	s.isCommentary      = disp.value("comment").toInt() != 0;
+	s.isCommentary      = s.title.contains("comment",  Qt::CaseInsensitive)
+	                   || s.title.contains("komment",  Qt::CaseInsensitive)
+	                   || s.title.contains("director", Qt::CaseInsensitive);
 	s.isHearingImpaired = disp.value("hearing_impaired").toInt() != 0;
 	s.isVisualImpaired  = disp.value("visual_impaired").toInt() != 0;
 

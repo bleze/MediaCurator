@@ -397,10 +397,9 @@ static StreamRecord applyPendingFlags(const StreamRecord& s, const QMap<QString,
 	StreamRecord d = s;
 	for (auto it = flags.constBegin(); it != flags.constEnd(); ++it) {
 		const bool v = it.value();
-		if      (it.key() == QLatin1String("default"))    d.isDefault    = v;
-		else if (it.key() == QLatin1String("forced"))     d.isForced     = v;
-		else if (it.key() == QLatin1String("original"))   d.isOriginal   = v;
-		else if (it.key() == QLatin1String("commentary")) d.isCommentary = v;
+		if      (it.key() == QLatin1String("default"))  d.isDefault  = v;
+		else if (it.key() == QLatin1String("forced"))   d.isForced   = v;
+		else if (it.key() == QLatin1String("original")) d.isOriginal = v;
 	}
 	return d;
 }

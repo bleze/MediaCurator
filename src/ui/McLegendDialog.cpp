@@ -179,6 +179,8 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	       tr("Original audio language of the movie"));
 	addRow(g, { glyphLabel(this, QStringLiteral("\xE2\x97\x8F")) },   // ●
 	       tr("Forced subtitle (signs / foreign dialogue only)"));
+	addRow(g, { glyphLabel(this, QStringLiteral("\xE2\x9C\x8E")) },   // ✎
+	       tr("Commentary track (detected from track title)"));
 
 	// ── Badges ────────────────────────────────────────────────────────────────
 	auto* badgesBox = makeGroup(tr("Badges"), g);

@@ -606,10 +606,9 @@ void McJobPanel::setupUi()
 
 				// Build effective flag state: start from DB values, then overlay pending changes.
 				QMap<QString, bool> effectiveFlags;
-				effectiveFlags[QStringLiteral("default")]    = hitStream->isDefault;
-				effectiveFlags[QStringLiteral("forced")]     = hitStream->isForced;
-				effectiveFlags[QStringLiteral("original")]   = hitStream->isOriginal || isOrigLang;
-				effectiveFlags[QStringLiteral("commentary")] = hitStream->isCommentary;
+				effectiveFlags[QStringLiteral("default")]  = hitStream->isDefault;
+				effectiveFlags[QStringLiteral("forced")]   = hitStream->isForced;
+				effectiveFlags[QStringLiteral("original")] = hitStream->isOriginal || isOrigLang;
 				const QString fcJson = idx.data(McJobListModel::FlagChangesRole).toString();
 				if (!fcJson.isEmpty()) {
 					const QJsonArray arr = QJsonDocument::fromJson(fcJson.toUtf8()).array();
@@ -623,10 +622,9 @@ void McJobPanel::setupUi()
 
 				struct FlagItem { QString flag; const char* badgeChar; bool current; QString label; };
 				const QList<FlagItem> flagItems = {
-					{ QStringLiteral("default"),    "\xe2\x98\x85", effectiveFlags[QStringLiteral("default")],    tr("Default") },
-					{ QStringLiteral("forced"),     "\xe2\x97\x8f", effectiveFlags[QStringLiteral("forced")],     tr("Forced") },
-					{ QStringLiteral("original"),   "\xe2\x97\x8e", effectiveFlags[QStringLiteral("original")],   tr("Original") },
-					{ QStringLiteral("commentary"), "\xe2\x9c\x8e", effectiveFlags[QStringLiteral("commentary")], tr("Commentary") },
+					{ QStringLiteral("default"),  "\xe2\x98\x85", effectiveFlags[QStringLiteral("default")],  tr("Default") },
+					{ QStringLiteral("forced"),   "\xe2\x97\x8f", effectiveFlags[QStringLiteral("forced")],   tr("Forced") },
+					{ QStringLiteral("original"), "\xe2\x97\x8e", effectiveFlags[QStringLiteral("original")], tr("Original") },
 				};
 				for (const FlagItem& fi : flagItems) {
 					auto* wa  = new QWidgetAction(&menu);

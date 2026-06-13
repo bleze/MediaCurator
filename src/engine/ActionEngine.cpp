@@ -13,7 +13,6 @@ static QString mkvmergeFlagArg(const QString& flag)
 	if (flag == QLatin1String("default"))     return QStringLiteral("--default-track-flag");
 	if (flag == QLatin1String("forced"))      return QStringLiteral("--forced-display-flag");
 	if (flag == QLatin1String("original"))    return QStringLiteral("--original-flag");
-	if (flag == QLatin1String("commentary"))  return QStringLiteral("--commentary-flag");
 	return {};
 }
 
@@ -23,7 +22,6 @@ static QString mkvpropEditProp(const QString& flag)
 	if (flag == QLatin1String("default"))     return QStringLiteral("flag-default");
 	if (flag == QLatin1String("forced"))      return QStringLiteral("flag-forced");
 	if (flag == QLatin1String("original"))    return QStringLiteral("flag-original");
-	if (flag == QLatin1String("commentary"))  return QStringLiteral("flag-commentary");
 	return {};
 }
 

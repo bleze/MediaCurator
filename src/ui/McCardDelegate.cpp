@@ -189,6 +189,15 @@ QString McCardDelegate::channelStr(int ch)
 	}
 }
 
+static bool isCommentaryTrack(const StreamRecord& s)
+{
+	if (s.isCommentary || s.trackType == QLatin1String("commentary"))
+		return true;
+	return s.title.contains(QLatin1String("comment"),  Qt::CaseInsensitive)
+	    || s.title.contains(QLatin1String("komment"),  Qt::CaseInsensitive)
+	    || s.title.contains(QLatin1String("director"), Qt::CaseInsensitive);
+}
+
 QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 {
 	QString t = codecLabel(s);
@@ -204,18 +213,16 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 		if (!s.language.isEmpty() && s.language != "und"
 		    && McLanguageFlags::countryForLanguage(s.language).isEmpty())
 			t += "  " + s.language.toUpper();
-		if (s.isDefault)  t += "  \xE2\x98\x85"; // ★
-		if (isOriginal)   t += "  \xE2\x97\x8E"; // ◎
-		if (s.isCommentary || s.trackType == QLatin1String("commentary"))
-			t += "  \xE2\x9C\x8E"; // ✎
+		if (s.isDefault)        t += "  \xE2\x98\x85"; // ★
+		if (isOriginal)         t += "  \xE2\x97\x8E"; // ◎
+		if (isCommentaryTrack(s)) t += "  \xE2\x9C\x8E"; // ✎
 	} else if (s.codecType == "subtitle") {
 		if (!s.language.isEmpty() && s.language != "und"
 		    && McLanguageFlags::countryForLanguage(s.language).isEmpty())
 			t += "  " + s.language.toUpper();
-		if (s.isForced)  t += "  \xE2\x97\x8F";
-		if (s.isDefault) t += "  \xE2\x98\x85"; // ★
-		if (s.isCommentary || s.trackType == QLatin1String("commentary"))
-			t += "  \xE2\x9C\x8E"; // ✎
+		if (s.isForced)           t += "  \xE2\x97\x8F";
+		if (s.isDefault)          t += "  \xE2\x98\x85"; // ★
+		if (isCommentaryTrack(s)) t += "  \xE2\x9C\x8E"; // ✎
 	}
 	return t;
 }
@@ -461,10 +468,9 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		if (pcIt != pendingChanges.constEnd()) {
 			for (auto fc = pcIt->constBegin(); fc != pcIt->constEnd(); ++fc) {
 				const bool v = fc.value();
-				if      (fc.key() == QLatin1String("default"))    displayS.isDefault    = v;
-				else if (fc.key() == QLatin1String("forced"))     displayS.isForced     = v;
-				else if (fc.key() == QLatin1String("original"))   displayS.isOriginal   = v;
-				else if (fc.key() == QLatin1String("commentary")) displayS.isCommentary = v;
+				if      (fc.key() == QLatin1String("default"))  displayS.isDefault  = v;
+				else if (fc.key() == QLatin1String("forced"))   displayS.isForced   = v;
+				else if (fc.key() == QLatin1String("original")) displayS.isOriginal = v;
 			}
 		}
 
@@ -729,7 +735,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					if (s.isForced)          lines << tr("\xE2\x97\x8F  Forced");
 					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original language (flag)");
 					else if (isOrig)         lines << tr("\xE2\x97\x8E  Original audio language");
-					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary (flag)");
+					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary");
 					if (s.isHearingImpaired) lines << tr("SDH / Hearing impaired");
 					if (cls.type != TrackType::Main) {
 						QString typeName;

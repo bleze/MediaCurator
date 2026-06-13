@@ -186,8 +186,26 @@ private:
 			const bool needsRating = existing->voteAverage <= 0.0;
 			const bool needsTitle  = fileOpt->displayTitle.isEmpty();
 			const bool needsNfo    = !QFile::exists(NfoParser::nfoPathFor(filePath));
-			const bool needsFanart = existing->fanartPath.isEmpty()
+			bool needsFanart       = existing->fanartPath.isEmpty()
 			                         || !QFile::exists(existing->fanartPath);
+
+			// Fast path: fanart file already on disk — no API call needed.
+			if (needsFanart && !imdbId.isEmpty()) {
+				const QString outPath = m_fanartDir + "/" + imdbId + ".jpg";
+				if (QFile::exists(outPath)) {
+					PosterRecord pr = *existing;
+					pr.fanartPath = outPath;
+					DatabaseManager::instance().upsertPosterRecord(pr);
+					QImage img(outPath);
+					if (!img.isNull() && img.height() > 300) {
+						const int y = (img.height() - 300) / 2;
+						img = img.copy(0, y, img.width(), 300);
+					}
+					emit fanartReady(fileId, outPath, img);
+					needsFanart = false;
+				}
+			}
+
 			if (!needsRating && !needsTitle && !needsNfo && !needsFanart) return;
 			if (imdbId.isEmpty() || m_tmdbApiKey.isEmpty()) return;
 			const TmdbInfo info = fetchTmdbInfo(imdbId);
@@ -264,6 +282,22 @@ private:
 			}
 			DatabaseManager::instance().upsertPosterRecord(rec);
 			emit posterReady(fileId, cached);
+
+			// Also surface fanart if already on disk — no API call needed.
+			if (!rec.imdbId.isEmpty()) {
+				const QString fanartOut = m_fanartDir + "/" + rec.imdbId + ".jpg";
+				if (QFile::exists(fanartOut)) {
+					PosterRecord pr = rec;
+					pr.fanartPath = fanartOut;
+					DatabaseManager::instance().upsertPosterRecord(pr);
+					QImage img(fanartOut);
+					if (!img.isNull() && img.height() > 300) {
+						const int y = (img.height() - 300) / 2;
+						img = img.copy(0, y, img.width(), 300);
+					}
+					emit fanartReady(fileId, fanartOut, img);
+				}
+			}
 			return;
 		}
 
