@@ -15,9 +15,12 @@
 #include <QJsonObject>
 #include <QFileInfo>
 #include <QFontMetrics>
+#include <QFile>
 #include <QHelpEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QRegularExpression>
+#include <QSvgRenderer>
 #include <QPixmap>
 #include <QPixmapCache>
 #include <QStyle>
@@ -38,6 +41,42 @@ static QHash<QString, QPixmap> s_fanartRawCache;
 // that the derived scaled entries in QPixmapCache (keyed by path+version+width) are
 // automatically invalidated without needing a wildcard-remove API.
 static QHash<QString, int> s_fanartVersions;
+
+// Loads an SVG resource, injects a fill color into the root element (same
+// logic as SvgIcon.cpp's recolorSvg), and renders it to a cached QPixmap.
+// Used by drawBadge for the SDH closed-caption icon.
+QPixmap McCardDelegate::renderSvgIcon(const QString& resourcePath,
+                                       const QColor& color, int targetH, qreal dpr)
+{
+	const QString key = QStringLiteral("svgicon_%1_%2_%3_%4")
+	                    .arg(resourcePath, color.name())
+	                    .arg(targetH).arg(qRound(dpr * 100));
+	QPixmap cached;
+	if (QPixmapCache::find(key, &cached)) return cached;
+
+	QFile f(resourcePath);
+	if (!f.open(QIODevice::ReadOnly)) return {};
+	QString svg = QString::fromUtf8(f.readAll());
+
+	const int svgStart = svg.indexOf(QLatin1String("<svg"));
+	const int tagEnd   = svg.indexOf(QLatin1Char('>'), svgStart);
+	if (svgStart >= 0 && tagEnd >= 0) {
+		QString tag = svg.mid(svgStart, tagEnd - svgStart + 1);
+		static const QRegularExpression fillAttr(R"(\s+fill="[^"]*")");
+		tag.remove(fillAttr);
+		tag.insert(4, QStringLiteral(R"( fill="%1")").arg(color.name()));
+		svg = svg.left(svgStart) + tag + svg.mid(tagEnd + 1);
+	}
+
+	const int pxSize = qCeil(targetH * dpr);
+	QPixmap pm(pxSize, pxSize);
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+	QPainter ep(&pm);
+	QSvgRenderer(svg.toUtf8()).render(&ep, QRectF(0, 0, targetH, targetH));
+	QPixmapCache::insert(key, pm);
+	return pm;
+}
 
 void McCardDelegate::prefetchFanart(const QString& path, QPixmap raw)
 {
@@ -224,6 +263,7 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 		if (s.isDefault)          t += "  \xE2\x98\x85"; // ★
 		if (isCommentaryTrack(s)) t += "  \xE2\x9C\x8E"; // ✎
 		if (s.isExternal)         t += "  \xE2\x86\x93"; // ↓ = sidecar file
+		// isHearingImpaired (🦻) is drawn as a pixmap in drawBadge — not embedded in text.
 	}
 	return t;
 }
@@ -234,6 +274,8 @@ int McCardDelegate::badgeWidthFor(const StreamRecord& s, bool isOriginal, const 
 	if (s.codecType != QLatin1String("video")
 	    && !McLanguageFlags::countryForLanguage(s.language).isEmpty())
 		w += kFlagW + kFlagGap;
+	if (s.isHearingImpaired && s.codecType == QLatin1String("subtitle"))
+		w += kFlagH + kFlagGap; // SDH icon drawn as pixmap on the right side of the badge
 	return w;
 }
 
@@ -293,13 +335,16 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
                                const QString& text, const QColor& bg, const QFont& font,
                                bool removed, bool hasTip, const QColor& cardBg, bool hovered,
                                const QString& flagLang,
-                               const QMap<QString, bool>& streamFlags)
+                               const QMap<QString, bool>& streamFlags,
+                               bool isSDH)
 {
-	const QPixmap flagPm = McLanguageFlags::flag(flagLang, kFlagH,
-	                                             p->device()->devicePixelRatioF());
+	const qreal dpr     = p->device()->devicePixelRatioF();
+	const QPixmap flagPm = McLanguageFlags::flag(flagLang, kFlagH, dpr);
 	const bool hasFlag = !flagPm.isNull();
+	const int sdhW     = isSDH ? (kFlagH + kFlagGap) : 0;
 	const int  w = QFontMetrics(font).horizontalAdvance(text) + 2 * kBadgePad
-	             + (hasFlag ? kFlagW + kFlagGap : 0);
+	             + (hasFlag ? kFlagW + kFlagGap : 0)
+	             + sdhW;
 	const QRect r(x, y, w, h);
 
 	p->save();
@@ -354,7 +399,7 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 		}
 	}
 
-	const int textRectW = r.right() - kBadgePad - textLeft + 1;
+	const int textRectW = r.right() - kBadgePad - sdhW - textLeft + 1;
 	const QColor normalColor = removed ? QColor(0xff, 0xff, 0xff, 90) : Qt::white;
 
 	if (goldChars.isEmpty()) {
@@ -388,6 +433,20 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 			}
 		}
 		flushSegment(text.size()); // flush any trailing normal chars
+	}
+
+	// SDH icon (closed-caption) — rendered from SVG so it scales and dims correctly.
+	// Must come before the strikethrough line so the line renders on top.
+	if (isSDH) {
+		const QPixmap sdhPm = renderSvgIcon(
+		    QStringLiteral(":/icons/closed_caption.svg"), Qt::white, kFlagH, dpr);
+		if (!sdhPm.isNull()) {
+			const QRect sr(r.right() - kBadgePad - kFlagH,
+			               r.top() + (h - kFlagH) / 2, kFlagH, kFlagH);
+			if (removed) p->setOpacity(0.4);
+			p->drawPixmap(sr, sdhPm);
+			if (removed) p->setOpacity(1.0);
+		}
 	}
 
 	if (removed) {
@@ -482,6 +541,8 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		const bool    hasTip  = !displayS.title.isEmpty() || displayS.isDefault || displayS.isForced
 		                     || displayS.isOriginal || displayS.isCommentary || displayS.isHearingImpaired || isOrig;
 		const bool    isLast  = (i == sorted.size() - 1);
+		const bool    isSDH   = displayS.isHearingImpaired
+		                     && s.codecType == QLatin1String("subtitle");
 
 		if (x > rowRect.left() && x + bW > maxX) {
 			row++;
@@ -491,7 +552,8 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		x += drawBadge(p, x, bY, kBadgeH, text, color, badgeFont,
 		               removed, hasTip, cardBg, isHov,
 		               s.codecType == QLatin1String("video") ? QString() : s.language,
-		               pendingChanges.value(s.streamIndex));
+		               pendingChanges.value(s.streamIndex),
+		               isSDH);
 		if (!isLast) x += kBadgeGap;
 	}
 	return row + 1;

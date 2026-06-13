@@ -66,7 +66,10 @@ public:
 	                         bool hasTip   = false, const QColor& cardBg = {},
 	                         bool hovered  = false,
 	                         const QString& flagLang = {},
-	                         const QMap<QString, bool>& streamFlags = {});
+	                         const QMap<QString, bool>& streamFlags = {},
+	                         bool isSDH    = false);
+	static QPixmap renderSvgIcon(const QString& resourcePath, const QColor& color,
+	                             int size, qreal dpr);
 	static QPixmap badgePixmap(const QString& text, const QString& codecType,
 	                           const QFont& baseFont, qreal dpr,
 	                           const QString& flagLang = {}, bool removed = false);

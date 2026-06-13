@@ -183,6 +183,7 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/visibility_off.svg
         resources/icons/legend_toggle.svg
         resources/icons/copy.svg
+        resources/icons/closed_caption.svg
         resources/icons/star.svg
         resources/icons/push_pin.svg
         resources/icons/translate.svg

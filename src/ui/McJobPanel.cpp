@@ -40,6 +40,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -680,13 +681,6 @@ void McJobPanel::setupUi()
 		}
 
 		if (status == QLatin1String("proposed")) {
-			// Run this specific job immediately, bypassing queue order.
-			auto* runNowAct = menu.addAction(svgIcon(":/icons/play_arrow.svg"), tr("&Start Now"));
-			runNowAct->setEnabled(m_queue && !m_queue->hasActiveJob());
-			connect(runNowAct, &QAction::triggered, this, [this, jobId] {
-				if (m_queue) m_queue->runJob(jobId);
-			});
-
 			const QString queueLabel = selectedProposedJobIds.size() > 1
 			    ? tr("&Queue %1 Files").arg(selectedProposedJobIds.size())
 			    : tr("&Queue File");
@@ -869,6 +863,17 @@ void McJobPanel::setupUi()
 			    : tr("Remove from Queue");
 			auto* removeAct = menu.addAction(svgIcon(":/icons/delete.svg"), removeLabel);
 			connect(removeAct, &QAction::triggered, this, [this, selectedRemovableJobIds, firstSelRow] {
+				const QString msg = selectedRemovableJobIds.size() == 1
+				    ? tr("Remove this job from the queue?\n\n"
+				         "Any track-selection or flag changes made since the last analysis will be lost.")
+				    : tr("Remove %1 jobs from the queue?\n\n"
+				         "Any track-selection or flag changes made since the last analysis will be lost.")
+				         .arg(selectedRemovableJobIds.size());
+				if (QMessageBox::question(this, tr("Remove from Queue"), msg,
+				                          QMessageBox::Yes | QMessageBox::Cancel,
+				                          QMessageBox::Cancel) != QMessageBox::Yes)
+					return;
+
 				m_model->removeJobIds(selectedRemovableJobIds);
 				updateFooter();
 				emit jobsChanged(m_model->rowCount());
@@ -919,8 +924,13 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 		m_jobTimer.start();
 		m_etaTimer->start();
 
-		if (!AppSettings::instance().value("jobPanel/followRunning", true).toBool()) {
-			// No filter switch, but updateJob may still have reset the model.
+		const bool followRunning   = AppSettings::instance().value("jobPanel/followRunning", true).toBool();
+		const QString currentFilter = m_statusFilter->currentData().toString();
+		const bool onRunningFilter  = (currentFilter == QLatin1String("running"));
+
+		if (!followRunning && !onRunningFilter) {
+			// followRunning is off and user isn't watching the Running filter — restore
+			// selection only, no filter switch, no auto-scroll.
 			for (int row = 0; row < m_model->rowCount(); ++row) {
 				const QModelIndex idx = m_model->index(row);
 				if (prevSelected.contains(idx.data(McJobListModel::JobIdRole).toLongLong()))
@@ -929,8 +939,8 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 			return;
 		}
 
-		// Any specific filter switches to Running first (no-op if already there)
-		if (!m_statusFilter->currentData().toString().isEmpty()) {
+		// Auto-switch non-Running filters to Running when followRunning is enabled.
+		if (followRunning && !currentFilter.isEmpty()) {
 			for (int i = 0; i < m_statusFilter->count(); ++i) {
 				if (m_statusFilter->itemData(i).toString() == QLatin1String("running")) {
 					m_statusFilter->setCurrentIndex(i);
@@ -939,28 +949,30 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 			}
 		}
 
-		// Restore selection for any previously selected items still visible in the new filter.
+		// Restore selection for any previously selected items still visible.
 		for (int row = 0; row < m_model->rowCount(); ++row) {
 			const QModelIndex idx = m_model->index(row);
 			if (prevSelected.contains(idx.data(McJobListModel::JobIdRole).toLongLong()))
 				m_listView->selectionModel()->select(idx, QItemSelectionModel::Select);
 		}
 
-		// Scroll the job that just started into view. The Running filter also
-		// lists queued jobs, so the running item can sit anywhere in the list.
-		QModelIndex target;
-		for (int row = 0; row < m_model->rowCount(); ++row) {
-			const QModelIndex idx = m_model->index(row);
-			if (idx.data(McJobListModel::JobIdRole).toLongLong() == jobId) {
-				target = idx;
-				break;
+		// Scroll the newly-running job into view. Defer by one event-loop tick so the
+		// view has finished laying out after the model reset triggered by jobFinished.
+		QTimer::singleShot(0, this, [this, jobId] {
+			QModelIndex target;
+			for (int row = 0; row < m_model->rowCount(); ++row) {
+				const QModelIndex idx = m_model->index(row);
+				if (idx.data(McJobListModel::JobIdRole).toLongLong() == jobId) {
+					target = idx;
+					break;
+				}
+				if (!target.isValid()
+				    && idx.data(McJobListModel::StatusRole).toString() == QLatin1String("running"))
+					target = idx;   // fallback: first running item
 			}
-			if (!target.isValid()
-			    && idx.data(McJobListModel::StatusRole).toString() == QLatin1String("running"))
-				target = idx;   // fallback: first running item
-		}
-		if (target.isValid())
-			m_listView->scrollTo(target, QAbstractItemView::PositionAtCenter);
+			if (target.isValid())
+				m_listView->scrollTo(target, QAbstractItemView::PositionAtCenter);
+		});
 	});
 	connect(queue, &JobQueue::jobFinished, this,
 	        [this](qint64 jobId, bool ok, qint64 savedBytes) {
@@ -1132,6 +1144,19 @@ void McJobPanel::onRemoveSelected()
 		if (status != "running")
 			toDelete << idx.data(McJobListModel::JobIdRole).toLongLong();
 	}
+	if (toDelete.isEmpty()) return;
+
+	const QString msg = toDelete.size() == 1
+	    ? tr("Remove this job from the queue?\n\n"
+	         "Any track-selection or flag changes made since the last analysis will be lost.")
+	    : tr("Remove %1 jobs from the queue?\n\n"
+	         "Any track-selection or flag changes made since the last analysis will be lost.")
+	         .arg(toDelete.size());
+	if (QMessageBox::question(this, tr("Remove from Queue"), msg,
+	                          QMessageBox::Yes | QMessageBox::Cancel,
+	                          QMessageBox::Cancel) != QMessageBox::Yes)
+		return;
+
 	m_model->removeJobIds(toDelete);
 	updateFooter();
 	emit jobsChanged(m_model->rowCount());

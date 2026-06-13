@@ -181,6 +181,17 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	       tr("Forced subtitle (signs / foreign dialogue only)"));
 	addRow(g, { glyphLabel(this, QStringLiteral("\xE2\x9C\x8E")) },   // ✎
 	       tr("Commentary track (detected from track title)"));
+	{
+		const int iconH = fontMetrics().height();
+		auto* sdhLbl = new QLabel(this);
+		sdhLbl->setPixmap(McCardDelegate::renderSvgIcon(
+		    QStringLiteral(":/icons/closed_caption.svg"),
+		    palette().color(QPalette::Text), iconH, devicePixelRatioF()));
+		addRow(g, { sdhLbl },
+		       tr("%1 / SDH subtitle")
+		           .arg(grok(QStringLiteral("Closed_captioning"),
+		                     tr("Closed-caption"))));
+	}
 
 	// ── Badges ────────────────────────────────────────────────────────────────
 	auto* badgesBox = makeGroup(tr("Badges"), g);
