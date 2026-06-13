@@ -20,6 +20,7 @@ public:
 	                                   const QString& imdbId,
 	                                   const QStringList& iso639_2Languages,
 	                                   const QString& videoPath,
+	                                   const QString& movieTitle,
 	                                   QWidget* parent = nullptr);
 
 	int downloadedCount() const { return m_downloaded; }

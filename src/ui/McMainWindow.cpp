@@ -643,11 +643,16 @@ void McMainWindow::setupUi()
 
 			const qint64  fileId   = file.id;
 			const QString filePath = file.path;
+			const QString movieTitle = file.displayTitle.isEmpty()
+			    ? QFileInfo(filePath).completeBaseName()
+			    : (file.displayYear > 0
+			        ? QStringLiteral("%1 (%2)").arg(file.displayTitle).arg(file.displayYear)
+			        : file.displayTitle);
 			auto* dlg = new Mc::McSubtitleDownloadDialog(
 				m_profile->openSubtitlesApiKey(),
 				m_profile->openSubtitlesUsername(),
 				m_profile->openSubtitlesPassword(),
-				imdbId, missingIso6392, filePath, this);
+				imdbId, missingIso6392, filePath, movieTitle, this);
 			dlg->setAttribute(Qt::WA_DeleteOnClose);
 			connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
 				[this, fileId, filePath](int downloaded) {

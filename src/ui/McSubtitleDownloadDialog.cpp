@@ -38,12 +38,15 @@ McSubtitleDownloadDialog::McSubtitleDownloadDialog(const QString& apiKey,
                                                    const QString& imdbId,
                                                    const QStringList& iso6392Languages,
                                                    const QString& videoPath,
+                                                   const QString& movieTitle,
                                                    QWidget* parent)
 	: QDialog(parent)
 	, m_apiKey(apiKey), m_username(username), m_password(password)
 	, m_imdbId(imdbId), m_iso6392Languages(iso6392Languages), m_videoPath(videoPath)
 {
-	setWindowTitle(tr("Download Subtitles"));
+	setWindowTitle(movieTitle.isEmpty()
+	    ? tr("Download Subtitles")
+	    : tr("Download Subtitles — %1").arg(movieTitle));
 	setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
 	auto* root = new QVBoxLayout(this);

@@ -651,7 +651,7 @@ void McJobPanel::setupUi()
 		// full selection rather than only the right-clicked item.
 		QList<qint64> selectedProposedJobIds;
 		QList<qint64> selectedQueuedJobIds;
-		QList<qint64> selectedFailedJobIds;   // failed or orphaned-running → retryable
+		QList<qint64> selectedFailedJobIds;   // failed only → retryable
 		QList<qint64> selectedRemovableJobIds; // all non-running selected jobs
 		int firstSelRow = idx.row();
 		{
@@ -665,8 +665,7 @@ void McJobPanel::setupUi()
 				if (jid <= 0) continue;
 				if (st == QLatin1String("proposed")) selectedProposedJobIds << jid;
 				else if (st == QLatin1String("queued")) selectedQueuedJobIds << jid;
-				else if (st == QLatin1String("failed") || st == QLatin1String("running"))
-					selectedFailedJobIds << jid;
+				else if (st == QLatin1String("failed")) selectedFailedJobIds << jid;
 				if (st != QLatin1String("running")) selectedRemovableJobIds << jid;
 			}
 			// Ensure the right-clicked item is included even if outside the selection.
@@ -674,8 +673,7 @@ void McJobPanel::setupUi()
 				selectedProposedJobIds.prepend(jobId);
 			else if (status == QLatin1String("queued") && !selectedQueuedJobIds.contains(jobId))
 				selectedQueuedJobIds.prepend(jobId);
-			else if ((status == QLatin1String("failed") || status == QLatin1String("running"))
-			         && !selectedFailedJobIds.contains(jobId))
+			else if (status == QLatin1String("failed") && !selectedFailedJobIds.contains(jobId))
 				selectedFailedJobIds.prepend(jobId);
 			if (status != QLatin1String("running") && !selectedRemovableJobIds.contains(jobId))
 				selectedRemovableJobIds.prepend(jobId);
