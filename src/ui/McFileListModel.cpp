@@ -153,6 +153,19 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 	return true;
 }
 
+bool McFileListModel::entryLessThan(const FileEntry& a, const FileEntry& b) const
+{
+	switch (m_sortOrder) {
+	case SortByNewest:     return a.file.createdMs   > b.file.createdMs;
+	case SortByOldest:     return a.file.createdMs   < b.file.createdMs;
+	case SortByLargest:    return a.file.sizeBytes   > b.file.sizeBytes;
+	case SortByRatingHigh: return m_ratings.value(a.file.id, 0.0) > m_ratings.value(b.file.id, 0.0);
+	case SortByRatingLow:  return m_ratings.value(a.file.id, 0.0) < m_ratings.value(b.file.id, 0.0);
+	default:               // SortByName
+		return a.file.filename.compare(b.file.filename, Qt::CaseInsensitive) < 0;
+	}
+}
+
 void McFileListModel::applyFilter()
 {
 	beginResetModel();
@@ -161,17 +174,7 @@ void McFileListModel::applyFilter()
 		if (entryPassesFilter(e)) m_entries.append(e);
 
 	std::sort(m_entries.begin(), m_entries.end(),
-	          [this](const FileEntry& a, const FileEntry& b) {
-		switch (m_sortOrder) {
-		case SortByNewest:     return a.file.createdMs   > b.file.createdMs;
-		case SortByOldest:     return a.file.createdMs   < b.file.createdMs;
-		case SortByLargest:    return a.file.sizeBytes   > b.file.sizeBytes;
-		case SortByRatingHigh: return m_ratings.value(a.file.id, 0.0) > m_ratings.value(b.file.id, 0.0);
-		case SortByRatingLow:  return m_ratings.value(a.file.id, 0.0) < m_ratings.value(b.file.id, 0.0);
-		default:               // SortByName
-			return a.file.filename.compare(b.file.filename, Qt::CaseInsensitive) < 0;
-		}
-	});
+	          [this](const FileEntry& a, const FileEntry& b) { return entryLessThan(a, b); });
 	endResetModel();
 }
 
@@ -274,8 +277,11 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 		}
 	}
 	if (passes) {
-		beginInsertRows({}, m_entries.size(), m_entries.size());
-		m_entries.append(entry);
+		auto it = std::lower_bound(m_entries.begin(), m_entries.end(), entry,
+		                           [this](const FileEntry& a, const FileEntry& b) { return entryLessThan(a, b); });
+		const int insertPos = static_cast<int>(std::distance(m_entries.begin(), it));
+		beginInsertRows({}, insertPos, insertPos);
+		m_entries.insert(insertPos, entry);
 		endInsertRows();
 	}
 }

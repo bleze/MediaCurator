@@ -516,10 +516,12 @@ void McMainWindow::setupUi()
 			if (created) {
 				updateJobPanelVisibility(/*forceShow=*/true);
 				m_jobPanel->scrollToFileJob(file.id);
+				m_statusLabel->setText(tr("Proposed job for %1").arg(file.filename));
+			} else {
+				const auto existing = DatabaseManager::instance().activeJobForFile(file.id);
+				if (!existing || existing->jobType == QLatin1String("tag_edit"))
+					m_statusLabel->setText(tr("No removals found for %1").arg(file.filename));
 			}
-			m_statusLabel->setText(created
-			    ? tr("Proposed job for %1").arg(file.filename)
-			    : tr("No removals found for %1").arg(file.filename));
 		});
 
 		auto* previewAction = menu.addAction(svgIcon(":/icons/visibility.svg"),

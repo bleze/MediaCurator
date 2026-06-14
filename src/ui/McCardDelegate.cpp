@@ -1138,13 +1138,12 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			if (d.status == QLatin1String("running") && d.progress > 0)
 				pillText = QStringLiteral("Running %1%\xE2\x80\xA6").arg(d.progress);
 
-			qint64 displaySavedBytes = d.savedBytes;
 			const bool isPending = (d.status == QLatin1String("proposed")
 			                     || d.status == QLatin1String("queued")
 			                     || d.status == QLatin1String("source"));
-			if (isPending && displaySavedBytes == 0 && d.sizeBytes > 0)
-				displaySavedBytes = estimateSavingBytes(
-				    d.allStreams, d.removedIndices, d.sizeBytes, d.durationSec);
+			qint64 displaySavedBytes = (isPending && d.sizeBytes > 0)
+				? estimateSavingBytes(d.allStreams, d.removedIndices, d.sizeBytes, d.durationSec)
+				: d.savedBytes;
 			const bool isEstimate = isPending && (displaySavedBytes > 0);
 			if (displaySavedBytes > 0) {
 				const QString prefix = isEstimate ? QStringLiteral("~-") : QStringLiteral("-");

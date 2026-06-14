@@ -95,6 +95,7 @@ public slots:
 
 private:
 	bool entryPassesFilter(const FileEntry& e) const;
+	bool entryLessThan(const FileEntry& a, const FileEntry& b) const;
 	void applyFilter();
 	void applyEntry(const FileEntry& entry);
 
