@@ -167,8 +167,19 @@ void RemuxJob::onProcessFinished(int exitCode)
 			}
 			savedBytes = qMax(0LL, m_originalSize - outputSize);
 		} catch (const std::filesystem::filesystem_error& e) {
-			m_log += QStringLiteral("\nRename failed: %1").arg(e.what());
-			exitCode = -2;
+			// On SMB/NFS shares the rename can succeed on disk but still throw
+			// (the server commits the operation then returns an ambiguous status).
+			// Verify the actual filesystem state before treating it as a failure.
+			const bool destExists = QFileInfo::exists(m_finalOutputPath);
+			const bool srcGone    = !QFileInfo::exists(m_outputPath);
+			if (destExists && srcGone) {
+				// Rename succeeded despite the error — treat as success.
+				savedBytes = qMax(0LL, m_originalSize - outputSize);
+				m_log += QStringLiteral("\nNote: rename reported a network error but the file is in the correct state (%1)").arg(e.what());
+			} else {
+				m_log += QStringLiteral("\nRename failed: %1").arg(e.what());
+				exitCode = -2;
+			}
 		}
 
 		if ((exitCode == 0 || exitCode == 1) && m_writeLog) {

@@ -57,8 +57,9 @@
 // ── Status pill helpers ───────────────────────────────────────────────────────
 namespace {
 
-constexpr int kPillH = 18;
-constexpr int kPadH  = 6;
+constexpr int kPillH       = 18;
+constexpr int kPadH        = 6;
+constexpr int kJobPageSize = 500;
 
 static QColor pillColorForStatus(const QString& status)
 {
@@ -353,7 +354,7 @@ void McJobPanel::setupUi()
 	};
 
 	filterLayout->addWidget(vSep(filterBar));
-	addPill("4K",     videoColor, "4K files only (width \xe2\x89\xa5 3840)", QF::QF_4K);
+	addPill("4K",     videoColor, "4K files only (width >= 3840)", QF::QF_4K);
 	filterLayout->addWidget(vSep(filterBar));
 	addPill("DV",     hdrColor,   "Dolby Vision only",                       QF::QF_DV);
 	addPill("HDR",    hdrColor,   "HDR10 / HLG / HDR10+ only",              QF::QF_HDR);
@@ -830,32 +831,41 @@ void McJobPanel::setupUi()
 				infoLabel->setTextFormat(Qt::RichText);
 				vlay->addWidget(infoLabel);
 
-				// Savings accuracy row — shown for completed jobs that have both values
-				const bool showSavings = (rec->status == QLatin1String("done"))
-				                      && rec->savedBytes > 0
-				                      && rec->estimatedSavedBytes > 0;
+				// Savings row — shown whenever at least one value is known
+				const bool showSavings = rec->savedBytes > 0 || rec->estimatedSavedBytes > 0;
 				if (showSavings) {
 					const auto fmtMB = [](qint64 b) {
 						return QStringLiteral("%1 MB").arg(b / 1048576.0, 0, 'f', 2);
 					};
-					const qint64 diff   = rec->savedBytes - rec->estimatedSavedBytes;
-					const double pct    = 100.0 * rec->savedBytes / rec->estimatedSavedBytes;
-					const QString sign  = diff >= 0 ? QStringLiteral("+") : QString();
-					const QString color = qAbs(diff) < 1048576          ? QStringLiteral("green")
-					                    : diff > 0                       ? QStringLiteral("darkorange")
-					                    :                                  QStringLiteral("crimson");
+					const QString estStr = rec->estimatedSavedBytes > 0
+					    ? QStringLiteral("~%1").arg(fmtMB(rec->estimatedSavedBytes))
+					    : tr("—");
+					const QString actStr = rec->savedBytes > 0
+					    ? fmtMB(rec->savedBytes)
+					    : tr("—");
+
 					auto* savingsLabel = new QLabel(dlg);
 					savingsLabel->setTextFormat(Qt::RichText);
-					savingsLabel->setText(
-						tr("Estimated savings: <b>~%1</b>  |  Actual savings: <b>%2</b>  |  "
-						   "Delta: <b><span style='color:%3'>%4%5</span></b>  |  "
-						   "Accuracy: <b><span style='color:%3'>%6%</span></b>")
-						.arg(fmtMB(rec->estimatedSavedBytes))
-						.arg(fmtMB(rec->savedBytes))
-						.arg(color)
-						.arg(sign)
-						.arg(fmtMB(qAbs(diff)))
-						.arg(pct, 0, 'f', 1));
+
+					if (rec->savedBytes > 0 && rec->estimatedSavedBytes > 0) {
+						const qint64 diff   = rec->savedBytes - rec->estimatedSavedBytes;
+						const double pct    = 100.0 * rec->savedBytes / rec->estimatedSavedBytes;
+						const QString sign  = diff >= 0 ? QStringLiteral("+") : QString();
+						const QString color = qAbs(diff) < 1048576 ? QStringLiteral("green")
+						                    : diff > 0              ? QStringLiteral("darkorange")
+						                    :                         QStringLiteral("crimson");
+						savingsLabel->setText(
+							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>  |  "
+							   "Delta: <b><span style='color:%3'>%4%5</span></b>  |  "
+							   "Accuracy: <b><span style='color:%3'>%6%</span></b>")
+							.arg(estStr, actStr, color, sign)
+							.arg(fmtMB(qAbs(diff)))
+							.arg(pct, 0, 'f', 1));
+					} else {
+						savingsLabel->setText(
+							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>")
+							.arg(estStr, actStr));
+					}
 					vlay->addWidget(savingsLabel);
 				}
 

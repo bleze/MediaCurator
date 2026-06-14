@@ -117,6 +117,9 @@ struct JobDisplayRecord {
 	QString imdbId;            // from poster_cache; empty if no IMDb link yet
 	double  voteAverage = 0.0;
 	QString originalLanguage;  // ISO 639-2; set by RuleEngine or TMDB dialog
+	QString commandArgsJson;
+	QString originalStreamsJson;
+	QString flagChangesJson;
 };
 
 enum class JobSortMode {

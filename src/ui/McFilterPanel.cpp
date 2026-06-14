@@ -125,7 +125,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	struct PillDef {
 		const char* label;
 		quint32     flag;
-		const char* tip;
+		QString     tip;
 	};
 
 	const QColor videoColor { 0xa0, 0x50, 0x00 };   // matches card video badge
@@ -136,7 +136,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		lay->addWidget(vSep(this));
 		for (const auto& pd : pills) {
 			auto* btn = makePill(QLatin1String(pd.label), color, this);
-			btn->setToolTip(QLatin1String(pd.tip));
+			btn->setToolTip(pd.tip);
 			const quint32 f = pd.flag;
 			connect(btn, &QToolButton::toggled, this, [this, f](bool on) { onPillToggled(f, on); });
 			lay->addWidget(btn);
@@ -144,7 +144,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	};
 
 	const PillDef resGroup[] = {
-		{ "4K", QF_4K, "Show only 4K files (width \xe2\x89\xa5 3840)" },
+		{ "4K", QF_4K, QStringLiteral("Show only 4K files (width ≥ 3840)") },
 	};
 	addGroup(videoColor, resGroup);
 

@@ -52,6 +52,7 @@ private:
 	static StreamRecord parseStreamObject(const QJsonObject& obj);
 	static QString      detectHdrFormat(const QJsonObject& tags, const QJsonObject& sideData);
 	static QString      normalizeLanguage(const QString& lang);
+	static QString      languageFromTitle(const QString& title);
 
 	QString m_ffprobePath;
 };

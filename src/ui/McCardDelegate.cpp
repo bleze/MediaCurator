@@ -843,8 +843,10 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 		m_sizeCache.clear();
 		m_cacheWidth = w;
 	}
-	const int row = index.row();
-	const auto cached = m_sizeCache.constFind(row);
+	const qint64 itemId = (m_mode == Mode::Library)
+	    ? index.data(McFileListModel::FileRole).value<FileRecord>().id
+	    : index.data(McJobListModel::JobIdRole).toLongLong();
+	const auto cached = m_sizeCache.constFind(itemId);
 	if (cached != m_sizeCache.constEnd())
 		return *cached;
 
@@ -892,12 +894,12 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	const int h          = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + badgeAreaH + kPadBottom,
 	                             kMinRowH);
 	const QSize result{m_cacheWidth, h};
-	m_sizeCache.insert(row, result);
+	m_sizeCache.insert(itemId, result);
 	return result;
 }
 
 void McCardDelegate::clearSizeCache()   { m_sizeCache.clear(); }
-void McCardDelegate::invalidateSizeCacheFor(qint64) { m_sizeCache.clear(); }
+void McCardDelegate::invalidateSizeCacheFor(qint64 itemId) { m_sizeCache.remove(itemId); }
 
 // ── paint ─────────────────────────────────────────────────────────────────────
 

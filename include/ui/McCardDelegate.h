@@ -159,7 +159,7 @@ private:
 
 	QVariantAnimation*    m_pulseAnim        = nullptr;
 
-	mutable QHash<int, QSize> m_sizeCache;
+	mutable QHash<qint64, QSize> m_sizeCache;
 	mutable int               m_cacheWidth   = 0;
 	mutable QFont             m_badgeFont;
 	mutable QFontMetrics      m_badgeFm      { QFont{} };

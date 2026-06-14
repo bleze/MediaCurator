@@ -111,38 +111,23 @@ void McJobListModel::reloadPaged(int limit)
 	m_fanartPaths = db.allDoneFanartPaths();
 	const auto displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode);
 
-	// allJobs() is fast (just metadata, no streams) — needed for commandArgs/origStreams
-	const auto allJobRecords = db.allJobs();
-	QHash<qint64, QString> argsMap;
-	QHash<qint64, QString> origStreamsMap;
-	QHash<qint64, QString> flagChangesMap;
-	QSet<qint64> liveJobIds;
-	for (const JobRecord& j : allJobRecords) {
-		argsMap.insert(j.id, j.commandArgsJson);
-		origStreamsMap.insert(j.id, j.originalStreamsJson);
-		flagChangesMap.insert(j.id, j.flagChangesJson);
-		liveJobIds.insert(j.id);
-	}
-
-	for (auto it = m_progress.begin(); it != m_progress.end(); )
-		it = liveJobIds.contains(it.key()) ? ++it : m_progress.erase(it);
-
-	// Single batch query instead of N individual streamsForFile() calls
+	// Batch-load live streams for jobs that don't have an original-streams snapshot
 	QList<qint64> fileIds;
 	fileIds.reserve(displayJobs.size());
-	for (const JobDisplayRecord& djr : displayJobs) fileIds << djr.fileId;
+	for (const JobDisplayRecord& djr : displayJobs)
+		if (!(djr.status == QLatin1String("done") && !djr.originalStreamsJson.isEmpty()))
+			fileIds << djr.fileId;
 	const auto streamsMap = db.streamsForFiles(fileIds);
 
 	for (const JobDisplayRecord& djr : displayJobs) {
 		JobCardEntry e;
 		e.job = djr;
-		const QString& origJson = origStreamsMap.value(djr.jobId);
-		if (djr.status == QLatin1String("done") && !origJson.isEmpty())
-			e.allStreams = streamsFromJson(origJson);
+		if (djr.status == QLatin1String("done") && !djr.originalStreamsJson.isEmpty())
+			e.allStreams = streamsFromJson(djr.originalStreamsJson);
 		else
 			e.allStreams = streamsMap.value(djr.fileId);
-		e.keptStreams = computeKeptStreams(e.allStreams, argsMap.value(djr.jobId));
-		e.flagChangesJson = flagChangesMap.value(djr.jobId);
+		e.keptStreams     = computeKeptStreams(e.allStreams, djr.commandArgsJson);
+		e.flagChangesJson = djr.flagChangesJson;
 		m_allEntries.append(e);
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
@@ -877,6 +862,7 @@ QList<StreamRecord> McJobListModel::computeKeptStreams(
 
 	QList<StreamRecord> kept;
 	for (const StreamRecord& s : all) {
+		if (s.isExternal) { kept << s; continue; }  // sidecar — not in container, mkvmerge args don't apply
 		if (s.codecType == "video") {
 			if (noVideo) continue;
 			// When --video-tracks is absent, keep all video (backward-compatible default).

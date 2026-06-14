@@ -80,6 +80,8 @@ public:
 	    const QList<StreamRecord>& all,
 	    const QString& commandArgsJson);
 
+	QString filterStatus() const { return m_filterStatus; }
+
 public slots:
 	void setFilterText(const QString& text);
 	void setSortMode(JobSortMode sortMode);

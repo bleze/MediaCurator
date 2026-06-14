@@ -1243,10 +1243,13 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.filePath    = q.value(7).toString();
 		r.sizeBytes   = q.value(8).toLongLong();
 		r.imdbId            = q.value(9).toString();
-		r.jobType           = q.value("job_type").toString();
-		r.durationSec       = q.value("duration_s").toDouble();
-		r.voteAverage       = q.value("vote_average").toDouble();
-		r.originalLanguage  = q.value("original_language").toString();
+		r.jobType            = q.value("job_type").toString();
+		r.durationSec        = q.value("duration_s").toDouble();
+		r.voteAverage        = q.value("vote_average").toDouble();
+		r.originalLanguage   = q.value("original_language").toString();
+		r.commandArgsJson    = q.value("command_args_json").toString();
+		r.originalStreamsJson = q.value("original_streams_json").toString();
+		r.flagChangesJson    = q.value("flag_changes_json").toString();
 		result.append(r);
 	}
 }
@@ -1265,7 +1268,10 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
-		"       COALESCE(f.original_language, '') AS original_language"
+		"       COALESCE(f.original_language, '') AS original_language,"
+		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
+		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
+		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -1290,7 +1296,10 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
-		"       COALESCE(f.original_language, '') AS original_language"
+		"       COALESCE(f.original_language, '') AS original_language,"
+		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
+		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
+		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	if (!statusFilter.isEmpty())

@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QDebug>
+#include <QRegularExpression>
 
 namespace Mc {
 
@@ -186,7 +187,7 @@ StreamRecord FfprobeScanner::parseStreamObject(const QJsonObject& obj)
 	s.codecType   = obj.value("codec_type").toString();
 	s.codecName   = obj.value("codec_name").toString().toLower();
 
-	// Language — check tags object
+	// Language — check tags object, fall back to inferring from title
 	const QJsonObject tags = obj.value("tags").toObject();
 	s.language = normalizeLanguage(
 		tags.value("language").toString(
@@ -196,6 +197,8 @@ StreamRecord FfprobeScanner::parseStreamObject(const QJsonObject& obj)
 	s.title = tags.value("title").toString(
 				  tags.value("TITLE").toString()
 			  );
+	if ((s.language.isEmpty() || s.language == QLatin1String("und")) && !s.title.isEmpty())
+		s.language = languageFromTitle(s.title);
 
 	// Disposition flags
 	const QJsonObject disp = obj.value("disposition").toObject();
@@ -288,6 +291,37 @@ QString FfprobeScanner::detectHdrFormat(const QJsonObject& /*tags*/, const QJson
 		sdType.contains("content light level", Qt::CaseInsensitive))
 		return "HDR10";
 
+	return {};
+}
+
+// Infer ISO 639-2 language code from a track title (e.g. "English (SDH)" → "eng").
+// Splits on non-alphabetic chars and checks each word against a name→code table.
+QString FfprobeScanner::languageFromTitle(const QString& title)
+{
+	if (title.isEmpty()) return {};
+
+	static const QHash<QString, QString> nameToCode = {
+		{"english",    "eng"}, {"french",     "fra"}, {"german",     "deu"},
+		{"deutsch",    "deu"}, {"spanish",    "spa"}, {"italian",    "ita"},
+		{"portuguese", "por"}, {"japanese",   "jpn"}, {"korean",     "kor"},
+		{"chinese",    "zho"}, {"russian",    "rus"}, {"arabic",     "ara"},
+		{"dutch",      "nld"}, {"swedish",    "swe"}, {"norwegian",  "nor"},
+		{"danish",     "dan"}, {"finnish",    "fin"}, {"polish",     "pol"},
+		{"czech",      "ces"}, {"hungarian",  "hun"}, {"romanian",   "ron"},
+		{"greek",      "ell"}, {"turkish",    "tur"}, {"thai",       "tha"},
+		{"hindi",      "hin"}, {"ukrainian",  "ukr"}, {"bulgarian",  "bul"},
+		{"croatian",   "hrv"}, {"slovak",     "slk"}, {"hebrew",     "heb"},
+		{"indonesian", "ind"}, {"vietnamese", "vie"}, {"catalan",    "cat"},
+		{"serbian",    "srp"}, {"slovenian",  "slv"}, {"latvian",    "lav"},
+		{"lithuanian", "lit"}, {"estonian",   "est"},
+	};
+
+	const QStringList words = title.toLower().split(QRegularExpression("[^a-z]+"), Qt::SkipEmptyParts);
+	for (const QString& word : words) {
+		const auto it = nameToCode.constFind(word);
+		if (it != nameToCode.constEnd())
+			return it.value();
+	}
 	return {};
 }
 
