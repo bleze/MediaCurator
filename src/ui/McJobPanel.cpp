@@ -330,8 +330,9 @@ void McJobPanel::setupUi()
 	m_sortCombo = new QComboBox(this);
 	m_sortCombo->addItem(tr("Smallest file first"),        static_cast<int>(JobSortMode::SmallestFirst));
 	m_sortCombo->addItem(tr("Largest savings first"), static_cast<int>(JobSortMode::LargestSavingsFirst));
+	m_sortCombo->addItem(tr("Most recently completed"), static_cast<int>(JobSortMode::MostRecentFirst));
 	m_sortCombo->setCurrentIndex(AppSettings::instance().value("jobPanel/sortMode", 0).toInt());
-	m_sortCombo->setToolTip(tr("Queue processing order: which job runs next when the queue is active"));
+	m_sortCombo->setToolTip(tr("Sort order for the job list. \"Most recently completed\" is auto-selected when viewing Done jobs."));
 
 	// ── Quick-filter pills (same codec/quality set as the library panel) ──────
 	using QF = McFilterPanel;
@@ -415,13 +416,61 @@ void McJobPanel::setupUi()
 
 	// ── List view ─────────────────────────────────────────────────────────────
 	m_model = new McJobListModel(this);
-	m_model->setSortMode(static_cast<JobSortMode>(
-		AppSettings::instance().value("jobPanel/sortMode", 0).toInt()));
+
+	// Clamp any stale "MostRecentFirst" (value 2) written by an earlier build.
+	// Then seed m_lastQueueSortIdx so the restore path never reads AppSettings mid-session.
+	{
+		int v = AppSettings::instance().value("jobPanel/sortMode", 0).toInt();
+		if (v >= static_cast<int>(JobSortMode::MostRecentFirst)) {
+			v = 0;
+			AppSettings::instance().setValue("jobPanel/sortMode", 0);
+		}
+		m_lastQueueSortIdx = v;
+	}
+	m_model->setSortMode(static_cast<JobSortMode>(m_lastQueueSortIdx));
+
+	// Adjusts the sort combo when the status filter changes:
+	// - enables "Most recently completed" only for Done/Failed
+	// - auto-switches to MostRecentFirst when entering Done/Failed
+	// - restores the saved queue sort when leaving Done/Failed with MostRecentFirst active
+	// MostRecentFirst is never written to "jobPanel/sortMode" so the queue sort is
+	// preserved across Done/Failed visits.
+	const auto applySortForFilter = [this](const QString& filterStatus) {
+		const bool hasCompletionTime = filterStatus == QLatin1String("done")
+		                            || filterStatus == QLatin1String("failed");
+		const int recentIdx = m_sortCombo->findData(static_cast<int>(JobSortMode::MostRecentFirst));
+		if (recentIdx < 0) return;
+
+		// Enable / disable the "Most recently completed" item.
+		if (auto* m = qobject_cast<QStandardItemModel*>(m_sortCombo->model()))
+			if (auto* item = m->item(recentIdx))
+				item->setEnabled(hasCompletionTime);
+
+		const auto curMode = static_cast<JobSortMode>(
+			m_sortCombo->itemData(m_sortCombo->currentIndex()).toInt());
+
+		if (hasCompletionTime) {
+			// Auto-switch to MostRecentFirst when entering Done/Failed.
+			if (curMode != JobSortMode::MostRecentFirst)
+				m_sortCombo->setCurrentIndex(recentIdx);  // triggers signal → updates model
+		} else if (curMode == JobSortMode::MostRecentFirst) {
+			// Leaving Done/Failed with MostRecentFirst active → restore last queue sort.
+			// Uses in-session memory (m_lastQueueSortIdx) — never stale.
+			m_sortCombo->setCurrentIndex(m_lastQueueSortIdx);  // triggers signal → updates model
+		}
+		// If curMode is already a queue sort on a queue filter, nothing to do —
+		// the model is already correct.
+	};
+
 	connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
-		AppSettings::instance().setValue("jobPanel/sortMode", idx);
-		const auto mode = static_cast<JobSortMode>(idx);
+		const auto mode = static_cast<JobSortMode>(m_sortCombo->itemData(idx).toInt());
+		if (mode != JobSortMode::MostRecentFirst) {
+			AppSettings::instance().setValue(QStringLiteral("jobPanel/sortMode"), idx);
+			m_lastQueueSortIdx = idx;  // remember for restore when leaving Done/Failed
+		}
 		m_model->setSortMode(mode);
 		m_model->reload();
+		m_listView->scrollToTop();
 		if (m_queue) m_queue->setSortMode(mode);
 	});
 
@@ -521,11 +570,12 @@ void McJobPanel::setupUi()
 		}
 	});
 	connect(m_statusFilter, &QComboBox::currentIndexChanged,
-	        this, [this](int i) {
+	        this, [this, applySortForFilter](int i) {
 		if (i <= 0) return;   // skip header row
 		const QString v = m_statusFilter->itemData(i).toString();
 		AppSettings::instance().setValue("jobPanel/statusFilter", v);
 		m_model->setFilterStatus(v);
+		applySortForFilter(v);
 	});
 
 	// Restore the previously saved status filter (block signals so the save slot
@@ -543,6 +593,8 @@ void McJobPanel::setupUi()
 			m_statusFilter->blockSignals(false);
 			m_model->setFilterStatus(m_statusFilter->currentData().toString());
 		}
+		// Signals were blocked — enable/disable MostRecentFirst and apply auto-switch now.
+		applySortForFilter(m_statusFilter->currentData().toString());
 	}
 
 	// Double-click: poster column → IMDb dialog; elsewhere → preview

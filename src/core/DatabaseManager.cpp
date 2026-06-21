@@ -1363,6 +1363,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.commandArgsJson    = q.value("command_args_json").toString();
 		r.originalStreamsJson = q.value("original_streams_json").toString();
 		r.flagChangesJson    = q.value("flag_changes_json").toString();
+		r.finishedAt         = q.value("finished_at").toLongLong();
 		result.append(r);
 	}
 }
@@ -1371,9 +1372,10 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 {
 	QList<JobDisplayRecord> result;
 	QSqlQuery q(connection());
-	const QString orderBy = (sortMode == JobSortMode::LargestSavingsFirst)
-		? QStringLiteral("j.saved_bytes DESC, j.created_at ASC")
-		: QStringLiteral("size_bytes ASC, j.created_at ASC");
+	const QString orderBy =
+		(sortMode == JobSortMode::LargestSavingsFirst) ? QStringLiteral("j.saved_bytes DESC, j.created_at ASC") :
+		(sortMode == JobSortMode::MostRecentFirst)     ? QStringLiteral("j.finished_at DESC, j.id DESC") :
+		                                                 QStringLiteral("COALESCE(f.size_bytes,0) ASC, j.created_at ASC");
 	const QString sql = QStringLiteral(
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
@@ -1384,7 +1386,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       COALESCE(f.original_language, '') AS original_language,"
 		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
 		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
-		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json"
+		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json,"
+		"       COALESCE(j.finished_at, 0) AS finished_at"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -1399,9 +1402,10 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 {
 	QList<JobDisplayRecord> result;
 	QSqlQuery q(connection());
-	const QString orderBy = (sortMode == JobSortMode::LargestSavingsFirst)
-		? QStringLiteral("j.saved_bytes DESC, j.created_at ASC")
-		: QStringLiteral("size_bytes ASC, j.created_at ASC");
+	const QString orderBy =
+		(sortMode == JobSortMode::LargestSavingsFirst) ? QStringLiteral("j.saved_bytes DESC, j.created_at ASC") :
+		(sortMode == JobSortMode::MostRecentFirst)     ? QStringLiteral("j.finished_at DESC, j.id DESC") :
+		                                                 QStringLiteral("COALESCE(f.size_bytes,0) ASC, j.created_at ASC");
 	QString sql = QStringLiteral(
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
@@ -1412,7 +1416,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(f.original_language, '') AS original_language,"
 		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
 		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
-		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json"
+		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json,"
+		"       COALESCE(j.finished_at, 0) AS finished_at"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	if (!statusFilter.isEmpty())

@@ -84,6 +84,7 @@ private:
 	QWidget*        m_ratingSlider        = nullptr;
 	QLabel*         m_ratingLabel         = nullptr;
 	quint32         m_qfFlags             = 0;      // active quick-filter bitmask
+	int             m_lastQueueSortIdx    = 0;      // last non-MostRecentFirst combo index (in-session)
 	JobQueue*       m_queue               = nullptr;
 	QElapsedTimer   m_jobTimer;
 	QTimer*         m_etaTimer            = nullptr;

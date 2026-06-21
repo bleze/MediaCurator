@@ -1144,9 +1144,11 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			                     || d.status == QLatin1String("queued")
 			                     || d.status == QLatin1String("source")
 			                     || d.status == QLatin1String("running"));
-			qint64 displaySavedBytes = (isPending && d.sizeBytes > 0)
+			// Only show an estimate for pending jobs or the actual bytes for done.
+			// Failed / cancelled jobs carry stale estimate data in savedBytes — show nothing.
+			qint64 displaySavedBytes = isPending && d.sizeBytes > 0
 				? estimateSavingBytes(d.allStreams, d.removedIndices, d.sizeBytes, d.durationSec)
-				: d.savedBytes;
+				: d.status == QLatin1String("done") ? d.savedBytes : 0;
 			const bool isEstimate = isPending && (displaySavedBytes > 0);
 			if (displaySavedBytes > 0) {
 				const QString prefix = isEstimate ? QStringLiteral("~-") : QStringLiteral("-");

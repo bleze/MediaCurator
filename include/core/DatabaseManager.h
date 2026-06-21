@@ -129,7 +129,8 @@ struct JobDisplayRecord {
 	qint64  savedBytes = 0;
 	qint64  sizeBytes  = 0;
 	double  durationSec = 0.0;
-	qint64  createdAt  = 0;
+	qint64  createdAt   = 0;
+	qint64  finishedAt  = 0;   // epoch seconds; 0 for jobs not yet completed
 	QString imdbId;            // from poster_cache; empty if no IMDb link yet
 	double  voteAverage = 0.0;
 	QString originalLanguage;  // ISO 639-2; set by RuleEngine or TMDB dialog
@@ -140,7 +141,8 @@ struct JobDisplayRecord {
 
 enum class JobSortMode {
 	SmallestFirst,       // process smallest files first — best when low on disk space
-	LargestSavingsFirst  // process largest files first — best to recover maximum space quickly
+	LargestSavingsFirst, // process largest files first — best to recover maximum space quickly
+	MostRecentFirst,     // completed jobs sorted by finished_at DESC — for the Done tab
 };
 
 /**

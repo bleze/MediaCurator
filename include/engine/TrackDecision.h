@@ -34,7 +34,7 @@ namespace FallbackBps {
 	constexpr double kTrueHd       = 3'500'000.0; // TrueHD / Atmos
 	constexpr double kPcmDefault   = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
 	constexpr double kFlac         = 2'000'000.0; // FLAC (lossless, variable)
-    constexpr double kPgsSubtitle  = 2'000.0;     // PGS / VOBSUB (image-based, sparse)
+	constexpr double kPgsSubtitle  = 0.0;         // PGS / VOBSUB (image-based, sparse)
 	constexpr double kTextSubtitle =    20'000.0; // SRT / ASS / SSA / WebVTT
 }
 

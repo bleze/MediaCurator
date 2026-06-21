@@ -16,6 +16,41 @@
 
 namespace Mc {
 
+// Sort m_allEntries by the live savings estimate (same formula as the badge).
+// j.saved_bytes can be stale when jobs were created with an older formula;
+// this ensures "Largest savings first" matches what the user sees in the card.
+static void sortEntriesByDisplaySavings(QList<JobCardEntry>& entries, QList<Qt::CheckState>& checks)
+{
+	const int n = entries.size();
+	if (n < 2) return;
+
+	QList<qint64> saved(n);
+	for (int i = 0; i < n; ++i) {
+		const JobCardEntry& e = entries[i];
+		QSet<int> keptIdx;
+		for (const auto& s : e.keptStreams) keptIdx.insert(s.streamIndex);
+		QSet<int> removed;
+		for (const auto& s : e.allStreams)
+			if (!keptIdx.contains(s.streamIndex)) removed.insert(s.streamIndex);
+		saved[i] = estimateSavingBytes(e.allStreams, removed, e.job.sizeBytes, e.job.durationSec);
+	}
+
+	QList<int> perm(n);
+	for (int i = 0; i < n; ++i) perm[i] = i;
+	std::stable_sort(perm.begin(), perm.end(), [&](int a, int b) { return saved[a] > saved[b]; });
+
+	QList<JobCardEntry>    sortedE;
+	QList<Qt::CheckState>  sortedC;
+	sortedE.reserve(n);
+	sortedC.reserve(n);
+	for (int i : perm) {
+		sortedE.append(std::move(entries[i]));
+		sortedC.append(checks[i]);
+	}
+	entries = std::move(sortedE);
+	checks  = std::move(sortedC);
+}
+
 McJobListModel::McJobListModel(QObject* parent)
 	: QAbstractListModel(parent)
 {
@@ -91,6 +126,8 @@ void McJobListModel::reload()
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
 
+	if (m_sortMode == JobSortMode::LargestSavingsFirst)
+		sortEntriesByDisplaySavings(m_allEntries, m_allCheckStates);
 	applyFilter();
 }
 
@@ -132,6 +169,8 @@ void McJobListModel::reloadPaged(int limit)
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
 
+	if (m_sortMode == JobSortMode::LargestSavingsFirst)
+		sortEntriesByDisplaySavings(m_allEntries, m_allCheckStates);
 	applyFilter();
 }
 
