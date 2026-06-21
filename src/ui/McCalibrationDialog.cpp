@@ -22,9 +22,9 @@ static qint64 currentFallbackBps(const QString& codecName, const QString& codecT
 {
 	if (codecType == QLatin1String("audio")) {
 		if (codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-			return static_cast<qint64>(FallbackBps::kDtsHd);
+			return static_cast<qint64>(FallbackBps::kDtsHdPerChannel);
 		const QString cn = codecName.toLower();
-		if (cn == QLatin1String("truehd"))              return static_cast<qint64>(FallbackBps::kTrueHd);
+		if (cn == QLatin1String("truehd"))              return static_cast<qint64>(FallbackBps::kTrueHdPerChannel);
 		if (cn.startsWith(QLatin1String("pcm_")))       return static_cast<qint64>(FallbackBps::kPcmDefault);
 		if (cn == QLatin1String("flac"))                return static_cast<qint64>(FallbackBps::kFlac);
 		return static_cast<qint64>(FallbackBps::kAudio);
@@ -43,9 +43,9 @@ static QString fallbackConstName(const QString& codecName, const QString& codecT
 {
 	if (codecType == QLatin1String("audio")) {
 		if (codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-			return QStringLiteral("kDtsHd");
+			return QStringLiteral("kDtsHdPerChannel");
 		const QString cn = codecName.toLower();
-		if (cn == QLatin1String("truehd"))          return QStringLiteral("kTrueHd");
+		if (cn == QLatin1String("truehd"))          return QStringLiteral("kTrueHdPerChannel");
 		if (cn.startsWith(QLatin1String("pcm_")))   return QStringLiteral("kPcmDefault");
 		if (cn == QLatin1String("flac"))            return QStringLiteral("kFlac");
 		return QStringLiteral("kAudio");

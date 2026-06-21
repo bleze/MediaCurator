@@ -29,13 +29,15 @@ struct TrackDecision {
 // Values represent AVERAGE bitrate over the full file duration, not peak/burst.
 // Update these from Tools > Estimation Calibration Data after accumulating jobs.
 namespace FallbackBps {
-	constexpr double kAudio        = 192'000.0;   // lossy audio (AC3, AAC, MP3, DTS core, E-AC3)
-	constexpr double kDtsHd        = 3'500'000.0; // DTS-HD MA / DTS-HD HRA
-	constexpr double kTrueHd       = 3'500'000.0; // TrueHD / Atmos
-	constexpr double kPcmDefault   = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
-	constexpr double kFlac         = 2'000'000.0; // FLAC (lossless, variable)
-	constexpr double kPgsSubtitle  = 0.0;         // PGS / VOBSUB (image-based, sparse)
-	constexpr double kTextSubtitle =    20'000.0; // SRT / ASS / SSA / WebVTT
+	constexpr double kAudio           = 192'000.0;   // lossy audio (AC3, AAC, MP3, DTS core, E-AC3)
+	constexpr double kDtsHd           = 3'500'000.0; // DTS-HD MA / DTS-HD HRA — 5.1 (6ch) reference
+	constexpr double kDtsHdPerChannel =   583'333.0; // kDtsHd / 6 — scale by actual channel count
+	constexpr double kTrueHd          = 3'500'000.0; // TrueHD / Atmos — 5.1 (6ch) reference
+	constexpr double kTrueHdPerChannel =  583'333.0; // kTrueHd / 6 — scale by actual channel count
+	constexpr double kPcmDefault      = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
+	constexpr double kFlac            = 2'000'000.0; // FLAC (lossless, variable)
+	constexpr double kPgsSubtitle     = 0.0;         // PGS / VOBSUB (image-based, sparse)
+	constexpr double kTextSubtitle    =    20'000.0; // SRT / ASS / SSA / WebVTT
 }
 
 // Returns the effective bitrate used for size estimation:
@@ -46,10 +48,10 @@ inline double effectiveBitrate(const StreamRecord& s) noexcept
 	if (s.bitRate > 0) return static_cast<double>(s.bitRate);
 	if (s.codecType == QLatin1String("audio")) {
 		if (s.codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-			return FallbackBps::kDtsHd;
+			return s.channels > 0 ? FallbackBps::kDtsHdPerChannel * s.channels : FallbackBps::kDtsHd;
 		const QString cn = s.codecName.toLower();
 		if (cn == QLatin1String("truehd"))
-			return FallbackBps::kTrueHd;
+			return s.channels > 0 ? FallbackBps::kTrueHdPerChannel * s.channels : FallbackBps::kTrueHd;
 		if (cn.startsWith(QLatin1String("pcm_"))) {
 			if (s.sampleRate > 0 && s.channels > 0) {
 				const int bits = cn.contains(QLatin1String("24")) ? 24
