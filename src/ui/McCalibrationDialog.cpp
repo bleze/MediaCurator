@@ -15,48 +15,13 @@
 
 namespace Mc {
 
-// Maps (codecName, codecType, codecProfile) to the matching FallbackBps constant.
-// Must mirror effectiveBitrate() in TrackDecision.h exactly.
-static qint64 currentFallbackBps(const QString& codecName, const QString& codecType,
-                                   const QString& codecProfile = {})
-{
-	if (codecType == QLatin1String("audio")) {
-		if (codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-			return static_cast<qint64>(FallbackBps::kDtsHdPerChannel);
-		const QString cn = codecName.toLower();
-		if (cn == QLatin1String("truehd"))              return static_cast<qint64>(FallbackBps::kTrueHdPerChannel);
-		if (cn.startsWith(QLatin1String("pcm_")))       return static_cast<qint64>(FallbackBps::kPcmDefault);
-		if (cn == QLatin1String("flac"))                return static_cast<qint64>(FallbackBps::kFlac);
-		return static_cast<qint64>(FallbackBps::kAudio);
-	}
-	if (codecType == QLatin1String("subtitle")) {
-		if (codecName.contains(QLatin1String("pgs")) || codecName == QLatin1String("dvd_subtitle"))
-			return static_cast<qint64>(FallbackBps::kPgsSubtitle);
-		return static_cast<qint64>(FallbackBps::kTextSubtitle);
-	}
-	return 0;
-}
-
-// Returns the FallbackBps constant name for this codec, or empty if none.
-static QString fallbackConstName(const QString& codecName, const QString& codecType,
-                                  const QString& codecProfile = {})
-{
-	if (codecType == QLatin1String("audio")) {
-		if (codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-			return QStringLiteral("kDtsHdPerChannel");
-		const QString cn = codecName.toLower();
-		if (cn == QLatin1String("truehd"))          return QStringLiteral("kTrueHdPerChannel");
-		if (cn.startsWith(QLatin1String("pcm_")))   return QStringLiteral("kPcmDefault");
-		if (cn == QLatin1String("flac"))            return QStringLiteral("kFlac");
-		return QStringLiteral("kAudio");
-	}
-	if (codecType == QLatin1String("subtitle")) {
-		if (codecName.contains(QLatin1String("pgs")) || codecName == QLatin1String("dvd_subtitle"))
-			return QStringLiteral("kPgsSubtitle");
-		return QStringLiteral("kTextSubtitle");
-	}
-	return {};
-}
+// currentFallbackBps()/fallbackConstName() used to re-derive the fallback bucket from
+// (codecName, codecType) alone, without codecProfile — which meant DTS and DTS-HD MA/HRA
+// (same ffprobe codec_name "dts", very different fallback constants) were indistinguishable
+// here. calibrationReport() now returns entries already keyed by Mc::fallbackBpsKey(), the
+// same stable bucket identifier updateCalibrationFromJob() stores by, so both the value and
+// constexpr-name lookups below just resolve that key directly via the shared TrackDecision.h
+// functions — one source of truth instead of two hand-maintained copies of the same mapping.
 
 // Format a bps integer with C++ digit separators: 3500000 -> "3'500'000"
 static QString fmtBps(qint64 bps)
@@ -108,7 +73,7 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 
 	for (int row = 0; row < entries.size(); ++row) {
 		const CalibrationEntry& e = entries[row];
-		const qint64 fallback     = currentFallbackBps(e.codecName, e.codecType);
+		const qint64 fallback     = static_cast<qint64>(fallbackBpsForKey(e.codecName));
 		const bool confident      = e.sampleCount >= MIN_SAMPLES
 		                         && e.stdDevRatio / qMax(e.avgRatio, 0.01) < 0.4;
 		const bool worthChanging  = qAbs(e.avgRatio - 1.0) >= MIN_DRIFT;
@@ -187,7 +152,7 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 		QStringList lines;
 		lines << QStringLiteral("codec_name,codec_type,bitrate_source,sample_count,avg_ratio,std_dev_ratio,suggested_fallback_bps");
 		for (const CalibrationEntry& e : entries) {
-			const qint64 fallback  = currentFallbackBps(e.codecName, e.codecType);
+			const qint64 fallback  = static_cast<qint64>(fallbackBpsForKey(e.codecName));
 			const qint64 suggested = (e.usedFallback && fallback > 0)
 			    ? qRound64(fallback * e.avgRatio / 1000.0) * 1000 : 0;
 			lines << QStringLiteral("%1,%2,%3,%4,%5,%6,%7")
@@ -212,7 +177,7 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 		// summary comment lines
 		for (const CalibrationEntry& e : entries) {
 			if (!e.usedFallback) continue;
-			const qint64 fallback = currentFallbackBps(e.codecName, e.codecType);
+			const qint64 fallback = static_cast<qint64>(fallbackBpsForKey(e.codecName));
 			if (fallback <= 0) continue;
 			const qint64 suggested = qRound64(fallback * e.avgRatio / 1000.0) * 1000;
 			const bool confident   = e.sampleCount >= MIN_S
@@ -239,13 +204,13 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 		QMap<QString, QPair<qint64, int>> best; // constName -> (suggestedBps, sampleCount)
 		for (const CalibrationEntry& e : entries) {
 			if (!e.usedFallback) continue;
-			const qint64 fallback = currentFallbackBps(e.codecName, e.codecType);
+			const qint64 fallback = static_cast<qint64>(fallbackBpsForKey(e.codecName));
 			if (fallback <= 0) continue;
 			const bool confident  = e.sampleCount >= MIN_S
 			                     && e.stdDevRatio / qMax(e.avgRatio, 0.01) < 0.4;
 			const bool drift      = qAbs(e.avgRatio - 1.0) >= MIN_D;
 			if (!confident || !drift) continue;
-			const QString cname   = fallbackConstName(e.codecName, e.codecType);
+			const QString cname   = fallbackBpsConstName(e.codecName);
 			if (cname.isEmpty()) continue;
 			const qint64 suggested = qRound64(fallback * e.avgRatio / 1000.0) * 1000;
 			if (!best.contains(cname) || e.sampleCount > best[cname].second)

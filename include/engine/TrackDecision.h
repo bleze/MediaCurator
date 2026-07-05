@@ -72,6 +72,58 @@ inline double effectiveBitrate(const StreamRecord& s) noexcept
 	return 0.0;
 }
 
+// Returns a stable identifier for which FallbackBps constant effectiveBitrate() would
+// pick for this codec — the grouping key for calibration samples. codecName alone is
+// NOT enough to key on: ffprobe reports codec_name "dts" for both plain DTS and
+// DTS-HD MA/HRA, which resolve to very different fallback constants above via
+// codecProfile. Must be kept in sync with effectiveBitrate()'s branching. Empty means
+// no fallback bucket applies (e.g. video, or anything with a declared bitrate).
+inline QString fallbackBpsKey(const QString& codecName, const QString& codecType,
+                               const QString& codecProfile)
+{
+	if (codecType == QLatin1String("audio")) {
+		if (codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
+			return QStringLiteral("dts-hd");
+		const QString cn = codecName.toLower();
+		if (cn == QLatin1String("truehd"))        return QStringLiteral("truehd");
+		if (cn.startsWith(QLatin1String("pcm_"))) return QStringLiteral("pcm");
+		if (cn == QLatin1String("flac"))          return QStringLiteral("flac");
+		return QStringLiteral("audio-lossy");
+	}
+	if (codecType == QLatin1String("subtitle")) {
+		const bool isImageSub = codecName.contains(QLatin1String("pgs"))
+		                     || codecName == QLatin1String("dvd_subtitle");
+		return isImageSub ? QStringLiteral("image-subtitle") : QStringLiteral("text-subtitle");
+	}
+	return {};
+}
+
+// Returns the FallbackBps value and constexpr name for a fallbackBpsKey() bucket —
+// the single source of truth for both, shared by calibration storage and display.
+inline double fallbackBpsForKey(const QString& key)
+{
+	if (key == QLatin1String("dts-hd"))          return FallbackBps::kDtsHdPerChannel;
+	if (key == QLatin1String("truehd"))          return FallbackBps::kTrueHdPerChannel;
+	if (key == QLatin1String("pcm"))             return FallbackBps::kPcmDefault;
+	if (key == QLatin1String("flac"))            return FallbackBps::kFlac;
+	if (key == QLatin1String("audio-lossy"))     return FallbackBps::kAudio;
+	if (key == QLatin1String("image-subtitle"))  return FallbackBps::kPgsSubtitle;
+	if (key == QLatin1String("text-subtitle"))   return FallbackBps::kTextSubtitle;
+	return 0.0;
+}
+
+inline QString fallbackBpsConstName(const QString& key)
+{
+	if (key == QLatin1String("dts-hd"))          return QStringLiteral("kDtsHdPerChannel");
+	if (key == QLatin1String("truehd"))          return QStringLiteral("kTrueHdPerChannel");
+	if (key == QLatin1String("pcm"))             return QStringLiteral("kPcmDefault");
+	if (key == QLatin1String("flac"))            return QStringLiteral("kFlac");
+	if (key == QLatin1String("audio-lossy"))     return QStringLiteral("kAudio");
+	if (key == QLatin1String("image-subtitle"))  return QStringLiteral("kPgsSubtitle");
+	if (key == QLatin1String("text-subtitle"))   return QStringLiteral("kTextSubtitle");
+	return {};
+}
+
 // Proportional savings estimate: removed tracks' share of total declared bitrate,
 // applied to the known file size. The denominator is floored at the actual container
 // bitrate (fileSize * 8 / duration) so video tracks that declare no bitrate don't

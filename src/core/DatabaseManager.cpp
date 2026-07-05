@@ -1,4 +1,5 @@
 ﻿#include "core/DatabaseManager.h"
+#include "engine/TrackDecision.h"
 
 #include <QFile>
 #include <QJsonArray>
@@ -1035,11 +1036,21 @@ void DatabaseManager::updateCalibrationFromJob(qint64 jobId)
 	)");
 
 	for (const QJsonValue& v : tracks) {
-		const QJsonObject obj   = v.toObject();
-		const QString codecName = obj[QStringLiteral("codecName")].toString();
-		const QString codecType = obj[QStringLiteral("codecType")].toString();
-		const int usedFallback  = obj[QStringLiteral("declaredBitrate")].toVariant().toLongLong() == 0 ? 1 : 0;
-		q.addBindValue(codecName);
+		const QJsonObject obj      = v.toObject();
+		const QString codecName    = obj[QStringLiteral("codecName")].toString();
+		const QString codecType    = obj[QStringLiteral("codecType")].toString();
+		const QString codecProfile = obj[QStringLiteral("codecProfile")].toString();
+		const int usedFallback     = obj[QStringLiteral("declaredBitrate")].toVariant().toLongLong() == 0 ? 1 : 0;
+
+		// Group by which FallbackBps bucket this track actually used, not raw codec
+		// name — ffprobe reports the same codec_name ("dts") for both plain DTS and
+		// DTS-HD MA/HRA, which use very different fallback constants (codecProfile is
+		// what actually distinguishes them). Using the raw name here would silently
+		// blend two unrelated fallback buckets into one calibration average.
+		const QString key = Mc::fallbackBpsKey(codecName, codecType, codecProfile);
+		if (key.isEmpty()) continue;   // e.g. video, or a type with no fallback bucket
+
+		q.addBindValue(key);
 		q.addBindValue(codecType);
 		q.addBindValue(usedFallback);
 		q.addBindValue(ratio);

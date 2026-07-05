@@ -8,7 +8,6 @@
 #include "ui/SvgIcon.h"
 #include "engine/ActionEngine.h"
 #include "engine/JobQueue.h"
-#include "engine/TrackDecision.h"
 #include "engine/PosterManager.h"
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
@@ -890,13 +889,9 @@ void McJobPanel::setupUi()
 				vlay->addWidget(infoLabel);
 
 				// ── Savings + per-track breakdown ────────────────────────────
-				// Load file now — need both size and duration
 				qint64 fileSizeBytes = 0;
-				double durationSec   = 0.0;
-				if (const auto f = DatabaseManager::instance().fileById(rec->fileId)) {
+				if (const auto f = DatabaseManager::instance().fileById(rec->fileId))
 					fileSizeBytes = f->sizeBytes;
-					durationSec   = f->durationSec;
-				}
 
 				const auto fmtMB = [](qint64 b) {
 					return QStringLiteral("%1 MB").arg(b / 1048576.0, 0, 'f', 2);
@@ -907,9 +902,15 @@ void McJobPanel::setupUi()
 					           .arg(100.0 * b / fileSizeBytes, 0, 'f', 1);
 				};
 
-				// Recompute estimate from current fallbacks using stored JSON.
-				// The value stored in estimatedSavedBytes reflects fallbacks at job-creation
-				// time and may be stale if defaults were tuned since then.
+				// Per-track breakdown of the estimate frozen at job creation. This must
+				// read back the stored per-track estimatedBytes rather than re-derive it
+				// from bitrate × duration: the real estimator (perStreamEstimates() in
+				// TrackDecision.h) allocates each track a PROPORTIONAL SHARE of the whole
+				// file's actual size (bitrate / total-file-bitrate × fileSize), using the
+				// full stream list — which isn't available here (only removed tracks are
+				// stored). A bitrate × duration recompute answers a different question
+				// and can land far from the real estimate, which is exactly the "1.9 GB
+				// recompute vs 4.8 GB actual estimate" kind of mismatch this replaces.
 				const QJsonArray estArr = QJsonDocument::fromJson(
 				    rec->streamEstimatesJson.toUtf8()).array();
 
@@ -919,33 +920,16 @@ void McJobPanel::setupUi()
 					bool   declared   = false;
 				};
 				QMap<QString, TrackGroup> groups; // key: "codecType|codecName|D/F"
-				qint64 freshEstimate = 0;
+				qint64 groupedTotal = 0;
 
 				for (const QJsonValue& v : estArr) {
 					const QJsonObject o = v.toObject();
-					const QString codecType    = o[QStringLiteral("codecType")].toString();
-					const QString codecName    = o[QStringLiteral("codecName")].toString();
-					const QString codecProfile = o[QStringLiteral("codecProfile")].toString();
-					const int     channels     = o[QStringLiteral("channels")].toInt();
-					const int     sampleRate   = o[QStringLiteral("sampleRate")].toInt();
-					const qint64  declared     = o[QStringLiteral("declaredBitrate")].toVariant().toLongLong();
+					const QString codecType  = o[QStringLiteral("codecType")].toString();
+					const QString codecName  = o[QStringLiteral("codecName")].toString();
+					const qint64  declared   = o[QStringLiteral("declaredBitrate")].toVariant().toLongLong();
+					const qint64  trackBytes = o[QStringLiteral("estimatedBytes")].toVariant().toLongLong();
 
-					qint64 trackBytes = 0;
-					if (declared > 0 && durationSec > 0) {
-						trackBytes = static_cast<qint64>(static_cast<double>(declared) * durationSec / 8.0);
-					} else if (durationSec > 0) {
-						Mc::StreamRecord tmp;
-						tmp.codecType    = codecType;
-						tmp.codecName    = codecName;
-						tmp.codecProfile = codecProfile;
-						tmp.channels     = channels;
-						tmp.sampleRate   = sampleRate;
-						trackBytes = static_cast<qint64>(Mc::effectiveBitrate(tmp) * durationSec / 8.0);
-					} else {
-						// No duration: fall back to whatever was stored
-						trackBytes = o[QStringLiteral("estimatedBytes")].toVariant().toLongLong();
-					}
-					freshEstimate += trackBytes;
+					groupedTotal += trackBytes;
 
 					const QString label = codecName.isEmpty() ? codecType : codecName;
 					const QString key   = codecType + QChar('|') + label
@@ -956,29 +940,35 @@ void McJobPanel::setupUi()
 					g.declared = declared > 0;
 				}
 
-				const qint64 displayEst = !estArr.isEmpty() ? freshEstimate
-				                                             : rec->estimatedSavedBytes;
-				const bool showSavings  = rec->savedBytes > 0 || displayEst > 0;
+				// The estimate compared against "Actual" must be the one frozen at job
+				// creation — the same value the card showed before the job ran. Using a
+				// recompute here would be misleading: updateCalibrationFromJob() already
+				// folds this job's own actual-vs-estimated ratio into the fallback bitrate
+				// table as soon as it commits, so a "fresh" recompute would be answering a
+				// different question ("what would today's calibration predict?") and can
+				// legitimately land far from what was actually predicted at the time.
+				const qint64 origEstimate = rec->estimatedSavedBytes;
+				const bool showSavings  = rec->savedBytes > 0 || origEstimate > 0;
 				QPlainTextEdit* detailEdit = nullptr;
 				if (showSavings) {
 					auto* savingsLabel = new QLabel(dlg);
 					savingsLabel->setTextFormat(Qt::RichText);
 
-					if (rec->savedBytes > 0 && displayEst > 0) {
-						const qint64  diff  = rec->savedBytes - displayEst;
+					if (rec->savedBytes > 0 && origEstimate > 0) {
+						const qint64  diff  = rec->savedBytes - origEstimate;
 						const QString sign  = diff >= 0 ? QStringLiteral("+") : QStringLiteral("-");
 						const QString color = qAbs(diff) < 1048576 ? QStringLiteral("green")
 						                   : diff > 0              ? QStringLiteral("darkorange")
 						                   :                         QStringLiteral("crimson");
 						savingsLabel->setText(
 							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>  |  Delta: <b><span style='color:%3'>%4%5</span></b>")
-							.arg(fmtWithPct(displayEst, QStringLiteral("~")),
+							.arg(fmtWithPct(origEstimate, QStringLiteral("~")),
 							     fmtWithPct(rec->savedBytes, QString()),
 							     color, sign, fmtMB(qAbs(diff))));
 					} else {
 						savingsLabel->setText(
 							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>")
-							.arg(displayEst > 0 ? fmtWithPct(displayEst, QStringLiteral("~")) : tr("—"),
+							.arg(origEstimate > 0 ? fmtWithPct(origEstimate, QStringLiteral("~")) : tr("—"),
 							     rec->savedBytes > 0 ? fmtWithPct(rec->savedBytes, QString()) : tr("—")));
 					}
 					vlay->addWidget(savingsLabel);
@@ -987,7 +977,7 @@ void McJobPanel::setupUi()
 					if (!groups.isEmpty()) {
 						QStringList lines;
 						lines.reserve(groups.size() + 2);
-						lines << tr("Per-track estimates (current fallbacks):");
+						lines << tr("Per-track breakdown (as estimated when queued):");
 						for (auto it = groups.cbegin(); it != groups.cend(); ++it) {
 							const auto& g = it.value();
 							const QString label  = it.key().section(QChar('|'), 1, 1);
@@ -999,7 +989,7 @@ void McJobPanel::setupUi()
 							         .arg(g.totalBytes / 1048576.0, 0, 'f', 1);
 						}
 						lines << QStringLiteral("  Total:  ~%1 MB")
-						         .arg(freshEstimate / 1048576.0, 0, 'f', 1);
+						         .arg(groupedTotal / 1048576.0, 0, 'f', 1);
 
 						detailEdit = new QPlainTextEdit(lines.join(QLatin1Char('\n')));
 						detailEdit->setReadOnly(true);
@@ -1029,7 +1019,7 @@ void McJobPanel::setupUi()
 					const qint64 originalBytes = fileSizeBytes + qMax<qint64>(0, rec->savedBytes);
 					if (originalBytes > 0) {
 						const double mbPerSec = originalBytes / 1048576.0 / jobElapsedSec;
-						logText += tr("\n\nAverage speed: %1 MB/s").arg(mbPerSec, 0, 'f', 1);
+						logText += tr("\nAverage speed: %1 MB/s").arg(mbPerSec, 0, 'f', 1);
 					}
 				}
 				logEdit->setPlainText(logText);

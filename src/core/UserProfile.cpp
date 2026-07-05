@@ -229,24 +229,24 @@ QString UserProfile::audioFormatDisplayName(const QString& id)
 QJsonObject UserProfile::toJson() const
 {
 	QJsonObject o;
-	o["understood_languages"]           = QJsonArray::fromStringList(m_understoodLanguages);
-	o["always_keep_original_audio"]     = m_alwaysKeepOriginalAudio;
-	o["keep_commentary_if_understood"]    = m_keepCommentaryIfUnderstood;
-	o["skip_subtitle_only_jobs"]          = m_skipSubtitleOnlyJobs;
-	o["stereo_as_commentary_heuristic"]   = m_stereoAsCommentaryHeuristic;
-	o["keep_forced_subtitles_always"]   = m_keepForcedSubtitlesAlways;
-	o["sdh_subtitle_mode"]              = sdhModeToString(m_sdhSubtitleMode);
-	o["keep_original_language_subtitle"]= m_keepOriginalLanguageSub;
-	o["remove_mjpeg_cover_art"]         = m_removeMjpegCoverArt;
-	o["audio_format_order"]         = QJsonArray::fromStringList(m_audioFormatOrder);
-	o["disabled_audio_formats"]     = QJsonArray::fromStringList(m_disabledAudioFormats);
-	o["subtitle_format_order"]      = QJsonArray::fromStringList(m_subtitleFormatOrder);
-	o["disabled_subtitle_formats"]  = QJsonArray::fromStringList(m_disabledSubtitleFormats);
-	o["write_job_log"]                  = m_writeJobLog;
-	o["tmdb_api_key"]                   = m_tmdbApiKey;
-	o["opensubtitles_api_key"]          = m_openSubtitlesApiKey;
-	o["opensubtitles_username"]         = m_openSubtitlesUsername;
-	o["opensubtitles_password"]         = m_openSubtitlesPassword;
+	o["understood_languages"]            = QJsonArray::fromStringList(m_understoodLanguages);
+	o["always_keep_original_audio"]      = m_alwaysKeepOriginalAudio;
+	o["keep_commentary_if_understood"]   = m_keepCommentaryIfUnderstood;
+	o["skip_subtitle_only_jobs"]         = m_skipSubtitleOnlyJobs;
+	o["stereo_as_commentary_heuristic"]  = m_stereoAsCommentaryHeuristic;
+	o["keep_forced_subtitles_always"]    = m_keepForcedSubtitlesAlways;
+	o["sdh_subtitle_mode"]               = sdhModeToString(m_sdhSubtitleMode);
+	o["keep_original_language_subtitle"] = m_keepOriginalLanguageSub;
+	o["remove_mjpeg_cover_art"]          = m_removeMjpegCoverArt;
+	o["audio_format_order"]              = QJsonArray::fromStringList(m_audioFormatOrder);
+	o["disabled_audio_formats"]          = QJsonArray::fromStringList(m_disabledAudioFormats);
+	o["subtitle_format_order"]           = QJsonArray::fromStringList(m_subtitleFormatOrder);
+	o["disabled_subtitle_formats"]       = QJsonArray::fromStringList(m_disabledSubtitleFormats);
+	o["write_job_log"]                   = m_writeJobLog;
+	o["tmdb_api_key"]                    = m_tmdbApiKey;
+	o["opensubtitles_api_key"]           = m_openSubtitlesApiKey;
+	o["opensubtitles_username"]          = m_openSubtitlesUsername;
+	o["opensubtitles_password"]          = m_openSubtitlesPassword;
 	return o;
 }
 
@@ -260,11 +260,11 @@ bool UserProfile::fromJson(const QJsonObject& json)
 			langs << v.toString();
 		m_understoodLanguages = langs;
 	}
-	m_alwaysKeepOriginalAudio    = json["always_keep_original_audio"].toBool(true);
+	m_alwaysKeepOriginalAudio         = json["always_keep_original_audio"].toBool(true);
 	m_keepCommentaryIfUnderstood      = json["keep_commentary_if_understood"].toBool(true);
 	m_skipSubtitleOnlyJobs            = json["skip_subtitle_only_jobs"].toBool(false);
 	m_stereoAsCommentaryHeuristic     = json["stereo_as_commentary_heuristic"].toBool(true);
-	m_keepForcedSubtitlesAlways  = json["keep_forced_subtitles_always"].toBool(true);
+	m_keepForcedSubtitlesAlways       = json["keep_forced_subtitles_always"].toBool(true);
 	if (json.contains("sdh_subtitle_mode")) {
 		m_sdhSubtitleMode = sdhModeFromString(json["sdh_subtitle_mode"].toString());
 	} else if (json.contains("keep_sdh_subtitles")) {
