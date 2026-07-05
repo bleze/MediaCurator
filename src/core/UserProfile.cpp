@@ -1,4 +1,4 @@
-﻿#include "core/UserProfile.h"
+#include "core/UserProfile.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 
@@ -215,8 +215,8 @@ QString UserProfile::audioFormatDisplayName(const QString& id)
 		{"dtshdma",   "DTS-HD MA"},
 		{"dtshd_hra", "DTS-HD HRA"},
 		{"flac",      "FLAC / PCM"},
-		{"eac3",      "DD+"},
 		{"dts",       "DTS"},
+		{"eac3",      "DD+"},
 		{"ac3",       "DD (AC3)"},
 		{"aac",       "AAC"},
 		{"mp3",       "MP3"},
