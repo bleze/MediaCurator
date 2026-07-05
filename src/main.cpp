@@ -269,6 +269,12 @@ int main(int argc, char* argv[])
 
 	Mc::McMainWindow window;
 	window.show();
+	// Close the splash right away, before anything else can pump the event queue.
+	// McMainWindow::showEvent() schedules the first-run onboarding dialog via a
+	// 0 ms QTimer; if app.processEvents() below ran first, it would dispatch that
+	// timer and enter the dialog's modal event loop before this line ever ran,
+	// leaving the splash on screen for as long as onboarding stayed open.
+	splash.finish(&window);
 	// Set the icon after show() so the native HWND exists when WM_SETICON is sent.
 	// Also set via windowHandle() which goes directly to QWindowsWindow and
 	// correctly updates both ICON_SMALL (title bar) and ICON_BIG (taskbar / Alt+Tab).
@@ -276,7 +282,6 @@ int main(int argc, char* argv[])
 	window.setWindowIcon(appIcon);
 	if (QWindow* wh = window.windowHandle())
 		wh->setIcon(appIcon);
-	splash.finish(&window);   // cross-fade out once the window is ready
 
 	return app.exec();
 }
