@@ -105,7 +105,9 @@ jobs:
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
       with:
-        version: '6.8.3'
+        # 6.8.3 still unconditionally links QtGui against AGL.framework, which
+        # macOS 26 (Tahoe)'s SDK no longer ships — fixed in 6.8.4.
+        version: '6.8.4'
         host: 'mac'
         target: 'desktop'
         arch: 'clang_64'
