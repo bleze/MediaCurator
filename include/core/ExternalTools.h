@@ -29,9 +29,11 @@ public:
 	QString ffprobeVersion()  const;
 	QString mkvmergeVersion() const;
 
-	// Configures a not-yet-started QProcess (ffprobe/mkvmerge) to run at a lower OS
-	// scheduling/IO priority, so bulk scans and remuxes don't compete with foreground
-	// work. Windows: background processing mode (CPU + disk + memory). Linux/macOS: nice.
+	// Configures a not-yet-started QProcess (ffprobe/mkvmerge) to run at a lower CPU
+	// scheduling priority, so bulk scans and remuxes compete less for CPU with
+	// foreground work. Windows: IDLE_PRIORITY_CLASS. Linux/macOS: nice. Note this is
+	// CPU-only — Windows has no documented API for a parent to lower a child's disk/
+	// memory I/O priority, so heavy disk/network I/O can still saturate at this priority.
 	static void applyBackgroundPriority(QProcess* process);
 
 private:

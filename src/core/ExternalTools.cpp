@@ -76,14 +76,17 @@ QString ExternalTools::mkvmergeVersion() const { return {}; }
 void ExternalTools::applyBackgroundPriority(QProcess* process)
 {
 #ifdef Q_OS_WIN
-	// Throttles CPU, disk I/O, and memory priority together — the mode Windows
-	// designed for exactly this (background bulk work that shouldn't feel like it's
-	// stealing the machine). Set at creation time via CreateProcess's dwCreationFlags,
-	// since SetPriorityClass(PROCESS_MODE_BACKGROUND_BEGIN) can only target the calling
-	// process itself once it's already running.
+	// PROCESS_MODE_BACKGROUND_BEGIN (which also throttles disk I/O and memory priority,
+	// not just CPU) can only be applied by a process to ITSELF — per the SetPriorityClass
+	// docs: "This value can be specified only if hProcess is a handle to the current
+	// process." It cannot be used to throttle a child process we just spawned, and isn't
+	// a valid CreateProcess creation flag either. IDLE_PRIORITY_CLASS is the strongest
+	// throttle a parent can legitimately apply to a child via a documented Win32 API —
+	// it only affects CPU scheduling, not disk/memory priority, so a big remux can still
+	// saturate disk/network I/O even at this priority.
 	process->setCreateProcessArgumentsModifier(
 		[](QProcess::CreateProcessArguments* args) {
-			args->flags |= PROCESS_MODE_BACKGROUND_BEGIN;
+			args->flags |= IDLE_PRIORITY_CLASS;
 		});
 #elif defined(Q_OS_UNIX)
 	// No creation-time equivalent on POSIX — apply nice once the child actually exists.

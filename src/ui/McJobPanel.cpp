@@ -1017,9 +1017,22 @@ void McJobPanel::setupUi()
 				logEdit->setReadOnly(true);
 				logEdit->setFont(QFont(QStringLiteral("Courier New"), 9));
 				logEdit->setWordWrapMode(QTextOption::NoWrap);
-				logEdit->setPlainText(rec->outputLog.isEmpty()
+
+				QString logText = rec->outputLog.isEmpty()
 					? tr("(no output captured)")
-					: rec->outputLog);
+					: rec->outputLog;
+				// Average throughput for the job — bytes read (original size, before any
+				// tracks were dropped) over wall-clock time. fileSizeBytes here is the
+				// file's CURRENT (post-remux) size, so add back what was reclaimed.
+				if (rec->status == QLatin1String("done") && rec->finishedAt > rec->startedAt) {
+					const qint64 jobElapsedSec = rec->finishedAt - rec->startedAt;
+					const qint64 originalBytes = fileSizeBytes + qMax<qint64>(0, rec->savedBytes);
+					if (originalBytes > 0) {
+						const double mbPerSec = originalBytes / 1048576.0 / jobElapsedSec;
+						logText += tr("\n\nAverage speed: %1 MB/s").arg(mbPerSec, 0, 'f', 1);
+					}
+				}
+				logEdit->setPlainText(logText);
 				splitter->addWidget(logEdit);
 
 				if (detailEdit) {
@@ -1610,7 +1623,11 @@ void McJobPanel::updateFooter()
 			const int    progress = idx.data(McJobListModel::ProgressRole).toInt();
 			const qint64 fileSize = idx.data(McJobListModel::FileSizeRole).toLongLong();
 
-			if (progress >= 5 && elapsedMs >= 500) {
+			// Low thresholds so ETA/speed appear quickly even on huge files — 5% of a
+			// 60+ GB remux could be tens of seconds away. The elapsed-time floor avoids
+			// extrapolating from mkvmerge's near-instant first tick (header/index
+			// writing) before real data throughput has kicked in.
+			if (progress >= 1 && elapsedMs >= 1500) {
 				const double totalEstMs = static_cast<double>(elapsedMs) * 100.0 / progress;
 				double etaSec = (totalEstMs - elapsedMs) / 1000.0;
 

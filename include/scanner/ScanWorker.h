@@ -31,6 +31,10 @@ public:
 	explicit ScanWorker(const QString& ffprobePath, QObject* parent = nullptr);
 
 	void setRootPath(const QString& path) { m_rootPath = path; }
+	// Quick scan skips any folder that already contains at least one known file —
+	// it only walks brand-new folders (newly added movies), so it finishes much faster
+	// than a full scan but won't notice files added into already-scanned folders.
+	void setQuickScan(bool quick) { m_quickScan = quick; }
 	void cancel() { m_cancelled.storeRelaxed(1); }
 
 	// File extensions considered as video files
@@ -54,6 +58,7 @@ signals:
 private:
 	QString        m_rootPath;
 	QString        m_ffprobePath;
+	bool           m_quickScan{false};
 	QAtomicInt     m_cancelled{0};
 };
 

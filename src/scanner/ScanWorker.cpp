@@ -12,6 +12,8 @@
 #include <QRegularExpression>
 #include <QSet>
 
+#include <functional>
+
 namespace Mc {
 
 const QStringList& ScanWorker::videoExtensions()
@@ -156,10 +158,8 @@ void ScanWorker::run()
 	QElapsedTimer progressTimer;
 	progressTimer.start();
 
-	// Discover and scan in a single pass — no pre-collection phase.
 	// Progress is throttled to at most one signal per 100 ms so the main thread
 	// isn't flooded with cross-thread events on large libraries.
-	// FollowSymlinks is intentionally omitted to avoid infinite loops on cyclic junctions.
 
 	// Files living directly inside these folder names are skipped — they are bonus
 	// content sub-folders, not independent library items.
@@ -168,18 +168,11 @@ void ScanWorker::run()
 	    "interviews", "scenes", "trailers", "shorts", "specials", "sample"
 	};
 
-	QDirIterator it(m_rootPath, QDirIterator::Subdirectories);
-	while (it.hasNext()) {
-		const QString path = it.next();
-		if (m_cancelled.loadRelaxed()) break;
-
+	// Scans one candidate video file: skips it unchanged if the DB copy still matches
+	// mtime/size, otherwise (re-)runs ffprobe and (up)inserts it. Shared by the full
+	// walk and the quick-scan walk below.
+	auto processCandidate = [&](const QString& path) {
 		const QFileInfo fi(path);
-		if (!fi.isFile()) continue;
-		if (!exts.contains(fi.suffix().toLower())) continue;
-
-		// Skip files that live directly inside a known extras sub-folder.
-		if (kExtrasFolders.contains(fi.dir().dirName().toLower())) continue;
-
 		foundPaths.insert(path);
 		++index;
 		if (progressTimer.elapsed() >= 100) {
@@ -196,7 +189,7 @@ void ScanWorker::run()
 				// Enqueue even for unchanged files so PosterManager can backfill
 				// any missing display_title or rating without re-running ffprobe.
 				PosterManager::instance().enqueue(existing->id);
-				continue;
+				return;
 			}
 		}
 
@@ -206,14 +199,14 @@ void ScanWorker::run()
 		if (!result.success) {
 			qWarning() << "ScanWorker: scan failed for" << path << "—" << result.errorMessage;
 			++failed;
-			continue;
+			return;
 		}
 
 		const auto fileId = db.upsertFile(result.file);
 		if (!fileId) {
 			qWarning() << "ScanWorker: DB upsert failed for" << path;
 			++failed;
-			continue;
+			return;
 		}
 
 		// Combine container streams with any sidecar subtitle files found alongside
@@ -249,12 +242,58 @@ void ScanWorker::run()
 
 		// Kick off poster lookup in parallel with the next FFprobe call.
 		PosterManager::instance().enqueue(*fileId);
+	};
+
+	if (m_quickScan) {
+		// Skip any folder that already contains at least one known file entirely —
+		// don't even list its contents. Only folders with no known files (i.e. newly
+		// added movies) get walked, which is what makes this fast: no per-file mtime/
+		// size round-trips across the existing library, just directory listings down
+		// to the first already-known folder in each branch.
+		QSet<QString> knownDirs;
+		for (const auto& f : db.filesUnderPath(m_rootPath))
+			knownDirs.insert(QFileInfo(f.path).absolutePath());
+
+		std::function<void(const QString&)> walkNewFolders = [&](const QString& dir) {
+			if (m_cancelled.loadRelaxed()) return;
+			const QFileInfoList entries = QDir(dir).entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+			for (const QFileInfo& fi : entries) {
+				if (m_cancelled.loadRelaxed()) return;
+				if (fi.isDir()) {
+					if (knownDirs.contains(fi.absoluteFilePath())) continue;
+					walkNewFolders(fi.absoluteFilePath());
+				} else if (exts.contains(fi.suffix().toLower())
+				           && !kExtrasFolders.contains(fi.dir().dirName().toLower())) {
+					processCandidate(fi.absoluteFilePath());
+				}
+			}
+		};
+		walkNewFolders(m_rootPath);
+	} else {
+		// Discover and scan in a single pass — no pre-collection phase.
+		// FollowSymlinks is intentionally omitted to avoid infinite loops on cyclic junctions.
+		QDirIterator it(m_rootPath, QDirIterator::Subdirectories);
+		while (it.hasNext()) {
+			const QString path = it.next();
+			if (m_cancelled.loadRelaxed()) break;
+
+			const QFileInfo fi(path);
+			if (!fi.isFile()) continue;
+			if (!exts.contains(fi.suffix().toLower())) continue;
+
+			// Skip files that live directly inside a known extras sub-folder.
+			if (kExtrasFolders.contains(fi.dir().dirName().toLower())) continue;
+
+			processCandidate(path);
+		}
 	}
 
 	// Prune DB entries for files that no longer exist under this root.
-	// Only run on a complete (non-cancelled) scan.
+	// Only run on a complete, non-quick scan: quick scans deliberately skip
+	// already-known folders, so anything not in foundPaths there would be wrongly
+	// treated as deleted.
 	int removed = 0;
-	if (!m_cancelled.loadRelaxed()) {
+	if (!m_cancelled.loadRelaxed() && !m_quickScan) {
 		const auto dbFiles = db.filesUnderPath(m_rootPath);
 		for (const auto& dbFile : dbFiles) {
 			if (!foundPaths.contains(dbFile.path)) {

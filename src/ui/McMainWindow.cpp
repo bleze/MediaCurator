@@ -1131,6 +1131,14 @@ void McMainWindow::setupActions()
 	m_actScanLibrary->setIcon(svgIcon(":/icons/refresh.svg"));
 	connect(m_actScanLibrary, &QAction::triggered, this, &McMainWindow::onScanLibrary);
 
+	m_actQuickScan = new QAction(tr("Quick Scan"), this);
+	m_actQuickScan->setShortcut(QKeySequence("Ctrl+Shift+Q"));
+	m_actQuickScan->setToolTip(tr("Only look for newly added movie folders — skips anything already "
+	                              "in the library, so it finishes much faster than Scan Library "
+	                              "(Ctrl+Shift+Q)"));
+	m_actQuickScan->setIcon(svgIcon(":/icons/refresh.svg"));
+	connect(m_actQuickScan, &QAction::triggered, this, &McMainWindow::onQuickScan);
+
 	m_actRemoveFolder = new QAction(tr("Manage Library Folders…"), this);
 	m_actRemoveFolder->setToolTip(tr("View and remove folders from the library database"));
 	m_actRemoveFolder->setIcon(svgIcon(":/icons/delete.svg"));
@@ -1201,6 +1209,7 @@ void McMainWindow::setupToolBar()
 
 	tb->addAction(m_actScanFolder);
 	tb->addAction(m_actScanLibrary);
+	tb->addAction(m_actQuickScan);
 	tb->addAction(m_actAnalyze);
 	tb->addAction(m_actSimulate);
 	tb->addAction(m_actToggleQueue);
@@ -1220,6 +1229,7 @@ void McMainWindow::setupMenuBar()
 	QMenu* fileMenu = menuBar()->addMenu(tr("&File"));
 	fileMenu->addAction(m_actScanFolder);
 	fileMenu->addAction(m_actScanLibrary);
+	fileMenu->addAction(m_actQuickScan);
 	fileMenu->addAction(m_actRemoveFolder);
 	fileMenu->addSeparator();
 	auto* quitAction = new QAction(svgIcon(":/icons/logout.svg"), tr("&Quit"), this);
@@ -1502,8 +1512,30 @@ void McMainWindow::onScanLibrary()
 	}
 
 	m_pendingRoots = roots;
+	m_quickScanPending = false;
 	m_newFilesFound.clear();
 	createScanWorker(m_pendingRoots.takeFirst());
+}
+
+void McMainWindow::onQuickScan()
+{
+	if (m_scanThread && m_scanThread->isRunning()) {
+		QMessageBox::information(this, tr("Scan in progress"),
+			tr("A scan is already running. Please wait for it to finish."));
+		return;
+	}
+
+	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
+
+	if (roots.isEmpty()) {
+		onScanFolder();
+		return;
+	}
+
+	m_pendingRoots = roots;
+	m_quickScanPending = true;
+	m_newFilesFound.clear();
+	createScanWorker(m_pendingRoots.takeFirst(), /*quickScan=*/true);
 }
 
 void McMainWindow::onRemoveFolder()
@@ -1527,7 +1559,7 @@ void McMainWindow::onRemoveFolder()
 		onRefreshView();
 }
 
-void McMainWindow::createScanWorker(const QString& folderPath)
+void McMainWindow::createScanWorker(const QString& folderPath, bool quickScan)
 {
 	const QString exeDir = QCoreApplication::applicationDirPath();
 #ifdef Q_OS_WIN
@@ -1541,6 +1573,7 @@ void McMainWindow::createScanWorker(const QString& folderPath)
 	m_scanThread = new QThread(this);
 	m_scanWorker = new ScanWorker(ffprobePath);
 	m_scanWorker->setRootPath(folderPath);
+	m_scanWorker->setQuickScan(quickScan);
 	m_scanWorker->moveToThread(m_scanThread);
 
 	connect(m_scanThread, &QThread::started,   m_scanWorker, &ScanWorker::run);
@@ -1576,7 +1609,7 @@ void McMainWindow::onScanFinished(int /*scanned*/, int /*added*/, int /*updated*
 
 	if (!m_pendingRoots.isEmpty()) {
 		m_statusLabel->setText(tr("Folder scan done — %1 more to go…").arg(m_pendingRoots.size()));
-		createScanWorker(m_pendingRoots.takeFirst());
+		createScanWorker(m_pendingRoots.takeFirst(), m_quickScanPending);
 		return;
 	}
 
@@ -2013,6 +2046,7 @@ void McMainWindow::setScanningState(bool scanning)
 	m_actRemoveFolder->setEnabled(!scanning);
 	if (scanning) {
 		m_actScanLibrary->setEnabled(false);
+		m_actQuickScan->setEnabled(false);
 		m_actAnalyze->setEnabled(false);
 		m_actSimulate->setEnabled(false);
 	} else {
@@ -2043,6 +2077,7 @@ void McMainWindow::updateActionStates()
 	const bool hasRoots = !AppSettings::instance().value("scan/roots").toStringList().isEmpty();
 	const bool hasFiles = m_listModel->totalCount() > 0;
 	m_actScanLibrary->setEnabled(hasRoots);
+	m_actQuickScan->setEnabled(hasRoots);
 	m_actAnalyze->setEnabled(hasFiles);
 	m_actSimulate->setEnabled(hasFiles);
 }

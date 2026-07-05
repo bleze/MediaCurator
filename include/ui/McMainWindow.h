@@ -42,6 +42,7 @@ protected:
 private slots:
 	void onScanFolder();
 	void onScanLibrary();
+	void onQuickScan();
 	void onRemoveFolder();
 	void onScanProgress(int current, int total, const QString& currentFile);
 	void onScanFinished(int scanned, int added, int updated, int failed, int skipped, int removed, QStringList newFiles);
@@ -64,7 +65,7 @@ private:
 	void setupMenuBar();
 	void setupStatusBar();
 	void startLibraryLoader();
-	void createScanWorker(const QString& folderPath);
+	void createScanWorker(const QString& folderPath, bool quickScan = false);
 	void setScanningState(bool scanning);
 	void updateSavedLabel();
 	void updateActionStates();         // enable/disable scan-lib and analyze based on roots + file count
@@ -79,6 +80,7 @@ private:
 	// Actions (created once, shared between toolbar and menu)
 	QAction*     m_actScanFolder    = nullptr;
 	QAction*     m_actScanLibrary   = nullptr;
+	QAction*     m_actQuickScan     = nullptr;
 	QAction*     m_actRemoveFolder  = nullptr;
 	QAction*     m_actAnalyze       = nullptr;
 	QAction*     m_actSimulate      = nullptr;
@@ -100,6 +102,7 @@ private:
 	QPushButton*     m_btnCancelAnalyze  = nullptr;
 	QSplitter*       m_splitter          = nullptr;
 	QStringList      m_pendingRoots;
+	bool             m_quickScanPending = false;   // whether m_pendingRoots is being drained as a quick scan
 	QStringList      m_newFilesFound;   // accumulated across chained roots within one scan session
 	QTimer*          m_analyzeRefreshTimer = nullptr;
 	QThread*         m_loadThread      = nullptr;
