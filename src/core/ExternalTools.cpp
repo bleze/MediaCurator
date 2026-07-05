@@ -2,7 +2,14 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QProcess>
 #include <QStandardPaths>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#elif defined(Q_OS_UNIX)
+#include <sys/resource.h>
+#endif
 
 namespace Mc {
 
@@ -65,5 +72,27 @@ QString ExternalTools::vlcPath() const
 bool    ExternalTools::validateAll()      { return true; }
 QString ExternalTools::ffprobeVersion()  const { return {}; }
 QString ExternalTools::mkvmergeVersion() const { return {}; }
+
+void ExternalTools::applyBackgroundPriority(QProcess* process)
+{
+#ifdef Q_OS_WIN
+	// Throttles CPU, disk I/O, and memory priority together — the mode Windows
+	// designed for exactly this (background bulk work that shouldn't feel like it's
+	// stealing the machine). Set at creation time via CreateProcess's dwCreationFlags,
+	// since SetPriorityClass(PROCESS_MODE_BACKGROUND_BEGIN) can only target the calling
+	// process itself once it's already running.
+	process->setCreateProcessArgumentsModifier(
+		[](QProcess::CreateProcessArguments* args) {
+			args->flags |= PROCESS_MODE_BACKGROUND_BEGIN;
+		});
+#elif defined(Q_OS_UNIX)
+	// No creation-time equivalent on POSIX — apply nice once the child actually exists.
+	QObject::connect(process, &QProcess::started, process, [process] {
+		setpriority(PRIO_PROCESS, static_cast<id_t>(process->processId()), 15);
+	});
+#else
+	Q_UNUSED(process);
+#endif
+}
 
 } // namespace Mc

@@ -2,6 +2,8 @@
 #include <QObject>
 #include <QString>
 
+class QProcess;
+
 namespace Mc {
 /**
  * ExternalTools — locates and validates ffprobe and mkvmerge.
@@ -26,6 +28,11 @@ public:
 	bool    validateAll();
 	QString ffprobeVersion()  const;
 	QString mkvmergeVersion() const;
+
+	// Configures a not-yet-started QProcess (ffprobe/mkvmerge) to run at a lower OS
+	// scheduling/IO priority, so bulk scans and remuxes don't compete with foreground
+	// work. Windows: background processing mode (CPU + disk + memory). Linux/macOS: nice.
+	static void applyBackgroundPriority(QProcess* process);
 
 private:
 	ExternalTools() = default;

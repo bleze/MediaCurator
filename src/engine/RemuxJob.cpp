@@ -1,4 +1,5 @@
 ﻿#include "engine/RemuxJob.h"
+#include "core/ExternalTools.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -89,6 +90,7 @@ void RemuxJob::run()
 
 	m_process = new QProcess(this);
 	m_process->setProcessChannelMode(QProcess::MergedChannels);
+	ExternalTools::applyBackgroundPriority(m_process);
 
 	connect(m_process, &QProcess::readyRead,
 	        this, &RemuxJob::onReadyRead);

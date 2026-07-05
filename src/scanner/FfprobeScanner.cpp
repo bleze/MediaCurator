@@ -1,4 +1,5 @@
 ﻿#include "scanner/FfprobeScanner.h"
+#include "core/ExternalTools.h"
 
 #include <QProcess>
 #include <QJsonDocument>
@@ -86,6 +87,7 @@ QByteArray FfprobeScanner::invokeFfprobe(const QString& filePath) const
 		filePath
 	};
 
+	ExternalTools::applyBackgroundPriority(&proc);
 	proc.start(m_ffprobePath, args);
 	if (!proc.waitForFinished(30000)) {
 		qWarning() << "FfprobeScanner: timeout scanning" << filePath;
