@@ -23,6 +23,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
+    # Must run before "Configure CMake" — the install() rules for tools/windows/
+    # in both cmake/Packaging.cmake and src/CMakeLists.txt are gated on the
+    # files already existing at configure time.
+    - name: Download bundled tools (ffprobe + mkvtoolnix)
+      run: powershell -ExecutionPolicy Bypass -File scripts/setup_tools.ps1
+
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
       with:
@@ -67,9 +73,6 @@ jobs:
     - name: Build
       run: cmake --build build --parallel
 
-    - name: Download bundled tools (ffprobe + mkvtoolnix)
-      run: powershell -ExecutionPolicy Bypass -File scripts/setup_tools.ps1
-
     - name: Cache Chocolatey NSIS package
       uses: actions/cache@v4
       with:
@@ -101,6 +104,12 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v6
+
+    # Must run before "Configure CMake" — src/CMakeLists.txt's install() rule
+    # for tools/ (DESTINATION MediaCurator.app/Contents/MacOS/tools) is gated
+    # on the files already existing at configure time.
+    - name: Download bundled tools (ffprobe + mkvtoolnix)
+      run: bash scripts/setup_tools.sh
 
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
@@ -135,9 +144,6 @@ jobs:
 
     - name: Build
       run: cmake --build build --parallel
-
-    - name: Download bundled tools (ffprobe + mkvtoolnix)
-      run: bash scripts/setup_tools.sh
 
     - name: Clear quarantine attributes
       run: xattr -rc build/ || true
@@ -189,6 +195,13 @@ jobs:
           libxkbcommon-dev \
           libxkbcommon-x11-dev
 
+    # Must run before "Configure CMake" — src/CMakeLists.txt's install() rule
+    # for tools/ (DESTINATION lib/MediaCurator/tools) is gated on the files
+    # already existing at configure time. (Needs apt-get update from the step
+    # above for the mkvtoolnix install.)
+    - name: Download bundled tools (ffprobe + mkvtoolnix)
+      run: bash scripts/setup_tools.sh
+
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
       with:
@@ -214,9 +227,6 @@ jobs:
 
     - name: Build
       run: cmake --build build --parallel
-
-    - name: Download bundled tools (ffprobe + mkvtoolnix)
-      run: bash scripts/setup_tools.sh
 
     - name: Package (DEB)
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
