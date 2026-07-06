@@ -22,6 +22,7 @@
 #include <QStorageInfo>
 #include <QThreadPool>
 
+#include <algorithm>
 #include <filesystem>
 
 #ifdef Q_OS_WIN
@@ -51,6 +52,45 @@ static void preserveTimestamps(const QString& target, const QDateTime& origCreat
 #endif
 
 namespace Mc {
+
+// A queued job's DB-frozen estimated_saved_bytes was computed at proposal time —
+// if the estimate formula has changed since (see calibration/estimate tuning), that
+// value goes stale while the job panel keeps showing a freshly recomputed number
+// (McJobListModel::sortEntriesByDisplaySavings). Recomputing the same live estimate
+// here keeps the queue's actual pick order matching what "Largest savings first"
+// shows on screen, instead of drifting apart whenever the formula moves on.
+static void sortQueuedJobsByLiveSavings(QList<JobRecord>& jobs)
+{
+	if (jobs.size() < 2) return;
+	auto& db = DatabaseManager::instance();
+
+	QList<qint64> saved(jobs.size());
+	for (int i = 0; i < jobs.size(); ++i) {
+		const JobRecord& job = jobs[i];
+		const auto fileOpt = db.fileById(job.fileId);
+		if (!fileOpt) { saved[i] = 0; continue; }
+
+		const QList<StreamRecord> allStreams = db.streamsForFile(job.fileId);
+		const QList<StreamRecord> keptStreams =
+			ActionEngine::computeKeptStreams(allStreams, job.commandArgsJson);
+		QSet<int> keptIdx;
+		for (const auto& s : keptStreams) keptIdx.insert(s.streamIndex);
+		QSet<int> removed;
+		for (const auto& s : allStreams)
+			if (!keptIdx.contains(s.streamIndex)) removed.insert(s.streamIndex);
+
+		saved[i] = estimateSavingBytes(allStreams, removed, fileOpt->sizeBytes, fileOpt->durationSec);
+	}
+
+	QList<int> perm(jobs.size());
+	for (int i = 0; i < jobs.size(); ++i) perm[i] = i;
+	std::stable_sort(perm.begin(), perm.end(), [&](int a, int b) { return saved[a] > saved[b]; });
+
+	QList<JobRecord> sorted;
+	sorted.reserve(jobs.size());
+	for (int i : perm) sorted.append(std::move(jobs[i]));
+	jobs = std::move(sorted);
+}
 
 JobQueue::JobQueue(QObject* parent)
 	: QObject(parent)
@@ -108,13 +148,16 @@ void JobQueue::runNext()
 
 	// Always re-query for a fresh sorted order — new jobs may have been added
 	// while the previous job was running and must be sorted correctly.
-	const auto jobs = DatabaseManager::instance().queuedJobs(m_sortMode);
+	auto jobs = DatabaseManager::instance().queuedJobs(m_sortMode);
 
 	if (jobs.isEmpty()) {
 		m_running = false;
 		emit allFinished();
 		return;
 	}
+
+	if (m_sortMode == JobSortMode::LargestSavingsFirst)
+		sortQueuedJobsByLiveSavings(jobs);
 
 	startJob(jobs.first());
 }

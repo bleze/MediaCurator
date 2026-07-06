@@ -29,7 +29,7 @@ struct TrackDecision {
 // Values represent AVERAGE bitrate over the full file duration, not peak/burst.
 // Update these from Tools > Estimation Calibration Data after accumulating jobs.
 namespace FallbackBps {
-	constexpr double kAudio           = 192'000.0;   // lossy audio (AC3, AAC, MP3, DTS core, E-AC3)
+	constexpr double kAudio           =   192'000.0; // lossy audio (AC3, AAC, MP3, DTS core, E-AC3)
 	constexpr double kDtsHd           = 3'500'000.0; // DTS-HD MA / DTS-HD HRA — 5.1 (6ch) reference
 	constexpr double kDtsHdPerChannel =   551'000.0; // kDtsHd / 6 — scale by actual channel count
 	constexpr double kTrueHd          = 3'500'000.0; // TrueHD / Atmos — 5.1 (6ch) reference

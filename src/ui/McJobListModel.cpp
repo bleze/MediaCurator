@@ -974,60 +974,7 @@ QList<StreamRecord> McJobListModel::computeKeptStreams(
 	const QList<StreamRecord>& all,
 	const QString& commandArgsJson)
 {
-	if (commandArgsJson.isEmpty())
-		return all;
-
-	// mkvmerge args contain --audio-tracks N,M and --subtitle-tracks N,M
-	// where N,M are stream indices to *include*.  Video tracks are always kept.
-	// If neither flag is present for a type, all tracks of that type are kept.
-	const QJsonArray arr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
-	const QStringList args = [&]{
-		QStringList s;
-		for (const auto& v : arr) s << v.toString();
-		return s;
-	}();
-
-	// Parse include-sets per type
-	auto parseSet = [&](const QString& flag) -> std::optional<QSet<int>> {
-		for (int i = 0; i < args.size() - 1; ++i) {
-			if (args[i] == flag) {
-				QSet<int> set;
-				for (const QString& tok : args[i + 1].split(',', Qt::SkipEmptyParts))
-					set.insert(tok.trimmed().toInt());
-				return set;
-			}
-		}
-		return std::nullopt;
-	};
-
-	const auto audioInclude    = parseSet("--audio-tracks");
-	const auto subtitleInclude = parseSet("--subtitle-tracks");
-	const auto videoInclude    = parseSet("--video-tracks");
-	const bool noAudio     = args.contains(QStringLiteral("--no-audio"));
-	const bool noSubtitles = args.contains(QStringLiteral("--no-subtitles"));
-	const bool noVideo     = args.contains(QStringLiteral("--no-video"));
-
-	QList<StreamRecord> kept;
-	for (const StreamRecord& s : all) {
-		if (s.isExternal) { kept << s; continue; }  // sidecar — not in container, mkvmerge args don't apply
-		if (s.codecType == "video") {
-			if (noVideo) continue;
-			// When --video-tracks is absent, keep all video (backward-compatible default).
-			if (videoInclude && !videoInclude->contains(s.streamIndex)) continue;
-			kept << s;
-		} else if (s.codecType == "audio") {
-			if (noAudio) continue;
-			if (!audioInclude || audioInclude->contains(s.streamIndex))
-				kept << s;
-		} else if (s.codecType == "subtitle") {
-			if (noSubtitles) continue;
-			if (!subtitleInclude || subtitleInclude->contains(s.streamIndex))
-				kept << s;
-		} else {
-			kept << s; // data/attachment tracks always kept
-		}
-	}
-	return kept;
+	return ActionEngine::computeKeptStreams(all, commandArgsJson);
 }
 
 } // namespace Mc

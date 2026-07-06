@@ -58,6 +58,14 @@ public:
 	// Reverses serializeStreamSnapshot().
 	static QList<StreamRecord> deserializeStreamSnapshot(const QString& json);
 
+	// Returns the subset of `all` that a remux job built from commandArgsJson would
+	// keep (i.e. everything NOT excluded by --no-audio/--audio-tracks and the
+	// equivalent video/subtitle flags). Single source of truth shared by the job
+	// panel's display order and JobQueue's live "largest savings first" pick order —
+	// they must agree, or the queue can process jobs out of the order shown on screen.
+	static QList<StreamRecord> computeKeptStreams(const QList<StreamRecord>& all,
+	                                               const QString& commandArgsJson);
+
 private:
 	QString m_mkvmergePath;
 };
