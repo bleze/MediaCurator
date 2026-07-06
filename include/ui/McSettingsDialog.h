@@ -49,6 +49,7 @@ private:
 	QCheckBox*   m_chkKeepForced;
 	QComboBox*   m_cmbSdhMode;
 	QCheckBox*   m_chkKeepOriginalSub;
+	QCheckBox*   m_chkMergeSidecarSubs;
 	QCheckBox*   m_chkWriteLog;
 	QLineEdit*   m_editTmdbKey;
 	QLineEdit*   m_editOsApiKey;

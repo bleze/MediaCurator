@@ -29,7 +29,10 @@ public:
 	bool    hasTrackMismatch()   const { return m_hasTrackMismatch; }
 
 signals:
-	void progressChanged(int percent);
+	// outputBytes is read synchronously, right at the point percent is parsed from
+	// mkvmerge's stdout — the two must be paired atomically, otherwise the UI has no
+	// way to know the size figure it's holding corresponds to this exact percent.
+	void progressChanged(int percent, qint64 outputBytes);
 	void finished(int exitCode, const QString& log, qint64 savedBytes);
 
 private slots:

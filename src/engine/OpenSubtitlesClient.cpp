@@ -2,11 +2,9 @@
 #include "core/DatabaseManager.h"
 #include "scanner/ScanWorker.h"
 
-#include <QAtomicInt>
 #include <QDateTime>
 #include <QEventLoop>
 #include <QTimer>
-#include <QThread>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -371,53 +369,36 @@ void SubtitleDownloadWorker::run()
 	const QString   dir      = fi.absolutePath();
 	const QString   basename = fi.completeBaseName();
 
-	QAtomicInt dlCount(0), failCount(0);
-	QList<QThread*> threads;
+	int downloaded = 0, failed = 0;
 
+	// Sequential, single-client downloads: OpenSubtitles' API flags concurrent
+	// logins/requests from the same key as abuse and rate-limits the account,
+	// so every language reuses the one JWT obtained above rather than logging
+	// in again on its own thread.
 	for (const QString& lang : m_languages) {
 		if (!resultMap.contains(lang)) {
 			qCDebug(lcOS) << "No result for" << lang;
 			emit languageDone(lang, false, QStringLiteral("Not found on OpenSubtitles.com"));
-			failCount.fetchAndAddOrdered(1);
+			++failed;
 			continue;
 		}
 
 		emit languageStarted(lang);
 
-		const auto    r        = resultMap[lang];
+		const auto&   r        = resultMap[lang];
 		const QString savePath = QStringLiteral("%1/%2.%3.srt").arg(dir, basename, lang);
+		qCDebug(lcOS) << "Downloading file_id" << r.fileId << "→" << savePath;
 
-		auto* thread = QThread::create([this, r, lang, savePath, &dlCount, &failCount] {
-			OpenSubtitlesClient dlClient(m_apiKey, m_username, m_password);
-			if (!dlClient.ensureLoggedIn()) {
-				qWarning(lcOS) << "Login failed for" << lang << ":" << dlClient.lastError();
-				emit languageDone(lang, false, dlClient.lastError());
-				failCount.fetchAndAddOrdered(1);
-				return;
-			}
-			qCDebug(lcOS) << "Downloading file_id" << r.fileId << "→" << savePath;
-			if (dlClient.downloadToFile(r.fileId, savePath)) {
-				qCDebug(lcOS) << " " << lang << "OK";
-				emit languageDone(lang, true, savePath);
-				dlCount.fetchAndAddOrdered(1);
-			} else {
-				qWarning(lcOS) << " " << lang << "failed:" << dlClient.lastError();
-				emit languageDone(lang, false, dlClient.lastError());
-				failCount.fetchAndAddOrdered(1);
-			}
-		});
-
-		threads << thread;
-		thread->start();
+		if (client.downloadToFile(r.fileId, savePath)) {
+			qCDebug(lcOS) << " " << lang << "OK";
+			emit languageDone(lang, true, savePath);
+			++downloaded;
+		} else {
+			qWarning(lcOS) << " " << lang << "failed:" << client.lastError();
+			emit languageDone(lang, false, client.lastError());
+			++failed;
+		}
 	}
-
-	for (auto* t : threads) {
-		t->wait();
-		delete t;
-	}
-
-	const int downloaded = dlCount.loadRelaxed();
-	const int failed     = failCount.loadRelaxed();
 
 	QString statusMsg;
 	if (downloaded > 0)
@@ -425,6 +406,8 @@ void SubtitleDownloadWorker::run()
 	if (failed > 0)
 		statusMsg += (statusMsg.isEmpty() ? QString{} : QStringLiteral(", "))
 		             + QStringLiteral("%1 failed").arg(failed);
+	if (client.remaining() >= 0)
+		statusMsg += QStringLiteral(" (%1 downloads remaining today)").arg(client.remaining());
 
 	qCDebug(lcOS) << "Done:" << statusMsg;
 	emit done(downloaded, failed, statusMsg);

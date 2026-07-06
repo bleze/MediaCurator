@@ -7,6 +7,7 @@
 #include "scanner/FfprobeScanner.h"
 #include "scanner/ScanWorker.h"
 
+#include <QDateTime>
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
@@ -285,11 +286,14 @@ void JobQueue::startJob(const JobRecord& job)
 		// sidecar args push their own file paths onto the end of the list.
 		sourcePath = args.last();
 
-		// External (sidecar) subtitles: always absorb all of them into the remux output.
-		// Flag changes (if any) are applied per-sidecar inside buildSidecarArgsForRemux.
-		const QStringList sidecarArgs = ActionEngine::buildSidecarArgsForRemux(
-			streams, flagChangesJson);
-		args.append(sidecarArgs);
+		// External (sidecar) subtitles: absorb all of them into the remux output,
+		// unless the user has opted out. Flag changes (if any) are applied
+		// per-sidecar inside buildSidecarArgsForRemux.
+		if (m_mergeSidecarSubtitles) {
+			const QStringList sidecarArgs = ActionEngine::buildSidecarArgsForRemux(
+				streams, flagChangesJson);
+			args.append(sidecarArgs);
+		}
 	}
 
 	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
@@ -300,7 +304,12 @@ void JobQueue::startJob(const JobRecord& job)
 	connect(m_currentJob, &RemuxJob::finished,
 	        this, &JobQueue::onJobFinished);
 	connect(m_currentJob, &RemuxJob::progressChanged,
-	        this, [this](int pct) { emit progressChanged(m_currentJobId, pct); });
+	        this, [this](int pct, qint64 outputBytes) {
+		        // Sampled synchronously, right when mkvmerge's percent line is parsed —
+		        // one source, one signal, no separate timer or thread to fall out of sync.
+		        emit progressChanged(m_currentJobId, pct);
+		        emit outputSizeChanged(m_currentJobId, outputBytes);
+	        });
 
 	db.updateJobStatus(jobId, "running");
 	emit jobStarted(jobId);

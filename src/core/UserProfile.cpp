@@ -97,6 +97,14 @@ void UserProfile::setKeepOriginalLanguageSubtitle(bool v)
 	}
 }
 
+void UserProfile::setMergeSidecarSubtitles(bool v)
+{
+	if (m_mergeSidecarSubtitles != v) {
+		m_mergeSidecarSubtitles = v;
+		emit profileChanged();
+	}
+}
+
 void UserProfile::setRemoveMjpegCoverArt(bool v)
 {
 	if (m_removeMjpegCoverArt != v) {
@@ -237,6 +245,7 @@ QJsonObject UserProfile::toJson() const
 	o["keep_forced_subtitles_always"]    = m_keepForcedSubtitlesAlways;
 	o["sdh_subtitle_mode"]               = sdhModeToString(m_sdhSubtitleMode);
 	o["keep_original_language_subtitle"] = m_keepOriginalLanguageSub;
+	o["merge_sidecar_subtitles"]         = m_mergeSidecarSubtitles;
 	o["remove_mjpeg_cover_art"]          = m_removeMjpegCoverArt;
 	o["audio_format_order"]              = QJsonArray::fromStringList(m_audioFormatOrder);
 	o["disabled_audio_formats"]          = QJsonArray::fromStringList(m_disabledAudioFormats);
@@ -276,6 +285,7 @@ bool UserProfile::fromJson(const QJsonObject& json)
 		m_sdhSubtitleMode = SdhSubtitleMode::PreferNonSdh;
 	}
 	m_keepOriginalLanguageSub    = json["keep_original_language_subtitle"].toBool(false);
+	m_mergeSidecarSubtitles      = json["merge_sidecar_subtitles"].toBool(true);
 	m_removeMjpegCoverArt        = json["remove_mjpeg_cover_art"].toBool(true);
 	m_writeJobLog                = json["write_job_log"].toBool(false);
 	m_tmdbApiKey                 = json["tmdb_api_key"].toString();

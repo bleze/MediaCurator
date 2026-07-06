@@ -40,6 +40,7 @@ public:
 		FanartRole            = Qt::UserRole + 17,  // QString absolute path to w780 backdrop image
 		FlagChangesRole       = Qt::UserRole + 18,  // QString flag_changes_json for this job
 		JobTypeRole           = Qt::UserRole + 19,  // QString "remux" | "tag_edit"
+		OutputSizeRole        = Qt::UserRole + 20,  // qint64 live .tmp output size, only meaningful when status=="running"
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -103,6 +104,7 @@ public slots:
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void updateProgress(qint64 jobId, int percent);
+	void updateOutputSize(qint64 jobId, qint64 bytes);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void updateImdbId(qint64 fileId, const QString& imdbId);
@@ -120,6 +122,7 @@ private:
 	QList<JobCardEntry>    m_entries;
 	QList<Qt::CheckState>  m_checkStates;
 	QHash<qint64, int>     m_progress;       // jobId → 0-100
+	QHash<qint64, qint64>  m_outputSize;     // jobId → live .tmp output size in bytes
 	QHash<qint64, QString> m_posterPaths;    // fileId → local poster image path
 	QHash<qint64, QString> m_fanartPaths;    // fileId → local fanart (backdrop) path
 	QHash<qint64, QString> m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer

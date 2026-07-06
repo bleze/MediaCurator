@@ -1030,9 +1030,12 @@ void DatabaseManager::updateCalibrationFromJob(qint64 jobId)
 	const QJsonArray tracks = QJsonDocument::fromJson(job.streamEstimatesJson.toUtf8()).array();
 	if (tracks.isEmpty()) return;
 
-	// One accuracy ratio per job, applied to every track removed in that job.
-	// For multi-track jobs this is an approximation; single-track jobs give an
-	// exact signal. Over many jobs the average converges per codec family.
+	// One accuracy ratio per job, applied to every FALLBACK-estimated track removed
+	// in that job. For multi-track jobs this is an approximation; single-track jobs
+	// give an exact signal. Over many jobs the average converges per codec family.
+	// Declared-bitrate tracks are excluded below: ffprobe already reported a real
+	// bitrate for them, so a job-wide error caused by an unrelated fallback track
+	// must not be attributed to them too.
 	const double ratio = static_cast<double>(job.savedBytes)
 	                   / static_cast<double>(job.estimatedSavedBytes);
 
@@ -1063,6 +1066,12 @@ void DatabaseManager::updateCalibrationFromJob(qint64 jobId)
 		// an actual code change (see fallbackBpsKey()), not for storage/display here.
 		const QString key = Mc::calibrationFormatKey(codecName, codecType, codecProfile);
 		if (key.isEmpty()) continue;   // e.g. video — no fallback ever applies
+
+		// Declared-bitrate tracks already have a real ffprobe bitrate, so they aren't
+		// the source of estimation error — attributing this job's whole-job ratio to
+		// them would contaminate their calibration bucket with error that actually
+		// belongs to a different (fallback) track removed in the same job.
+		if (!usedFallback) continue;
 
 		q.addBindValue(key);
 		q.addBindValue(codecType);

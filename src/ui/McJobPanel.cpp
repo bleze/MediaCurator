@@ -698,6 +698,7 @@ void McJobPanel::setupUi()
 				const bool unlabeledSubtitle = hitStream->codecType == QLatin1String("subtitle")
 					&& (hitStream->language.isEmpty() || hitStream->language == QLatin1String("und"));
 				if (unlabeledSubtitle) {
+					menu.addSeparator();
 					QMenu* langMenu = menu.addMenu(tr("Set &Language"));
 					const StreamRecord streamCopy = *hitStream;
 					const qreal dpr = devicePixelRatioF();
@@ -959,14 +960,20 @@ void McJobPanel::setupUi()
 
 				for (const QJsonValue& v : estArr) {
 					const QJsonObject o = v.toObject();
-					const QString codecType  = o[QStringLiteral("codecType")].toString();
-					const QString codecName  = o[QStringLiteral("codecName")].toString();
-					const qint64  declared   = o[QStringLiteral("declaredBitrate")].toVariant().toLongLong();
-					const qint64  trackBytes = o[QStringLiteral("estimatedBytes")].toVariant().toLongLong();
+					const QString codecType    = o[QStringLiteral("codecType")].toString();
+					const QString codecName    = o[QStringLiteral("codecName")].toString();
+					const QString codecProfile = o[QStringLiteral("codecProfile")].toString();
+					const qint64  declared     = o[QStringLiteral("declaredBitrate")].toVariant().toLongLong();
+					const qint64  trackBytes   = o[QStringLiteral("estimatedBytes")].toVariant().toLongLong();
 
 					groupedTotal += trackBytes;
 
-					const QString label = codecName.isEmpty() ? codecType : codecName;
+					// Use the profile-aware format key (not raw codecName) so DTS-HD MA
+					// doesn't display as indistinguishable plain "dts" — ffprobe reports
+					// the same codec_name for both; codecProfile is what tells them apart.
+					const QString formatKey = Mc::calibrationFormatKey(codecName, codecType, codecProfile);
+					const QString label = !formatKey.isEmpty() ? formatKey
+					                     : codecName.isEmpty() ? codecType : codecName;
 					const QString key   = codecType + QChar('|') + label
 					                    + QChar('|') + (declared > 0 ? QChar('D') : QChar('F'));
 					auto& g = groups[key];
@@ -1242,6 +1249,8 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	});
 	connect(queue, &JobQueue::progressChanged,
 	        m_model, &McJobListModel::updateProgress);
+	connect(queue, &JobQueue::outputSizeChanged,
+	        m_model, &McJobListModel::updateOutputSize);
 
 	// A rescan (e.g. after renaming a sidecar subtitle from the badge menu) runs
 	// asynchronously and updates streams/jobs in the DB out from under the model —

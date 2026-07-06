@@ -13,9 +13,10 @@ public:
 	static QString readImdbId(const QString& videoPath);
 
 	// Write (or update) the NFO file next to videoPath.
-	// If a Kodi-style <movie> XML already exists, only the <imdbid> element is
-	// touched; all other content is preserved.  If no NFO exists, a minimal one
-	// is created with title, year, and imdbid.
+	// If a Kodi-style <movie> XML already exists, only the <uniqueid type="imdb">
+	// and <id> elements are touched (any legacy <imdbid> tag is dropped); all
+	// other content is preserved.  If no NFO exists, a minimal one is created
+	// with title, year, and both id tags.
 	// Also registers nfoPath in the own-write suppression set so a future
 	// QFileSystemWatcher callback can skip it via checkAndClearOwnWrite().
 	static bool writeMovieNfo(const QString& videoPath,

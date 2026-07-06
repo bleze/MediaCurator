@@ -57,25 +57,39 @@ bool NfoParser::writeMovieNfo(const QString& videoPath,
 	ownWrites().insert(nfoPath);
 	QFile file(nfoPath);
 
+	const QString uniqueIdTag =
+		QStringLiteral("<uniqueid type=\"imdb\" default=\"true\">%1</uniqueid>").arg(imdbId);
+	const QString idTag = QStringLiteral("<id>%1</id>").arg(imdbId);
+
 	if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
 		QString content = QString::fromUtf8(file.readAll());
 		file.close();
 
 		if (content.contains("<movie", Qt::CaseInsensitive)) {
-			const QString newTag = QStringLiteral("<imdbid>%1</imdbid>").arg(imdbId);
+			// Drop the old, non-standard <imdbid> tag written by earlier versions.
+			static const QRegularExpression legacyImdbTagRe(
+				R"(\s*<imdbid>.*?</imdbid>)", QRegularExpression::CaseInsensitiveOption);
+			content.remove(legacyImdbTagRe);
 
-			static const QRegularExpression imdbTagRe(
-				R"(<imdbid>.*?</imdbid>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression uniqueIdTagRe(
+				R"(<uniqueid\b[^>]*>.*?</uniqueid>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression idTagRe(
+				R"(<id>.*?</id>)", QRegularExpression::CaseInsensitiveOption);
 
-			if (content.contains(imdbTagRe)) {
-				content.replace(imdbTagRe, newTag);
-			} else {
-				const int closeIdx = content.lastIndexOf("</movie>", -1, Qt::CaseInsensitive);
-				if (closeIdx >= 0)
-					content.insert(closeIdx, "  " + newTag + "\n");
-				else
-					content += newTag + "\n";
-			}
+			auto upsertTag = [&](const QRegularExpression& tagRe, const QString& newTag) {
+				if (content.contains(tagRe)) {
+					content.replace(tagRe, newTag);
+				} else {
+					const int closeIdx = content.lastIndexOf("</movie>", -1, Qt::CaseInsensitive);
+					if (closeIdx >= 0)
+						content.insert(closeIdx, "  " + newTag + "\n");
+					else
+						content += newTag + "\n";
+				}
+			};
+
+			upsertTag(uniqueIdTagRe, uniqueIdTag);
+			upsertTag(idTagRe, idTag);
 
 			if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
 				file.write(content.toUtf8());
@@ -93,7 +107,8 @@ bool NfoParser::writeMovieNfo(const QString& videoPath,
 		xml += QStringLiteral("  <title>%1</title>\n").arg(title.toHtmlEscaped());
 	if (year > 0)
 		xml += QStringLiteral("  <year>%1</year>\n").arg(year);
-	xml += QStringLiteral("  <imdbid>%1</imdbid>\n").arg(imdbId);
+	xml += "  " + uniqueIdTag + "\n";
+	xml += "  " + idTag + "\n";
 	xml += QStringLiteral("</movie>\n");
 
 	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))

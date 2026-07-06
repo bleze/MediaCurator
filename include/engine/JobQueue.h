@@ -21,6 +21,7 @@ public:
 	void runJob(qint64 jobId);
 
 	void setWriteJobLog(bool v) { m_writeJobLog = v; }
+	void setMergeSidecarSubtitles(bool v) { m_mergeSidecarSubtitles = v; }
 	void setSortMode(JobSortMode mode) { m_sortMode = mode; }
 
 	bool isRunning()   const { return m_running; }
@@ -37,6 +38,10 @@ signals:
 	void fileNeedsReanalysis(qint64 fileId);
 	void allFinished();
 	void progressChanged(qint64 jobId, int percent);
+	// Current size on disk of the .tmp output file, sampled synchronously right when
+	// RemuxJob parses a new percent from mkvmerge's stdout — lets the UI show a live
+	// output-size-vs-original bar while running.
+	void outputSizeChanged(qint64 jobId, qint64 bytes);
 	void warning(const QString& message);
 
 	// Emitted when mkvmerge completed but reported a "track not found" mismatch.
@@ -73,6 +78,7 @@ private:
 	bool           m_running      = false;
 	bool           m_paused       = false;
 	bool           m_writeJobLog  = false;
+	bool           m_mergeSidecarSubtitles = true;
 	JobSortMode    m_sortMode     = JobSortMode::SmallestFirst;
 
 	// State held while waiting for user to review a track-mismatch result

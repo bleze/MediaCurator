@@ -122,6 +122,9 @@ void McJobListModel::reload()
 	for (auto it = m_progress.begin(); it != m_progress.end(); ) {
 		it = liveJobIds.contains(it.key()) ? ++it : m_progress.erase(it);
 	}
+	for (auto it = m_outputSize.begin(); it != m_outputSize.end(); ) {
+		it = liveJobIds.contains(it.key()) ? ++it : m_outputSize.erase(it);
+	}
 
 	// Batch-load streams for all jobs that need live DB data (non-done, or done without snapshot)
 	QList<qint64> fileIdsForBatch;
@@ -346,6 +349,18 @@ void McJobListModel::updateProgress(qint64 jobId, int percent)
 	}
 }
 
+void McJobListModel::updateOutputSize(qint64 jobId, qint64 bytes)
+{
+	m_outputSize.insert(jobId, bytes);
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.jobId == jobId) {
+			const QModelIndex idx = index(i);
+			emit dataChanged(idx, idx, { OutputSizeRole });
+			return;
+		}
+	}
+}
+
 bool McJobListModel::statusMatchesFilter(const QString& status) const
 {
 	if (m_filterStatus.isEmpty()) return true;
@@ -506,6 +521,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case FilenameRole:      return e.job.filename;
 	case SummaryRole:       return e.job.summary;
 	case ProgressRole:      return m_progress.value(e.job.jobId, 0);
+	case OutputSizeRole:    return m_outputSize.value(e.job.jobId, 0);
 	case PosterRole:        return m_posterPaths.value(e.job.fileId);
 	case FanartRole:        return m_fanartPaths.value(e.job.fileId);
 	case FileSizeRole:      return e.job.sizeBytes;

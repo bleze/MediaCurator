@@ -7,6 +7,7 @@
 #include "ui/McCardDelegate.h"
 #include "ui/McFileCardDelegate.h"
 #include "ui/McFileListModel.h"
+#include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
 #include "ui/McJobPanel.h"
 #include "ui/McLegendDialog.h"
@@ -106,6 +107,30 @@ static QString smartSuggestedTitle(const Mc::FileRecord& file)
 			return file.containerTitle;
 	}
 	return Mc::NfoParser::titleFromFilename(file.filename);
+}
+
+// Streams that will actually remain on disk once already-decided removals are applied —
+// a pending job's kept-tracks list if one exists, otherwise a library-level forced
+// removal that hasn't been turned into a job yet. Subtitle coverage checks must run
+// against this set, not the raw file contents, otherwise a track the user has toggled
+// off (e.g. an unwanted PGS CC) still counts as covering that language and blocks
+// downloading a replacement.
+static QList<Mc::StreamRecord> streamsRemainingForFile(qint64 fileId,
+                                                        const QList<Mc::StreamRecord>& allStreams,
+                                                        Mc::McFileListModel* listModel)
+{
+	if (const auto job = Mc::DatabaseManager::instance().activeJobForFile(fileId))
+		return Mc::McJobListModel::computeKeptStreams(allStreams, job->commandArgsJson);
+
+	const QSet<int> forcedRemovals = listModel->forcedRemovalsFor(fileId);
+	if (forcedRemovals.isEmpty())
+		return allStreams;
+
+	QList<Mc::StreamRecord> kept;
+	for (const auto& s : allStreams)
+		if (!forcedRemovals.contains(s.streamIndex))
+			kept << s;
+	return kept;
 }
 
 
@@ -232,9 +257,11 @@ McMainWindow::McMainWindow(QWidget* parent)
 
 	m_jobQueue = new JobQueue(this);
 	m_jobQueue->setWriteJobLog(m_profile->writeJobLog());
+	m_jobQueue->setMergeSidecarSubtitles(m_profile->mergeSidecarSubtitles());
 
 	connect(m_profile, &UserProfile::profileChanged, this, [this]() {
 		m_jobQueue->setWriteJobLog(m_profile->writeJobLog());
+		m_jobQueue->setMergeSidecarSubtitles(m_profile->mergeSidecarSubtitles());
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 	});
 
@@ -682,10 +709,13 @@ void McMainWindow::setupUi()
 				return;
 			}
 
-			// Find which understood languages have no subtitle coverage
-			const auto streams = DatabaseManager::instance().streamsForFile(file.id);
+			// Find which understood languages have no subtitle coverage among the tracks
+			// that will actually remain — a track already toggled off for removal
+			// doesn't count as covering its language.
+			const auto streams  = DatabaseManager::instance().streamsForFile(file.id);
+			const auto remaining = streamsRemainingForFile(file.id, streams, m_listModel);
 			QSet<QString> coveredIso6391;
-			for (const auto& s : streams) {
+			for (const auto& s : remaining) {
 				if (s.codecType != QLatin1String("subtitle")) continue;
 				if (s.language.isEmpty() || s.language == QLatin1String("und")) continue;
 				const QString c = Mc::iso6392to6391(s.language);
@@ -1089,9 +1119,10 @@ void McMainWindow::setupUi()
 			return;
 		}
 
-		const auto streams = DatabaseManager::instance().streamsForFile(file.id);
+		const auto streams  = DatabaseManager::instance().streamsForFile(file.id);
+		const auto remaining = streamsRemainingForFile(fileId, streams, m_listModel);
 		QSet<QString> coveredIso6391;
-		for (const auto& s : streams) {
+		for (const auto& s : remaining) {
 			if (s.codecType != QLatin1String("subtitle")) continue;
 			if (s.language.isEmpty() || s.language == QLatin1String("und")) continue;
 			const QString c = Mc::iso6392to6391(s.language);
@@ -1317,13 +1348,15 @@ void McMainWindow::setupMenuBar()
 	toolsMenu->addAction(m_actSimulate);
 	toolsMenu->addSeparator();
 	toolsMenu->addAction(m_actSettings);
+#ifdef QT_DEBUG
 	toolsMenu->addSeparator();
-	auto* calibAct = new QAction(tr("Estimation Calibration Data…"), this);
+	auto* calibAct = new QAction(tr("[Debug] Estimation Calibration Data…"), this);
 	connect(calibAct, &QAction::triggered, this, [this] {
 		auto* dlg = new Mc::McCalibrationDialog(this);
 		dlg->exec();
 	});
 	toolsMenu->addAction(calibAct);
+#endif
 
 	// Help menu
 	QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -1866,7 +1899,14 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 		}
 	}
 
-	if (decision.removalCount() == 0) return false;
+	// A file with no internal tracks to remove may still need a remux just to
+	// absorb an external (sidecar) subtitle into the container — mkvpropedit
+	// can't add tracks, so this is the only way that ever happens.
+	QList<StreamRecord> unmuxedSidecars;
+	for (const StreamRecord& s : streams)
+		if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
+
+	if (decision.removalCount() == 0 && unmuxedSidecars.isEmpty()) return false;
 
 	int audioRemoved = 0, subRemoved = 0;
 	for (const auto& td : decision.tracks) {
@@ -1880,7 +1920,11 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 	QStringList parts;
 	if (audioRemoved > 0) parts << tr("%1 audio").arg(audioRemoved);
 	if (subRemoved   > 0) parts << tr("%1 subtitle").arg(subRemoved);
-	const QString summary = tr("Remove ") + parts.join(", ");
+	const QString summary = parts.isEmpty()
+		? (unmuxedSidecars.size() == 1
+		       ? tr("Mux in external subtitle")
+		       : tr("Mux in %1 external subtitles").arg(unmuxedSidecars.size()))
+		: tr("Remove ") + parts.join(", ");
 
 	// Build human-readable description of removed tracks
 	QStringList descLines;
@@ -1894,6 +1938,13 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 			line += QStringLiteral(" \"%1\"").arg(s.title);
 		if (!td.reason.isEmpty())
 			line += QStringLiteral(" — %1").arg(td.reason);
+		descLines << line;
+	}
+	for (const StreamRecord& s : unmuxedSidecars) {
+		QString line = QStringLiteral("  [SUBTITLE] %1").arg(s.codecName);
+		if (!s.language.isEmpty() && s.language != QLatin1String("und"))
+			line += QStringLiteral(" (%1)").arg(s.language);
+		line += tr(" — external, will be muxed in");
 		descLines << line;
 	}
 	const QString descriptionText = descLines.join('\n');

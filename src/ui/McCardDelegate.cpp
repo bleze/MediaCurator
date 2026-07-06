@@ -8,6 +8,7 @@
 
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QJsonArray>
@@ -26,8 +27,8 @@
 #include <QStyle>
 #include <QStyleOption>
 #include <QStyleOptionButton>
+#include <QTimer>
 #include <QToolTip>
-#include <QVariantAnimation>
 #include <QtMath>
 #include <algorithm>
 
@@ -78,14 +79,32 @@ QPixmap McCardDelegate::renderSvgIcon(const QString& resourcePath,
 	return pm;
 }
 
-// Reads a small sample of a subtitle sidecar file and returns a short plain-text
-// preview (first couple of cues, stripped of SRT/VTT sequence numbers and
-// timestamps) — used in the badge tooltip when the track has no detected language.
-static QString subtitlePreviewText(const QString& path)
+// Reads a handful of cues from around the middle of a subtitle sidecar file
+// (stripped of SRT/VTT sequence numbers and timestamps) — used in the badge
+// tooltip when the track has no detected language. The middle of the file is
+// sampled rather than the start, since openers (studio cards, "subtitles by…"
+// credits, karaoke-style song lyrics) tend to be unrepresentative filler.
+static QStringList subtitlePreviewCues(const QString& path, int maxCues = 3)
 {
 	QFile f(path);
 	if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
-	const QString text = QString::fromUtf8(f.read(8192)); // small sample is enough
+
+	constexpr qint64 kWindow = 16384;
+	const qint64      size    = f.size();
+	qint64            start   = 0;
+	if (size > kWindow) {
+		start = qBound<qint64>(0, size / 2 - kWindow / 2, size - kWindow);
+	}
+	f.seek(start);
+	QString text = QString::fromUtf8(f.read(kWindow));
+
+	// We likely landed mid-cue; drop the partial fragment up to the next cue
+	// boundary (a blank line) so the first cue we parse is a whole one.
+	if (start > 0) {
+		static const QRegularExpression blankLine(QStringLiteral(R"(\r?\n\s*\r?\n)"));
+		const auto match = blankLine.match(text);
+		if (match.hasMatch()) text = text.mid(match.capturedEnd());
+	}
 
 	static const QRegularExpression seqNumLine(QStringLiteral(R"(^\d+$)"));
 	static const QRegularExpression timecodeLine(QStringLiteral(R"(-->|^WEBVTT|^NOTE)"));
@@ -96,7 +115,7 @@ static QString subtitlePreviewText(const QString& path)
 		const QString line = rawLine.trimmed();
 		if (line.isEmpty()) {
 			if (!cue.isEmpty()) { cues << cue; cue.clear(); }
-			if (cues.size() >= 2) break;
+			if (cues.size() >= maxCues) break;
 			continue;
 		}
 		if (seqNumLine.match(line).hasMatch())   continue;
@@ -104,17 +123,43 @@ static QString subtitlePreviewText(const QString& path)
 		if (!cue.isEmpty()) cue += QLatin1Char(' ');
 		cue += line;
 	}
-	if (!cue.isEmpty() && cues.size() < 2) cues << cue;
+	if (!cue.isEmpty() && cues.size() < maxCues) cues << cue;
 
-	QString preview = cues.join(QStringLiteral("  /  "));
-	if (preview.length() > 200) preview = preview.left(197) + QStringLiteral("...");
-	return preview;
+	for (QString& c : cues) {
+		if (c.length() > 140) c = c.left(137) + QStringLiteral("...");
+	}
+	return cues;
 }
 
 void McCardDelegate::prefetchFanart(const QString& path, QPixmap raw)
 {
 	s_fanartVersions[path]++;          // bump → old QPixmapCache entries become unreachable
 	s_fanartRawCache.insert(path, std::move(raw));
+}
+
+// Pulsing colors used by the running-job size bar. Computed directly from wall-clock
+// time (instead of a QVariantAnimation) so the value never depends on how reliably
+// Qt's animation driver ticks — only on when we choose to read it. Both segments share
+// the same phase so they breathe in sync.
+static QColor pulseBetween(qint64 nowMs, const QColor& light, const QColor& dark)
+{
+	constexpr qint64 kPeriodMs = 2000;
+	const double      phase    = (nowMs % kPeriodMs) / double(kPeriodMs); // 0..1
+	const double      s        = (1.0 + qCos(2.0 * M_PI * phase)) / 2.0; // 1 at phase 0/1, 0 at 0.5
+	return QColor(
+	    qRound(dark.red()   + (light.red()   - dark.red())   * s),
+	    qRound(dark.green() + (light.green() - dark.green()) * s),
+	    qRound(dark.blue()  + (light.blue()  - dark.blue())  * s));
+}
+
+static QColor pulseBlue(qint64 nowMs)
+{
+	return pulseBetween(nowMs, QColor(0x64, 0xb4, 0xf0), QColor(0x10, 0x50, 0xb0));
+}
+
+static QColor pulseRed(qint64 nowMs)
+{
+	return pulseBetween(nowMs, QColor(0xe8, 0x5a, 0x5a), QColor(0x8f, 0x14, 0x14));
 }
 
 McCardDelegate::McCardDelegate(Mode mode, QObject* parent)
@@ -125,17 +170,25 @@ McCardDelegate::McCardDelegate(Mode mode, QObject* parent)
 		view->viewport()->installEventFilter(this);
 	}
 	if (m_mode == Mode::JobQueue) {
-		m_pulseAnim = new QVariantAnimation(this);
-		m_pulseAnim->setDuration(2000);
-		m_pulseAnim->setLoopCount(-1);
-		m_pulseAnim->setEasingCurve(QEasingCurve::InOutSine);
-		m_pulseAnim->setKeyValueAt(0.0, QColor(0x64, 0xb4, 0xf0)); // light blue
-		m_pulseAnim->setKeyValueAt(0.5, QColor(0x10, 0x50, 0xb0)); // dark blue
-		m_pulseAnim->setKeyValueAt(1.0, QColor(0x64, 0xb4, 0xf0)); // light blue
-		connect(m_pulseAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant&) {
-			if (m_view) m_view->viewport()->update();
+		// Fixed-cadence repaint heartbeat for the pulse/size-bar animations. Only the
+		// rows with a job actually running are invalidated — not the whole viewport —
+		// so this stays cheap even with many cards visible; redrawing every card's
+		// poster/badges/text 30 times a second was the real source of the jerkiness,
+		// not the animation timing itself.
+		m_animTimer = new QTimer(this);
+		m_animTimer->setTimerType(Qt::PreciseTimer);
+		connect(m_animTimer, &QTimer::timeout, this, [this]() {
+			if (!m_view) return;
+			QAbstractItemModel* model = m_view->model();
+			if (!model) return;
+			const int rows = model->rowCount();
+			for (int row = 0; row < rows; ++row) {
+				const QModelIndex idx = model->index(row, 0);
+				if (idx.data(McJobListModel::StatusRole).toString() == QLatin1String("running"))
+					m_view->update(idx);
+			}
 		});
-		m_pulseAnim->start();
+		m_animTimer->start(33);
 	}
 }
 
@@ -163,6 +216,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.allStreams         = index.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
 		d.removedIndices    = index.data(McFileListModel::OverridesRole).value<QSet<int>>();
 	} else {
+		d.jobId            = index.data(McJobListModel::JobIdRole).toLongLong();
 		d.filename         = index.data(McJobListModel::FilenameRole).toString();
 		d.filePath         = index.data(McJobListModel::FilePathRole).toString();
 		d.sizeBytes        = index.data(McJobListModel::FileSizeRole).toLongLong();
@@ -173,6 +227,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.savedBytes       = index.data(McJobListModel::SavedRole).toLongLong();
 		d.durationSec      = index.data(McJobListModel::DurationRole).toDouble();
 		d.progress         = index.data(McJobListModel::ProgressRole).toInt();
+		d.outputSizeBytes  = index.data(McJobListModel::OutputSizeRole).toLongLong();
 		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
 		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued") || d.status == QLatin1String("failed"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
@@ -833,10 +888,17 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 						         .arg(McLanguageFlags::displayName(s.language), s.language);
 					else if (s.codecType == QLatin1String("subtitle") && s.isExternal
 					         && !s.externalPath.isEmpty()) {
-						const QString preview = subtitlePreviewText(s.externalPath);
-						lines << (preview.isEmpty()
-							? tr("No language detected \xE2\x80\x94 right-click to set")
-							: tr("Preview: \xE2\x80\x9C%1\xE2\x80\x9D").arg(preview));
+						const QStringList cues = subtitlePreviewCues(s.externalPath);
+						if (cues.isEmpty()) {
+							lines << tr("No language detected \xE2\x80\x94 right-click to set");
+						} else {
+							lines << tr("No language detected \xE2\x80\x94 right-click to set")
+							      << QString()
+							      << QStringLiteral("\xE2\x80\xA6");
+							for (const QString& cue : cues)
+								lines << QStringLiteral("\xE2\x80\x9C%1\xE2\x80\x9D").arg(cue);
+							lines << QStringLiteral("\xE2\x80\xA6");
+						}
 					}
 					// Job Queue only: surface a pending "set language" change queued
 					// via the Library view's badge menu, before the job actually runs.
@@ -1277,20 +1339,57 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	drawGroup("audio");
 	drawGroup("subtitle");
 
-	// Job queue: progress bar at the bottom of the card (painted last, no clip)
-	if (m_mode == Mode::JobQueue && d.status == QLatin1String("running") && d.progress > 0) {
+	// Job queue: live size bar at the bottom of the card (painted last, no clip).
+	// Two independent bars, both measured against the same full width (the original
+	// file size): red is mkvmerge's own progress %, blue is output-bytes-written /
+	// original-size. Blue is drawn on top and is naturally <= red's extent whenever
+	// tracks are being removed, so it reads as "blue within red" without either being
+	// computed relative to the other.
+	if (m_mode == Mode::JobQueue && d.status == QLatin1String("running") && d.progress > 0 && d.sizeBytes > 0) {
 		painter->setClipping(false);
 		const QRect barRect(option.rect.left(), option.rect.bottom() - 2,
 		                    option.rect.width(), 3);
 		painter->fillRect(barRect, QColor(0x30, 0x30, 0x40));
-		const int fillW = barRect.width() * d.progress / 100;
-		if (fillW > 0) {
-			const QColor fillColor = m_pulseAnim
-				? m_pulseAnim->currentValue().value<QColor>()
-				: QColor(0x10, 0x6a, 0xc0);
-			painter->fillRect(QRect(barRect.left(), barRect.top(), fillW, barRect.height()),
-			                  fillColor);
-		}
+
+		const double redTarget  = qBound(0.0, d.progress / 100.0, 1.0);
+		const double blueTarget = qBound(0.0, double(d.outputSizeBytes) / double(d.sizeBytes), 1.0);
+
+		// Tween each from a fixed start time/value toward its latest sample, rather than
+		// stepping it a little closer on every repaint — a per-frame step only looks
+		// smooth if repaints land at a steady cadence, which they don't reliably do
+		// inside a busy item view. Interpolating from an absolute timestamp means the
+		// displayed value is correct for *this* instant no matter how evenly (or not)
+		// paint() actually gets called.
+		constexpr qint64 kAnimMs = 600;
+		const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+		SizeBarAnim& anim  = m_sizeBarAnim[d.jobId];
+		const auto   easeOutCubic = [](double t) { return 1.0 - qPow(1.0 - t, 3.0); };
+		const auto   tween = [&](TweenState& s, double target) {
+			if (s.segmentStartMs == 0) {
+				s.startVal = s.endVal = target;
+				s.segmentStartMs = nowMs;
+			} else if (target != s.endVal) {
+				// A fresh sample arrived — retarget from wherever the tween currently is
+				// (not from its old end value) so the motion doesn't jump backward.
+				const double t = qBound(0.0, double(nowMs - s.segmentStartMs) / kAnimMs, 1.0);
+				s.startVal = s.startVal + (s.endVal - s.startVal) * easeOutCubic(t);
+				s.endVal   = target;
+				s.segmentStartMs = nowMs;
+			}
+			const double t = qBound(0.0, double(nowMs - s.segmentStartMs) / kAnimMs, 1.0);
+			return s.startVal + (s.endVal - s.startVal) * easeOutCubic(t);
+		};
+
+		const double displayedRed  = tween(anim.red,  redTarget);
+		const double displayedBlue = tween(anim.blue, blueTarget);
+
+		const int redW = static_cast<int>(barRect.width() * displayedRed);
+		if (redW > 0)
+			painter->fillRect(QRect(barRect.left(), barRect.top(), redW, barRect.height()), pulseRed(nowMs));
+
+		const int blueW = static_cast<int>(barRect.width() * displayedBlue);
+		if (blueW > 0)
+			painter->fillRect(QRect(barRect.left(), barRect.top(), blueW, barRect.height()), pulseBlue(nowMs));
 	}
 
 	painter->restore();

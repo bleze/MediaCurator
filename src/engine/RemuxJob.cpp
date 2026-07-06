@@ -124,7 +124,7 @@ void RemuxJob::onReadyRead()
 			m_log += line + '\n';
 			const auto match = progressRe.match(line);
 			if (match.hasMatch())
-				emit progressChanged(match.captured(1).toInt());
+				emit progressChanged(match.captured(1).toInt(), QFileInfo(m_outputPath).size());
 		}
 	}
 	m_readBuf = m_readBuf.mid(pos);

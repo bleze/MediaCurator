@@ -57,6 +57,11 @@ public:
 	bool keepOriginalLanguageSubtitle() const { return m_keepOriginalLanguageSub; }
 	void setKeepOriginalLanguageSubtitle(bool v);
 
+	// Merge sidecar (external) subtitle files into the container whenever a remux
+	// job runs anyway. When disabled, sidecar subtitles are left untouched on disk.
+	bool mergeSidecarSubtitles() const { return m_mergeSidecarSubtitles; }
+	void setMergeSidecarSubtitles(bool v);
+
 	// Remove MJPEG video streams (embedded cover-art/thumbnail) from output
 	bool removeMjpegCoverArt() const { return m_removeMjpegCoverArt; }
 	void setRemoveMjpegCoverArt(bool v);
@@ -126,6 +131,7 @@ private:
 	bool        m_keepForcedSubtitlesAlways  = true;
 	SdhSubtitleMode m_sdhSubtitleMode        = SdhSubtitleMode::PreferNonSdh;
 	bool        m_keepOriginalLanguageSub    = false;
+	bool        m_mergeSidecarSubtitles     = true;
 	bool        m_removeMjpegCoverArt       = true;
 	bool        m_writeJobLog               = false;
 	QString     m_tmdbApiKey;

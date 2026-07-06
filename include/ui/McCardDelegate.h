@@ -13,7 +13,7 @@
 
 class QPainter;
 class QAbstractItemView;
-class QVariantAnimation;
+class QTimer;
 
 namespace Mc {
 
@@ -123,11 +123,30 @@ private:
 		QSet<int>           removedIndices; // stream indices shown struck-through
 		QString             flagChangesJson; // job queue only; empty in library mode
 		// job queue only
+		qint64              jobId          = 0;
 		QString             status;
 		int                 progress       = 0;
 		qint64              savedBytes     = 0;
+		qint64              outputSizeBytes = 0;  // live .tmp size while running
 		bool                checked        = false;
 		bool                toggleable     = false;  // true for proposed jobs
+	};
+
+	// Animation state for the live size bar, keyed by jobId. Two independent bars, both
+	// measured as a fraction of the *same* full width (the original file size) rather
+	// than one nested inside the other — red is mkvmerge's raw progress percent, blue
+	// is output-bytes-written-so-far / original-size. Keeping them independent avoids
+	// compounding two separately-smoothed quantities into visible desync artifacts.
+	// Each is tweened from a fixed start time/value toward its latest sample, so the
+	// displayed position is correct for the current wall-clock time no matter how
+	// often (or unevenly) paint() gets called.
+	struct TweenState {
+		double startVal = 0.0, endVal = 0.0;
+		qint64 segmentStartMs = 0;
+	};
+	struct SizeBarAnim {
+		TweenState red;
+		TweenState blue;
 	};
 
 	CardData fetchData(const QModelIndex& index) const;
@@ -157,12 +176,18 @@ private:
 	QPersistentModelIndex m_lastHoveredIndex;
 	mutable QPoint        m_lastMousePos     {-1, -1};
 
-	QVariantAnimation*    m_pulseAnim        = nullptr;
+	// Fires at a fixed cadence and repaints only the rows with a job actually running
+	// (via QAbstractItemView::update(index), not a full viewport update) — the pulse
+	// color and size-bar position are both computed from wall-clock time, so this timer
+	// only needs to trigger a redraw, not advance any state itself.
+	QTimer*               m_animTimer        = nullptr;
 
 	mutable QHash<qint64, QSize> m_sizeCache;
 	mutable int               m_cacheWidth   = 0;
 	mutable QFont             m_badgeFont;
 	mutable QFontMetrics      m_badgeFm      { QFont{} };
+
+	mutable QHash<qint64, SizeBarAnim> m_sizeBarAnim;
 
 	static constexpr int kPadH      = 10; // horizontal inset from card edge to poster and content
 	static constexpr int kPadV      = 4;  // vertical padding above the folder row

@@ -95,7 +95,14 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 		}
 	}
 
-	if (decision.removalCount() == 0) return false;
+	// A file with no internal tracks to remove may still need a remux just to
+	// absorb an external (sidecar) subtitle into the container — mkvpropedit
+	// can't add tracks, so this is the only way that ever happens.
+	QList<StreamRecord> unmuxedSidecars;
+	for (const StreamRecord& s : streams)
+		if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
+
+	if (decision.removalCount() == 0 && unmuxedSidecars.isEmpty()) return false;
 
 	int audioRemoved = 0, subRemoved = 0;
 	for (const auto& td : decision.tracks) {
@@ -109,7 +116,11 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 	QStringList parts;
 	if (audioRemoved > 0) parts << QStringLiteral("%1 audio").arg(audioRemoved);
 	if (subRemoved   > 0) parts << QStringLiteral("%1 subtitle").arg(subRemoved);
-	const QString summary = QStringLiteral("Remove ") + parts.join(QStringLiteral(", "));
+	const QString summary = parts.isEmpty()
+		? (unmuxedSidecars.size() == 1
+		       ? QStringLiteral("Mux in external subtitle")
+		       : QStringLiteral("Mux in %1 external subtitles").arg(unmuxedSidecars.size()))
+		: QStringLiteral("Remove ") + parts.join(QStringLiteral(", "));
 
 	QStringList descLines;
 	for (const auto& td : decision.tracks) {
@@ -122,6 +133,13 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 			line += QStringLiteral(" \"%1\"").arg(s.title);
 		if (!td.reason.isEmpty())
 			line += QStringLiteral(" — %1").arg(td.reason);
+		descLines << line;
+	}
+	for (const StreamRecord& s : unmuxedSidecars) {
+		QString line = QStringLiteral("  [SUBTITLE] %1").arg(s.codecName);
+		if (!s.language.isEmpty() && s.language != QLatin1String("und"))
+			line += QStringLiteral(" (%1)").arg(s.language);
+		line += QStringLiteral(" — external, will be muxed in");
 		descLines << line;
 	}
 
