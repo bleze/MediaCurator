@@ -98,6 +98,14 @@ static QStringList subtitlePreviewCues(const QString& path, int maxCues = 3)
 	f.seek(start);
 	QString text = QString::fromUtf8(f.read(kWindow));
 
+	// Strip SRT/VTT markup (<i>, <b>, <font color=...>, VTT voice tags) and ASS/SSA
+	// override blocks ({\an8}, {\pos(...)}) — this is a plain-text tooltip preview,
+	// not a renderer, and leaving the raw tags in looks broken rather than styled.
+	static const QRegularExpression markupTag(QStringLiteral("<[^>]*>"));
+	static const QRegularExpression assOverride(QStringLiteral(R"(\{[^}]*\})"));
+	text.remove(markupTag);
+	text.remove(assOverride);
+
 	// We likely landed mid-cue; drop the partial fragment up to the next cue
 	// boundary (a blank line) so the first cue we parse is a whole one.
 	if (start > 0) {
@@ -362,7 +370,10 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 		if (s.isForced)           t += "  \xE2\x97\x8F";
 		if (s.isDefault)          t += "  \xE2\x98\x85"; // ★
 		if (isCommentaryTrack(s)) t += "  \xE2\x9C\x8E"; // ✎
-		if (s.isExternal)         t += "  \xE2\x86\x93"; // ↓ = sidecar file
+		// A cleared externalPath means the sidecar was merged into the container
+		// and the standalone file deleted — it's no longer a sidecar, so no marker.
+		if (s.isExternal && !s.externalPath.isEmpty())
+			t += "  \xE2\x86\x93"; // ↓ = sidecar file
 		// isHearingImpaired (🦻) is drawn as a pixmap in drawBadge — not embedded in text.
 	}
 	return t;

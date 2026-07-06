@@ -205,6 +205,7 @@ public:
 	[[nodiscard]] qint64 insertJob(const JobRecord& job);
 	bool updateJobStatus(qint64 jobId, const QString& status, int resultCode = -1, const QString& log = {});
 	bool updateJobSavedBytes(qint64 jobId, qint64 savedBytes);
+	bool updateJobEstimate(qint64 jobId, qint64 estimatedSavedBytes, const QString& streamEstimatesJson);
 	void updateCalibrationFromJob(qint64 jobId);
 	[[nodiscard]] QList<CalibrationEntry> calibrationReport() const;
 	void clearCalibration();
@@ -212,6 +213,7 @@ public:
 	bool updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson);
 	bool updateJobFlagChanges(qint64 jobId, const QString& flagChangesJson);
 	bool updateJobSidecarDeletions(qint64 jobId, const QString& sidecarDeletionsJson);
+	bool updateJobOriginalStreams(qint64 jobId, const QString& originalStreamsJson);
 	bool updateJobSummary(qint64 jobId, const QString& summary);
 	bool deleteJob(qint64 jobId);
 	bool deleteJobsBatch(const QList<qint64>& jobIds);

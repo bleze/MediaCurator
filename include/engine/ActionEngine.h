@@ -51,6 +51,13 @@ public:
 	                                              const QString& videoBaseName,
 	                                              const QString& langCode);
 
+	// Serializes a stream list into the compact JSON snapshot format stored in
+	// jobs.original_streams_json — a frozen "before" picture so a completed job
+	// can still show removed/merged tracks after the live DB has moved on.
+	static QString serializeStreamSnapshot(const QList<StreamRecord>& streams);
+	// Reverses serializeStreamSnapshot().
+	static QList<StreamRecord> deserializeStreamSnapshot(const QString& json);
+
 private:
 	QString m_mkvmergePath;
 };

@@ -253,6 +253,62 @@ QString ActionEngine::computeRenamedSidecarPath(const QString& currentPath, bool
 	       + parts.join(QLatin1Char('.')) + QLatin1Char('.') + fi.suffix();
 }
 
+QString ActionEngine::serializeStreamSnapshot(const QList<StreamRecord>& streams)
+{
+	QJsonArray arr;
+	for (const StreamRecord& s : streams) {
+		QJsonObject o;
+		o["idx"]        = s.streamIndex;
+		o["type"]       = s.codecType;
+		o["codec"]      = s.codecName;
+		o["profile"]    = s.codecProfile;
+		o["lang"]       = s.language;
+		o["title"]      = s.title;
+		o["ch"]         = s.channels;
+		o["w"]          = s.width;
+		o["h"]          = s.height;
+		o["hdr"]        = s.hdrFormat;
+		o["default"]    = s.isDefault;
+		o["forced"]     = s.isForced;
+		o["original"]   = s.isOriginal;
+		o["commentary"] = s.isCommentary;
+		o["hi"]         = s.isHearingImpaired;
+		o["ext"]        = s.isExternal;
+		o["extPath"]    = s.externalPath;
+		arr.append(o);
+	}
+	return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+QList<StreamRecord> ActionEngine::deserializeStreamSnapshot(const QString& json)
+{
+	QList<StreamRecord> result;
+	const QJsonArray arr = QJsonDocument::fromJson(json.toUtf8()).array();
+	for (const auto& v : arr) {
+		const QJsonObject o = v.toObject();
+		StreamRecord s;
+		s.streamIndex       = o["idx"].toInt();
+		s.codecType         = o["type"].toString();
+		s.codecName         = o["codec"].toString();
+		s.codecProfile      = o["profile"].toString();
+		s.language          = o["lang"].toString();
+		s.title             = o["title"].toString();
+		s.channels          = o["ch"].toInt();
+		s.width             = o["w"].toInt();
+		s.height            = o["h"].toInt();
+		s.hdrFormat         = o["hdr"].toString();
+		s.isDefault         = o["default"].toBool();
+		s.isForced          = o["forced"].toBool();
+		s.isOriginal        = o["original"].toBool();
+		s.isCommentary      = o["commentary"].toBool();
+		s.isHearingImpaired = o["hi"].toBool();
+		s.isExternal        = o["ext"].toBool();
+		s.externalPath      = o["extPath"].toString();
+		result << s;
+	}
+	return result;
+}
+
 QString ActionEngine::insertLanguageIntoSidecarPath(const QString& currentPath,
                                                      const QString& videoBaseName,
                                                      const QString& langCode)

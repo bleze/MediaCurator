@@ -965,7 +965,7 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.addBindValue(job.descriptionText);
 	q.addBindValue(job.originalStreamsJson);
 	q.addBindValue(job.savedBytes);           // estimate at creation; overwritten on completion
-	q.addBindValue(job.estimatedSavedBytes);  // frozen at creation, never overwritten
+	q.addBindValue(job.estimatedSavedBytes);  // set at creation; refreshed via updateJobEstimate() on manual track toggle
 	q.addBindValue(job.flagChangesJson);
 	q.addBindValue(job.sidecarDeletionsJson);
 	q.addBindValue(job.streamEstimatesJson);
@@ -1015,6 +1015,16 @@ bool DatabaseManager::updateJobSavedBytes(qint64 jobId, qint64 savedBytes)
 	QSqlQuery q(connection());
 	q.prepare("UPDATE jobs SET saved_bytes=? WHERE id=?");
 	q.addBindValue(savedBytes);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
+bool DatabaseManager::updateJobEstimate(qint64 jobId, qint64 estimatedSavedBytes, const QString& streamEstimatesJson)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET estimated_saved_bytes=?, stream_estimates_json=? WHERE id=?");
+	q.addBindValue(estimatedSavedBytes);
+	q.addBindValue(streamEstimatesJson);
 	q.addBindValue(jobId);
 	return q.exec();
 }
@@ -1153,6 +1163,15 @@ bool DatabaseManager::updateJobSidecarDeletions(qint64 jobId, const QString& sid
 	return q.exec();
 }
 
+bool DatabaseManager::updateJobOriginalStreams(qint64 jobId, const QString& originalStreamsJson)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET original_streams_json=? WHERE id=?");
+	q.addBindValue(originalStreamsJson);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
 bool DatabaseManager::updateJobSummary(qint64 jobId, const QString& summary)
 {
 	QSqlQuery q(connection());
@@ -1281,9 +1300,12 @@ QList<JobRecord> DatabaseManager::queuedJobs(JobSortMode sortMode) const
 {
 	QList<JobRecord> result;
 	QSqlQuery q(connection());
+	// Queued jobs haven't run yet, so j.saved_bytes is always 0 here — sort by the
+	// estimate recorded at job-creation time (refreshed on manual track toggles)
+	// instead, and break ties by creation order so the pick order is deterministic.
 	const QString orderBy = (sortMode == JobSortMode::LargestSavingsFirst)
-		? QStringLiteral("j.saved_bytes DESC")
-		: QStringLiteral("COALESCE(f.size_bytes, 0) ASC");
+		? QStringLiteral("j.estimated_saved_bytes DESC, j.created_at ASC")
+		: QStringLiteral("COALESCE(f.size_bytes, 0) ASC, j.created_at ASC");
 	const QString sql = QStringLiteral(
 		"SELECT j.id, j.file_id, j.status, j.job_type, j.command_args_json,"
 		"       j.summary, j.dry_run, j.created_at, j.started_at, j.finished_at,"

@@ -31,16 +31,16 @@ struct TrackDecision {
 namespace FallbackBps {
 	constexpr double kAudio           = 192'000.0;   // lossy audio (AC3, AAC, MP3, DTS core, E-AC3)
 	constexpr double kDtsHd           = 3'500'000.0; // DTS-HD MA / DTS-HD HRA — 5.1 (6ch) reference
-	constexpr double kDtsHdPerChannel =   583'333.0; // kDtsHd / 6 — scale by actual channel count
+	constexpr double kDtsHdPerChannel =   551'000.0; // kDtsHd / 6 — scale by actual channel count
 	constexpr double kTrueHd          = 3'500'000.0; // TrueHD / Atmos — 5.1 (6ch) reference
 	constexpr double kTrueHdPerChannel =  583'333.0; // kTrueHd / 6 — scale by actual channel count
 	constexpr double kPcmDefault      = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
 	constexpr double kFlac            = 2'000'000.0; // FLAC (lossless, variable)
-	constexpr double kPgsSubtitle     = 0.0;         // PGS / VOBSUB (image-based, sparse)
-	constexpr double kTextSubtitle    =    20'000.0; // SRT / ASS / SSA / WebVTT
-}
+	constexpr double kPgsSubtitle     =    25'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
+	constexpr double kTextSubtitle    =    12'000.0; // SRT / ASS / SSA / WebVTT
+} // namespace FallbackBps
 
-// Returns the effective bitrate used for size estimation:
+    // Returns the effective bitrate used for size estimation:
 // declared bitrate when ffprobe provides one, otherwise a FallbackBps constant.
 // Lossless audio codecs (DTS-HD MA, TrueHD, PCM) commonly report no bitrate in MKV.
 inline double effectiveBitrate(const StreamRecord& s) noexcept

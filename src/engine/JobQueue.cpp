@@ -18,6 +18,7 @@
 #include <QMetaObject>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStorageInfo>
 #include <QThreadPool>
 
@@ -264,6 +265,12 @@ void JobQueue::startJob(const JobRecord& job)
 	if (!args.isEmpty()) {
 		const QList<StreamRecord> streams = db.streamsForFile(fileId);
 
+		// Refresh the "before" snapshot from the current live streams right before
+		// this remux actually runs — a proposed job can sit queued long enough for
+		// the on-disk track/sidecar layout to change, so a snapshot frozen at
+		// proposal time would go stale. This is what the "done" card renders from.
+		db.updateJobOriginalStreams(jobId, ActionEngine::serializeStreamSnapshot(streams));
+
 		// Internal (container) track flag changes: inject before the input path.
 		if (!flagChangesJson.isEmpty()) {
 			const QString internalJson = ActionEngine::filterInternalFlagChanges(
@@ -293,6 +300,16 @@ void JobQueue::startJob(const JobRecord& job)
 			const QStringList sidecarArgs = ActionEngine::buildSidecarArgsForRemux(
 				streams, flagChangesJson);
 			args.append(sidecarArgs);
+
+			// Record exactly which sidecar files are being absorbed so they can be
+			// deleted from disk once the merge actually succeeds.
+			QJsonArray sidecarPaths;
+			for (const StreamRecord& s : streams)
+				if (s.isExternal && !s.externalPath.isEmpty()) sidecarPaths.append(s.externalPath);
+			if (!sidecarPaths.isEmpty()) {
+				db.updateJobSidecarDeletions(jobId,
+					QString::fromUtf8(QJsonDocument(sidecarPaths).toJson(QJsonDocument::Compact)));
+			}
 		}
 	}
 
@@ -408,34 +425,9 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 
 		// Source streams: use the snapshot stored at job-creation time so the source
 		// card is always correct even when the file was modified by an earlier job run.
-		const QList<StreamRecord> srcStreams = [&]() -> QList<StreamRecord> {
-			if (!jobOpt || jobOpt->originalStreamsJson.isEmpty())
-				return {};
-			QList<StreamRecord> streams;
-			const QJsonArray arr = QJsonDocument::fromJson(
-				jobOpt->originalStreamsJson.toUtf8()).array();
-			for (const auto& v : arr) {
-				const QJsonObject o = v.toObject();
-				StreamRecord s;
-				s.streamIndex       = o["idx"].toInt();
-				s.codecType         = o["type"].toString();
-				s.codecName         = o["codec"].toString();
-				s.codecProfile      = o["profile"].toString();
-				s.language          = o["lang"].toString();
-				s.title             = o["title"].toString();
-				s.channels          = o["ch"].toInt();
-				s.width             = o["w"].toInt();
-				s.height            = o["h"].toInt();
-				s.hdrFormat         = o["hdr"].toString();
-				s.isDefault         = o["default"].toBool();
-				s.isForced          = o["forced"].toBool();
-				s.isOriginal        = o["original"].toBool();
-				s.isCommentary      = o["commentary"].toBool();
-				s.isHearingImpaired = o["hi"].toBool();
-				streams << s;
-			}
-			return streams;
-		}();
+		const QList<StreamRecord> srcStreams = (jobOpt && !jobOpt->originalStreamsJson.isEmpty())
+			? ActionEngine::deserializeStreamSnapshot(jobOpt->originalStreamsJson)
+			: QList<StreamRecord>{};
 
 		// Probe only the .tmp output file on a background thread, then open the dialog
 		const QString ffprobePath = ExternalTools::instance().ffprobePath();
@@ -481,16 +473,7 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	if (ok && fileId > 0) {
 		db.clearStreamForcedRemovals(fileId);
 
-		// Delete sidecar subtitle files queued alongside this remux job
-		const auto jobOpt = db.jobById(jobId);
-		if (jobOpt && !jobOpt->sidecarDeletionsJson.isEmpty()) {
-			const QJsonArray paths = QJsonDocument::fromJson(jobOpt->sidecarDeletionsJson.toUtf8()).array();
-			for (const QJsonValue& v : paths) {
-				const QString path = v.toString();
-				if (!path.isEmpty() && !QFile::remove(path))
-					qWarning() << "JobQueue: failed to delete sidecar" << path;
-			}
-		}
+		deleteMergedSidecars(jobId);
 
 		if (!finalOutput.isEmpty() && finalOutput != originalInput) {
 			const QFileInfo fi(finalOutput);
@@ -509,6 +492,45 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 			m_running = false;
 			emit allFinished();
 		}
+	}
+}
+
+void JobQueue::deleteMergedSidecars(qint64 jobId)
+{
+	auto& db = DatabaseManager::instance();
+	const auto jobOpt = db.jobById(jobId);
+	if (!jobOpt || jobOpt->sidecarDeletionsJson.isEmpty()) return;
+
+	const QJsonArray paths = QJsonDocument::fromJson(jobOpt->sidecarDeletionsJson.toUtf8()).array();
+	QSet<QString> deletedPaths;
+	for (const QJsonValue& v : paths) {
+		const QString path = v.toString();
+		if (path.isEmpty()) continue;
+		deletedPaths.insert(path);
+		if (!QFile::remove(path))
+			qWarning() << "JobQueue: failed to delete sidecar" << path;
+	}
+
+	// The job's frozen stream snapshot still points these at the sidecar file we
+	// just deleted. Clear the path (but keep "ext" set — computeKeptStreams()
+	// always treats external streams as kept, since mkvmerge's --subtitle-tracks
+	// filter never applies to them) so the "done" card stops showing the sidecar
+	// marker for a file that no longer exists standalone, while still rendering
+	// the track as kept rather than struck through as removed.
+	if (jobOpt->originalStreamsJson.isEmpty()) return;
+	QJsonArray streamsArr = QJsonDocument::fromJson(jobOpt->originalStreamsJson.toUtf8()).array();
+	bool changed = false;
+	for (int i = 0; i < streamsArr.size(); ++i) {
+		QJsonObject o = streamsArr[i].toObject();
+		if (o.value(QLatin1String("ext")).toBool()
+		        && deletedPaths.contains(o.value(QLatin1String("extPath")).toString())) {
+			o[QLatin1String("extPath")] = QString();
+			streamsArr[i] = o;
+			changed = true;
+		}
+	}
+	if (changed) {
+		db.updateJobOriginalStreams(jobId, QJsonDocument(streamsArr).toJson(QJsonDocument::Compact));
 	}
 }
 
@@ -566,6 +588,7 @@ void JobQueue::commitReview(qint64 jobId)
 	emit jobFinished(jobId, true, savedBytes);
 
 	if (fileId > 0) {
+		deleteMergedSidecars(jobId);
 		if (!isInPlace) {
 			const QFileInfo fi(finalPath);
 			db.updateFilePath(fileId, finalPath, fi.fileName());

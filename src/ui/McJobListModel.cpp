@@ -1,6 +1,7 @@
 #include "ui/McJobListModel.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McCardDelegate.h"
+#include "engine/ActionEngine.h"
 #include "engine/TrackDecision.h"
 
 #include <QDebug>
@@ -701,6 +702,14 @@ void McJobListModel::toggleStream(const QModelIndex& index, int streamIndex)
 	}
 	DatabaseManager::instance().updateJobSavedBytes(jobId, newSavedBytes);
 
+	// Also refresh the frozen per-track breakdown so the log dialog and calibration
+	// reflect the tracks actually being removed, not the original proposal.
+	// (JobDisplayRecord doesn't carry these fields — only the log dialog reads them,
+	// via a fresh DatabaseManager::jobById() lookup — so no local mirroring needed.)
+	const QString newEstimatesJson = Mc::buildStreamEstimatesJson(
+		filt.allStreams, removedIndices, filt.job.sizeBytes, filt.job.durationSec);
+	DatabaseManager::instance().updateJobEstimate(jobId, newSavedBytes, newEstimatesJson);
+
 	// Rebuild sidecar deletions list: paths of external streams now in the remove set
 	{
 		QJsonArray sidecarPaths;
@@ -958,29 +967,7 @@ QString McJobListModel::rebuildCommandArgs(const QString& existingJson,
 
 QList<StreamRecord> McJobListModel::streamsFromJson(const QString& json)
 {
-	QList<StreamRecord> result;
-	const QJsonArray arr = QJsonDocument::fromJson(json.toUtf8()).array();
-	for (const auto& v : arr) {
-		const QJsonObject o = v.toObject();
-		StreamRecord s;
-		s.streamIndex       = o["idx"].toInt();
-		s.codecType         = o["type"].toString();
-		s.codecName         = o["codec"].toString();
-		s.codecProfile      = o["profile"].toString();
-		s.language          = o["lang"].toString();
-		s.title             = o["title"].toString();
-		s.channels          = o["ch"].toInt();
-		s.width             = o["w"].toInt();
-		s.height            = o["h"].toInt();
-		s.hdrFormat         = o["hdr"].toString();
-		s.isDefault         = o["default"].toBool();
-		s.isForced          = o["forced"].toBool();
-		s.isOriginal        = o["original"].toBool();
-		s.isCommentary      = o["commentary"].toBool();
-		s.isHearingImpaired = o["hi"].toBool();
-		result << s;
-	}
-	return result;
+	return ActionEngine::deserializeStreamSnapshot(json);
 }
 
 QList<StreamRecord> McJobListModel::computeKeptStreams(

@@ -468,7 +468,9 @@ void McMainWindow::setupUi()
 	connect(fileDelegate, &McFileCardDelegate::streamToggleRequested,
 	        this, [this](const QModelIndex& idx, int streamIndex) {
 		const qint64 fileId = idx.data(McFileListModel::FileRole).value<FileRecord>().id;
+		QApplication::setOverrideCursor(Qt::WaitCursor);
 		m_listModel->toggleForcedRemoval(fileId, streamIndex);
+		QApplication::restoreOverrideCursor();
 	});
 
 	connect(m_listView, &QAbstractItemView::pressed,
@@ -1568,6 +1570,7 @@ void McMainWindow::onScanFolder()
 	AppSettings::instance().setValue("scan/roots", roots);
 
 	m_newFilesFound.clear();
+	m_scannedSoFar = 0;
 	createScanWorker(folder);
 }
 
@@ -1590,6 +1593,7 @@ void McMainWindow::onScanLibrary()
 	m_pendingRoots = roots;
 	m_quickScanPending = false;
 	m_newFilesFound.clear();
+	m_scannedSoFar = 0;
 	createScanWorker(m_pendingRoots.takeFirst());
 }
 
@@ -1611,6 +1615,7 @@ void McMainWindow::onQuickScan()
 	m_pendingRoots = roots;
 	m_quickScanPending = true;
 	m_newFilesFound.clear();
+	m_scannedSoFar = 0;
 	createScanWorker(m_pendingRoots.takeFirst(), /*quickScan=*/true);
 }
 
@@ -1625,6 +1630,7 @@ void McMainWindow::onRemoveFolder()
 			m_pendingRoots << path;
 		} else {
 			m_newFilesFound.clear();
+			m_scannedSoFar = 0;
 			createScanWorker(path);
 		}
 	});
@@ -1669,19 +1675,21 @@ void McMainWindow::createScanWorker(const QString& folderPath, bool quickScan)
 
 void McMainWindow::onScanProgress(int current, int total, const QString& currentFile)
 {
+	const int sessionCurrent = m_scannedSoFar + current;
 	m_progressBar->setMaximum(total);   // 0 → indeterminate animated bar
 	m_progressBar->setValue(current);
 	if (total > 0)
-		m_statusLabel->setText(tr("Scanning %1/%2: %3").arg(current).arg(total).arg(currentFile));
+		m_statusLabel->setText(tr("Scanning %1/%2: %3").arg(sessionCurrent).arg(total).arg(currentFile));
 	else
-		m_statusLabel->setText(tr("Scanning (%1 found): %2").arg(current).arg(currentFile));
+		m_statusLabel->setText(tr("Scanning (%1 found): %2").arg(sessionCurrent).arg(currentFile));
 }
 
-void McMainWindow::onScanFinished(int /*scanned*/, int /*added*/, int /*updated*/, int /*failed*/, int /*skipped*/, int /*removed*/, QStringList newFiles)
+void McMainWindow::onScanFinished(int scanned, int /*added*/, int /*updated*/, int /*failed*/, int /*skipped*/, int /*removed*/, QStringList newFiles)
 {
 	m_scanThread = nullptr;
 	m_scanWorker = nullptr;
 	m_newFilesFound << newFiles;
+	m_scannedSoFar += scanned;
 
 	if (!m_pendingRoots.isEmpty()) {
 		m_statusLabel->setText(tr("Folder scan done — %1 more to go…").arg(m_pendingRoots.size()));
@@ -1903,8 +1911,10 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 	// absorb an external (sidecar) subtitle into the container — mkvpropedit
 	// can't add tracks, so this is the only way that ever happens.
 	QList<StreamRecord> unmuxedSidecars;
-	for (const StreamRecord& s : streams)
-		if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
+	if (m_profile->mergeSidecarSubtitles()) {
+		for (const StreamRecord& s : streams)
+			if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
+	}
 
 	if (decision.removalCount() == 0 && unmuxedSidecars.isEmpty()) return false;
 
@@ -1974,6 +1984,10 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 	job.estimatedSavedBytes = estimatedSavings;
 	job.streamEstimatesJson = decision.streamEstimatesJson();
 	job.flagChangesJson     = inheritedFlagChanges;
+	// originalStreamsJson and sidecarDeletionsJson are (re)computed from live data
+	// right before the job actually runs (JobQueue::startJob) — a proposed job can
+	// sit in the queue long enough for the on-disk sidecar layout to change, so a
+	// snapshot frozen at proposal time would go stale.
 	(void)db.insertJob(job);
 	return true;
 }

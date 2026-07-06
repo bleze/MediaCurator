@@ -29,6 +29,7 @@
 #include <QItemSelectionModel>
 #include <QThreadPool>
 #include <algorithm>
+#include <cmath>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -65,6 +66,15 @@ namespace {
 constexpr int kPillH       = 18;
 constexpr int kPadH        = 6;
 constexpr int kJobPageSize = 500;
+
+// ETA is extrapolated from an exponentially-smoothed recent throughput rate
+// rather than the whole job's elapsed-time average, so a slow patch (disk
+// contention, a heavy segment) doesn't permanently drag the estimate down after
+// speed recovers. Unlike a hard trailing window, the EMA has no sample-set
+// membership edge to jump at, so the displayed value declines smoothly instead
+// of oscillating tick to tick. kEtaSmoothingTauMs is the time constant: after
+// this many ms of new data, the EMA has folded in ~63% of the change.
+constexpr double kEtaSmoothingTauMs = 30000.0;
 
 static QColor pillColorForStatus(const QString& status)
 {
@@ -499,7 +509,11 @@ void McJobPanel::setupUi()
 	});
 
 	connect(jobDelegate, &McJobCardDelegate::streamToggleRequested,
-	        m_model, &McJobListModel::toggleStream);
+	        this, [this](const QModelIndex& idx, int streamIndex) {
+		QApplication::setOverrideCursor(Qt::WaitCursor);
+		m_model->toggleStream(idx, streamIndex);
+		QApplication::restoreOverrideCursor();
+	});
 
 	connect(jobDelegate, &McJobCardDelegate::imdbPageRequested,
 	        this, [](const QModelIndex& idx) {
@@ -1227,6 +1241,10 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	        [this](qint64 jobId, bool ok, qint64 savedBytes) {
 		m_etaTimer->stop();
 		m_jobTimer.invalidate();
+		m_etaSampleJobId  = -1;
+		m_etaLastSampleMs = -1;
+		m_etaLastProgress = -1;
+		m_etaEmaRatePerMs = -1.0;
 		m_model->updateJob(jobId, ok ? "done" : "failed", savedBytes);
 		updateFooter();
 	});
@@ -1664,52 +1682,90 @@ void McJobPanel::updateFooter()
 	if (done    > 0)    text += tr(" · %1 done").arg(done);
 	if (savedTotal > 0) text += tr(" · %1 reclaimed").arg(formatSaved(savedTotal));
 
-	// ETA — computed from elapsed time and current progress % while a job is running
+	// ETA — computed from an exponentially-smoothed recent throughput rate rather
+	// than the whole job's elapsed-time average, so a slow patch earlier in a long
+	// job doesn't keep dragging the estimate down after speed recovers.
 	if (running > 0 && m_jobTimer.isValid() && m_model) {
 		const qint64 elapsedMs = m_jobTimer.elapsed();
 		for (int row = 0; row < m_model->rowCount(); ++row) {
 			const QModelIndex idx = m_model->index(row, 0);
 			if (idx.data(McJobListModel::StatusRole).toString() != QLatin1String("running")) continue;
 
+			const qint64 jobId    = idx.data(McJobListModel::JobIdRole).toLongLong();
 			const int    progress = idx.data(McJobListModel::ProgressRole).toInt();
 			const qint64 fileSize = idx.data(McJobListModel::FileSizeRole).toLongLong();
+
+			if (jobId != m_etaSampleJobId) {
+				m_etaSampleJobId  = jobId;
+				m_etaLastSampleMs = -1;
+				m_etaLastProgress = -1;
+				m_etaEmaRatePerMs = -1.0;
+			}
+			// Fold in a new instantaneous rate sample whenever progress has actually
+			// moved. Between mkvmerge progress ticks (which can land irregularly),
+			// the EMA value is simply reused as-is rather than recomputed, so the
+			// display doesn't jitter on ticks with no new information.
+			if (m_etaLastProgress >= 0 && progress != m_etaLastProgress
+			    && elapsedMs > m_etaLastSampleMs) {
+				const double dt          = static_cast<double>(elapsedMs - m_etaLastSampleMs);
+				const double dProgress   = static_cast<double>(progress - m_etaLastProgress);
+				const double instantRate = dProgress / dt;   // % per ms
+				if (m_etaEmaRatePerMs < 0.0) {
+					m_etaEmaRatePerMs = instantRate;
+				} else {
+					const double alpha = 1.0 - std::exp(-dt / kEtaSmoothingTauMs);
+					m_etaEmaRatePerMs = alpha * instantRate + (1.0 - alpha) * m_etaEmaRatePerMs;
+				}
+			}
+			if (progress != m_etaLastProgress) {
+				m_etaLastProgress = progress;
+				m_etaLastSampleMs = elapsedMs;
+			}
 
 			// Low thresholds so ETA/speed appear quickly even on huge files — 5% of a
 			// 60+ GB remux could be tens of seconds away. The elapsed-time floor avoids
 			// extrapolating from mkvmerge's near-instant first tick (header/index
 			// writing) before real data throughput has kicked in.
 			if (progress >= 1 && elapsedMs >= 1500) {
-				const double totalEstMs = static_cast<double>(elapsedMs) * 100.0 / progress;
-				double etaSec = (totalEstMs - elapsedMs) / 1000.0;
+				// Prefer the smoothed rate once established; otherwise fall back to
+				// the whole-job average (only relevant in the first few seconds,
+				// before a second progress tick has arrived to seed the EMA).
+				const double ratePerMs = m_etaEmaRatePerMs >= 0.0
+				    ? m_etaEmaRatePerMs
+				    : static_cast<double>(progress) / static_cast<double>(elapsedMs);
 
-				// Average byte rate for the running job so far — reused for both the
-				// queued-jobs ETA extension and the displayed MB/s figure.
-				const double bytesPerMs = fileSize > 0 ? static_cast<double>(fileSize) / totalEstMs : 0.0;
+				// Byte rate for the running job, from the same smoothed rate — reused
+				// for both the queued-jobs ETA extension and the displayed MB/s figure.
+				const double bytesPerMs = fileSize > 0 ? fileSize * ratePerMs / 100.0 : 0.0;
 
-				// Extend with queued jobs using the current byte rate
-				if (bytesPerMs > 0 && queued > 0) {
-					qint64 queuedBytes = 0;
-					for (int r = 0; r < m_model->rowCount(); ++r) {
-						const QModelIndex qi = m_model->index(r, 0);
-						if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
-							queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
+				if (ratePerMs > 0.0) {
+					double etaSec = (100.0 - progress) / ratePerMs / 1000.0;
+
+					// Extend with queued jobs using the current byte rate
+					if (bytesPerMs > 0 && queued > 0) {
+						qint64 queuedBytes = 0;
+						for (int r = 0; r < m_model->rowCount(); ++r) {
+							const QModelIndex qi = m_model->index(r, 0);
+							if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
+								queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
+						}
+						etaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
 					}
-					etaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
-				}
 
-				const int totalSec = qMax(1, static_cast<int>(etaSec));
-				const int h = totalSec / 3600;
-				const int m = (totalSec % 3600) / 60;
-				const int s = totalSec % 60;
-				QString etaStr;
-				if (h > 0)      etaStr = QStringLiteral("%1h %2m").arg(h).arg(m);
-				else if (m > 0) etaStr = QStringLiteral("%1m %2s").arg(m).arg(s);
-				else            etaStr = QStringLiteral("%1s").arg(s);
-				text += tr(" · ~%1 remaining").arg(etaStr);
+					const int totalSec = qMax(1, static_cast<int>(etaSec));
+					const int h = totalSec / 3600;
+					const int m = (totalSec % 3600) / 60;
+					const int s = totalSec % 60;
+					QString etaStr;
+					if (h > 0)      etaStr = QStringLiteral("%1h %2m").arg(h).arg(m);
+					else if (m > 0) etaStr = QStringLiteral("%1m %2s").arg(m).arg(s);
+					else            etaStr = QStringLiteral("%1s").arg(s);
+					text += tr(" · ~%1 remaining").arg(etaStr);
 
-				if (bytesPerMs > 0) {
-					const double mbPerSec = bytesPerMs * 1000.0 / 1048576.0;
-					text += tr(" (%1 MB/s)").arg(mbPerSec, 0, 'f', 1);
+					if (bytesPerMs > 0) {
+						const double mbPerSec = bytesPerMs * 1000.0 / 1048576.0;
+						text += tr(" (%1 MB/s)").arg(mbPerSec, 0, 'f', 1);
+					}
 				}
 			}
 			break;

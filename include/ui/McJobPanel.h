@@ -94,6 +94,14 @@ private:
 	JobQueue*       m_queue               = nullptr;
 	QElapsedTimer   m_jobTimer;
 	QTimer*         m_etaTimer            = nullptr;
+
+	// Exponentially-smoothed throughput rate (% progress per ms) for the currently
+	// running job, used to compute ETA from recent throughput rather than the
+	// whole-job average — see updateFooter(). -1 means "not yet established".
+	qint64  m_etaSampleJobId  = -1;
+	qint64  m_etaLastSampleMs = -1;
+	int     m_etaLastProgress = -1;
+	double  m_etaEmaRatePerMs = -1.0;
 };
 
 } // namespace Mc

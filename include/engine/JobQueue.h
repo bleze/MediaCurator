@@ -71,6 +71,10 @@ private:
 	void runNext();
 	void startJob(const JobRecord& job);
 	void rescanFile(qint64 fileId, const QString& filePath, bool triggerReanalysis = false);
+	// Deletes sidecar subtitle files that were merged into this job's remux output,
+	// and flips their entries in the job's frozen stream snapshot from external to
+	// internal so a "done" card stops showing them as standalone sidecar files.
+	void deleteMergedSidecars(qint64 jobId);
 
 	RemuxJob*      m_currentJob   = nullptr;
 	qint64         m_currentJobId = -1;

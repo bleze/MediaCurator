@@ -107,6 +107,7 @@ private:
 	QStringList      m_pendingRoots;
 	bool             m_quickScanPending = false;   // whether m_pendingRoots is being drained as a quick scan
 	QStringList      m_newFilesFound;   // accumulated across chained roots within one scan session
+	int              m_scannedSoFar = 0;   // files scanned in already-finished roots this session
 	QTimer*          m_analyzeRefreshTimer = nullptr;
 	QThread*         m_loadThread      = nullptr;
 	LibraryLoader*   m_loader          = nullptr;

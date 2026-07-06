@@ -9,7 +9,6 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
 
 namespace Mc {
 
@@ -56,29 +55,6 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 		}
 	}
 
-	// Snapshot streams before rule evaluation so done-job cards can show
-	// removed tracks (the file is rescanned after completion, renumbering indices).
-	QJsonArray origArr;
-	for (const StreamRecord& s : streams) {
-		QJsonObject o;
-		o["idx"]     = s.streamIndex;
-		o["type"]    = s.codecType;
-		o["codec"]   = s.codecName;
-		o["profile"] = s.codecProfile;
-		o["lang"]    = s.language;
-		o["title"]   = s.title;
-		o["ch"]      = s.channels;
-		o["w"]       = s.width;
-		o["h"]       = s.height;
-		o["hdr"]     = s.hdrFormat;
-		o["default"]    = s.isDefault;
-		o["forced"]     = s.isForced;
-		o["original"]   = s.isOriginal;
-		o["commentary"] = s.isCommentary;
-		o["hi"]         = s.isHearingImpaired;
-		origArr.append(o);
-	}
-
 	RuleEngine   engine(m_profile);
 	ActionEngine actions(m_mkvmergePath);
 
@@ -99,8 +75,10 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 	// absorb an external (sidecar) subtitle into the container — mkvpropedit
 	// can't add tracks, so this is the only way that ever happens.
 	QList<StreamRecord> unmuxedSidecars;
-	for (const StreamRecord& s : streams)
-		if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
+	if (m_profile->mergeSidecarSubtitles()) {
+		for (const StreamRecord& s : streams)
+			if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
+	}
 
 	if (decision.removalCount() == 0 && unmuxedSidecars.isEmpty()) return false;
 
@@ -170,11 +148,14 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 	job.commandArgsJson = QJsonDocument(arr).toJson(QJsonDocument::Compact);
 	job.summary             = summary;
 	job.descriptionText     = descLines.join(QLatin1Char('\n'));
-	job.originalStreamsJson  = QJsonDocument(origArr).toJson(QJsonDocument::Compact);
 	job.savedBytes          = estimatedSavings;
 	job.estimatedSavedBytes = estimatedSavings;
 	job.streamEstimatesJson = decision.streamEstimatesJson();
 	job.flagChangesJson     = inheritedFlagChanges;
+	// originalStreamsJson and sidecarDeletionsJson are (re)computed from live data
+	// right before the job actually runs (JobQueue::startJob) — a proposed job can
+	// sit in the queue long enough for the on-disk sidecar layout to change, so a
+	// snapshot frozen at proposal time would go stale.
 	(void)db.insertJob(job);
 
 	emit jobProposed(file.id);
