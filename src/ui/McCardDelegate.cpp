@@ -747,6 +747,19 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 	if (!m_view || obj != m_view->viewport()) return false;
 
 	switch (event->type()) {
+	case QEvent::MouseButtonPress: {
+		const auto* me = static_cast<const QMouseEvent*>(event);
+		if (me->button() != Qt::LeftButton) break;
+		// Use the event's own position rather than a later-polled QCursor::pos() —
+		// if handlePress ends up doing slow synchronous work (e.g. a badge toggle
+		// that rewrites the job's mkvmerge args), the pointer may have moved on by
+		// the time anything downstream asks where it is "now".
+		const QPoint       pos = me->position().toPoint();
+		const QModelIndex  cur = m_view->indexAt(pos);
+		if (cur.isValid())
+			handlePress(pos, m_view->visualRect(cur), m_view->font(), cur);
+		break;
+	}
 	case QEvent::MouseMove: {
 		const auto*  me  = static_cast<const QMouseEvent*>(event);
 		const QPoint pos = me->position().toPoint();

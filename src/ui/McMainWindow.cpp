@@ -473,13 +473,6 @@ void McMainWindow::setupUi()
 		QApplication::restoreOverrideCursor();
 	});
 
-	connect(m_listView, &QAbstractItemView::pressed,
-	        this, [this, fileDelegate](const QModelIndex& idx) {
-		if (!idx.isValid()) return;
-		if (!(QApplication::mouseButtons() & Qt::LeftButton)) return;
-		const QPoint pos = m_listView->viewport()->mapFromGlobal(QCursor::pos());
-		fileDelegate->handlePress(pos, m_listView->visualRect(idx), m_listView->font(), idx);
-	});
 	m_listView->setItemDelegate(fileDelegate);
 
 	// When stream layout changes, the delegate's size cache may hold stale heights.

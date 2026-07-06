@@ -523,15 +523,6 @@ void McJobPanel::setupUi()
 			    QUrl(QStringLiteral("https://www.imdb.com/title/%1/").arg(id)));
 	});
 
-	// pressed fires for all buttons — only forward left-clicks to handlePress
-	connect(m_listView, &QAbstractItemView::pressed,
-	        this, [this, jobDelegate](const QModelIndex& idx) {
-		if (!idx.isValid()) return;
-		if (!(QApplication::mouseButtons() & Qt::LeftButton)) return;
-		const QPoint pos = m_listView->viewport()->mapFromGlobal(QCursor::pos());
-		jobDelegate->handlePress(pos, m_listView->visualRect(idx), m_listView->font(), idx);
-	});
-
 	// Stale size cache: the cache is keyed by row number. After a model reset the
 	// row-to-data mapping changes, so old entries would return wrong heights.
 	connect(m_model, &QAbstractListModel::modelReset,
