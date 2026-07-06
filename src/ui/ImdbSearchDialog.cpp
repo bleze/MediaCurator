@@ -277,6 +277,7 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	: QDialog(parent, Qt::Dialog)
 	, m_videoPath(videoPath)
 	, m_tmdbApiKey(tmdbApiKey)
+	, m_existingImdbId(existingImdbId)
 	, m_existingPosterPath(existingPosterPath)
 	, m_existingFanartPath(existingFanartPath)
 	, m_nam([] { static QNetworkAccessManager* s = new QNetworkAccessManager; return s; }())
@@ -591,9 +592,12 @@ QByteArray ImdbSearchDialog::selectedImageData()  const
 	if (!m_resultsList) return {};
 	// If user explicitly picked from gallery, use the TMDB thumbnail
 	if (m_userSelectedPoster) return m_thumbDataByRow.value(m_resultsList->currentRow());
-	// No explicit selection: prefer the existing library poster (preserves quality and avoids
-	// overwriting a higher-resolution image with the w92 TMDB thumbnail)
-	if (!m_existingPosterPath.isEmpty()) {
+	// No explicit gallery selection AND the resolved IMDb id is unchanged from what was
+	// already on file: prefer the existing library poster (preserves quality and avoids
+	// overwriting a higher-resolution image with the w92 TMDB thumbnail). If the user picked
+	// a different title, the id differs and we must fall through to download its own poster.
+	if (!m_existingPosterPath.isEmpty() && !m_existingImdbId.isEmpty()
+	    && selectedImdbId() == m_existingImdbId) {
 		QFile f(m_existingPosterPath);
 		if (f.open(QIODevice::ReadOnly)) {
 			const QByteArray bytes = f.readAll();

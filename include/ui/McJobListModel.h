@@ -31,6 +31,7 @@ public:
 		SummaryRole    = Qt::UserRole + 8,
 		ProgressRole   = Qt::UserRole + 9,   // int 0-100, only meaningful when status=="running"
 		PosterRole     = Qt::UserRole + 10,  // QString local image path, empty if none
+		PosterVersionRole = Qt::UserRole + 21,  // int — increments each time the poster at PosterRole's path changes
 		FileSizeRole   = Qt::UserRole + 11,  // qint64 original file size in bytes
 		FilePathRole   = Qt::UserRole + 12,  // QString absolute file path
 		ImdbIdRole     = Qt::UserRole + 13,  // QString IMDb tt-id, empty if not linked
@@ -124,6 +125,7 @@ private:
 	QHash<qint64, int>     m_progress;       // jobId → 0-100
 	QHash<qint64, qint64>  m_outputSize;     // jobId → live .tmp output size in bytes
 	QHash<qint64, QString> m_posterPaths;    // fileId → local poster image path
+	QHash<qint64, int>     m_posterVersions; // fileId → version counter (increments on update)
 	QHash<qint64, QString> m_fanartPaths;    // fileId → local fanart (backdrop) path
 	QHash<qint64, QString> m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer
 	QTimer                 m_fanartBatchTimer;

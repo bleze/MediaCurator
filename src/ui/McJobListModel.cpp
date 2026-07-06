@@ -301,6 +301,7 @@ QHash<QString, int> McJobListModel::countsByStatus() const
 void McJobListModel::onPosterReady(qint64 fileId, const QString& imagePath)
 {
 	m_posterPaths.insert(fileId, imagePath);
+	m_posterVersions[fileId]++;
 	for (int i = 0; i < m_entries.size(); ++i) {
 		if (m_entries[i].job.fileId == fileId) {
 			const QModelIndex idx = index(i);
@@ -524,6 +525,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case ProgressRole:      return m_progress.value(e.job.jobId, 0);
 	case OutputSizeRole:    return m_outputSize.value(e.job.jobId, 0);
 	case PosterRole:        return m_posterPaths.value(e.job.fileId);
+	case PosterVersionRole: return m_posterVersions.value(e.job.fileId, 0);
 	case FanartRole:        return m_fanartPaths.value(e.job.fileId);
 	case FileSizeRole:      return e.job.sizeBytes;
 	case FilePathRole:      return e.job.filePath;

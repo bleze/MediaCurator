@@ -114,6 +114,7 @@ private:
 	QString                m_selectedTitle;
 	QString                m_selectedPosterPath;
 	QHash<int, QByteArray> m_thumbDataByRow;
+	QString                m_existingImdbId;
 	QString                m_existingPosterPath;
 	QString                m_existingFanartPath;
 	int     m_selectedYear        = 0;

@@ -229,6 +229,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.filePath         = index.data(McJobListModel::FilePathRole).toString();
 		d.sizeBytes        = index.data(McJobListModel::FileSizeRole).toLongLong();
 		d.posterPath       = index.data(McJobListModel::PosterRole).toString();
+		d.posterVersion    = index.data(McJobListModel::PosterVersionRole).toInt();
 		d.imdbId           = index.data(McJobListModel::ImdbIdRole).toString();
 		d.rating           = index.data(McJobListModel::RatingRole).toDouble();
 		d.status           = index.data(McJobListModel::StatusRole).toString();
