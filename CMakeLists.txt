@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(MediaCurator
     VERSION 1.0.0
     DESCRIPTION "Smart media library curator — scan, filter, and clean your video collection"
-    HOMEPAGE_URL "https://github.com/yourusername/MediaCurator"
+    HOMEPAGE_URL "https://github.com/bleze/MediaCurator"
     LANGUAGES CXX
 )
 

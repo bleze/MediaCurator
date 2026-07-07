@@ -32,6 +32,7 @@
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
 #include "core/LibraryLoader.h"
+#include "core/UpdateChecker.h"
 #include "core/UserProfile.h"
 
 #ifdef Q_OS_WIN
@@ -448,6 +449,14 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
 	        m_listModel, &McFileListModel::onTmdbDataReady);
+
+	// ── Update checker ────────────────────────────────────────────────────────
+	connect(&UpdateChecker::instance(), &UpdateChecker::updateAvailable,
+	        this, &McMainWindow::onUpdateAvailable);
+	connect(&UpdateChecker::instance(), &UpdateChecker::upToDate,
+	        this, &McMainWindow::onUpdateUpToDate);
+	connect(&UpdateChecker::instance(), &UpdateChecker::checkFailed,
+	        this, &McMainWindow::onUpdateCheckFailed);
 
 	startLibraryLoader();
 }
@@ -1389,6 +1398,10 @@ void McMainWindow::setupMenuBar()
 	});
 	helpMenu->addAction(legendAction);
 	helpMenu->addSeparator();
+	m_actCheckUpdates = new QAction(svgIcon(":/icons/system_update.svg"), tr("Check for &Updates…"), this);
+	connect(m_actCheckUpdates, &QAction::triggered, this, &McMainWindow::onCheckForUpdates);
+	helpMenu->addAction(m_actCheckUpdates);
+	helpMenu->addSeparator();
 	auto* donateMenuAction = new QAction(svgIcon(":/icons/dollar.svg"), tr("&Donate…"), this);
 	connect(donateMenuAction, &QAction::triggered, this, &McMainWindow::onDonate);
 	helpMenu->addAction(donateMenuAction);
@@ -1552,6 +1565,8 @@ void McMainWindow::showEvent(QShowEvent* event)
 				AppSettings::instance().setValue("onboarding/seen", true);
 			});
 		}
+
+		QTimer::singleShot(2000, this, [] { UpdateChecker::instance().check(/*silent=*/true); });
 	} else {
 		// Un-minimise / screen restore: just sync state, don't override user's choice.
 		updateJobPanelVisibility();
@@ -2685,6 +2700,50 @@ void McMainWindow::onDonate()
 
 	btnBox->button(QDialogButtonBox::Close)->setFocus();
 	dlg->exec();
+}
+
+void McMainWindow::onCheckForUpdates()
+{
+	m_actCheckUpdates->setEnabled(false);
+	UpdateChecker::instance().check(/*silent=*/false);
+}
+
+void McMainWindow::onUpdateAvailable(QString version, QString htmlUrl, QString releaseNotes, bool /*silent*/)
+{
+	m_actCheckUpdates->setEnabled(true);
+
+	QMessageBox box(this);
+	box.setIcon(QMessageBox::Information);
+	box.setWindowTitle(tr("Update Available"));
+	box.setText(tr("MediaCurator %1 is available (you have %2).")
+	                .arg(version, QCoreApplication::applicationVersion()));
+	if (!releaseNotes.isEmpty())
+		box.setDetailedText(releaseNotes);
+	auto* viewBtn = box.addButton(tr("View Release"), QMessageBox::ActionRole);
+	auto* skipBtn = box.addButton(tr("Skip This Version"), QMessageBox::DestructiveRole);
+	box.addButton(tr("Remind Me Later"), QMessageBox::RejectRole);
+	box.exec();
+
+	if (box.clickedButton() == viewBtn)
+		QDesktopServices::openUrl(QUrl(htmlUrl));
+	else if (box.clickedButton() == skipBtn)
+		UpdateChecker::instance().skipVersion(version);
+}
+
+void McMainWindow::onUpdateUpToDate(bool silent)
+{
+	m_actCheckUpdates->setEnabled(true);
+	if (silent) return;
+	QMessageBox::information(this, tr("Check for Updates"),
+		tr("You're running the latest version (%1).").arg(QCoreApplication::applicationVersion()));
+}
+
+void McMainWindow::onUpdateCheckFailed(QString error, bool silent)
+{
+	m_actCheckUpdates->setEnabled(true);
+	if (silent) return;
+	QMessageBox::warning(this, tr("Check for Updates"),
+		tr("Could not check for updates:\n%1").arg(error));
 }
 
 void McMainWindow::onShowPreview(qint64 fileId)

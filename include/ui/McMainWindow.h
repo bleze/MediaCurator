@@ -59,6 +59,10 @@ private slots:
 	void onShowPreview(qint64 fileId);
 	void onSimulate();
 	void onSimulateFinished(int analyzed, int filesAffected);
+	void onCheckForUpdates();
+	void onUpdateAvailable(QString version, QString htmlUrl, QString releaseNotes, bool silent);
+	void onUpdateUpToDate(bool silent);
+	void onUpdateCheckFailed(QString error, bool silent);
 
 private:
 	void setupUi();
@@ -91,6 +95,7 @@ private:
 	QAction*     m_actRefresh       = nullptr;
 	QAction*  m_actToggleQueue   = nullptr;
 	QWidget*  m_menuQueueBtn     = nullptr;  // view-menu McQueueToggle for the queue toggle
+	QAction*  m_actCheckUpdates  = nullptr;
 
 	UserProfile*     m_profile      = nullptr;
 	McFileListModel* m_listModel    = nullptr;

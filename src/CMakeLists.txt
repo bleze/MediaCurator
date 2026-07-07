@@ -7,6 +7,7 @@ set(MC_SOURCES
     core/ExternalTools.cpp
     core/LibraryLoader.cpp
     core/UserProfile.cpp
+    core/UpdateChecker.cpp
 
     # Scanner
     scanner/FfprobeScanner.cpp
@@ -63,6 +64,7 @@ set(MC_HEADERS
     ../include/core/LibraryLoader.h
     ../include/core/UserProfile.h
     ../include/core/ExternalTools.h
+    ../include/core/UpdateChecker.h
 
     # Scanner
     ../include/scanner/FfprobeScanner.h
@@ -213,6 +215,7 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/push_pin.svg
         resources/icons/translate.svg
         resources/icons/chat.svg
+        resources/icons/system_update.svg
 )
 
 # Country flags for track-badge language icons (lipis/flag-icons, MIT —

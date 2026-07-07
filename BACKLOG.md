@@ -107,7 +107,7 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 - [x] `[P2]` About dialog — version, license info, Ko-fi / GitHub Sponsors link
 - [x] `[P2]` GitHub Actions CI — Windows build + test on push
 - [x] `[P3]` macOS/Linux CI jobs — all three platforms build and package on push
-- [ ] `[P3]` Automatic update check (compare GitHub release tag)
+- [x] `[P3]` Automatic update check (compare GitHub release tag)
 
 ---
 
