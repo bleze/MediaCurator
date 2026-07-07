@@ -6,7 +6,7 @@
 
 Modern movie files often ship with 8–15 audio tracks covering every language used in distribution, plus multiple subtitle streams, commentary tracks, and secondary mixes. If you only watch films in one or two languages, all of those extra streams are dead weight. A typical Blu-ray rip can carry 2–3 GB of audio tracks you will never use.
 
-MediaCurator scans your library, identifies which tracks you actually want, and queues up lossless remux operations (via **mkvmerge**) to remove the rest. Because the video stream is never touched, there is zero quality loss and processing is fast — typically a few seconds per file.
+MediaCurator scans your library, identifies which tracks you actually want, and queues up lossless remux operations (via **mkvmerge**) to remove the rest. Because the video stream is never touched, there is zero quality loss and no re-encoding — processing is far faster than a transcode, though large files can still take several minutes.
 
 **Practical savings:** removing a 5.1 DTS-HD MA English track plus a Dolby Atmos track from a 4K Blu-ray rip can save 2–4 GB per file. For a library of 200 films that is 400–800 GB — the equivalent of a mid-size NAS drive.
 
@@ -22,7 +22,7 @@ For a small test library of 5 movies, here is what MediaCurator looks like in ac
 |---|---|
 | ![Job queue with pending removals](docs/screenshots/job-queue.png)<br>*Proposed track removals queued for review — nothing is touched until you approve.* | ![Completed job queue showing space saved per file](docs/screenshots/job-queue-done.png)<br>*Finished jobs show exactly how much space was reclaimed, file by file.* |
 
-After setting rules to retain only english and danish audio and subtitle tracks (no commentary), the estimate is that we can reclaim 10 GB of disk space, and the final result is exactly that — **10 GB** of irrelevant or redundant audio tracks and subtitles removed.
+After setting rules to retain only english and danish audio and subtitle tracks (no commentary), the estimate is that we can reclaim 10 GB of disk space, and the final result is exactly that — **10 GB** of irrelevant or redundant audio tracks and subtitles removed. 9% disk space reclaimed.
 
 ## Features
 
