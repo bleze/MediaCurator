@@ -19,6 +19,38 @@
 
 Q_LOGGING_CATEGORY(lcOS, "mc.opensubtitles")
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+static FILETIME toFileTime(const QDateTime& dt)
+{
+	const qint64 ns100 = (dt.toMSecsSinceEpoch() + Q_INT64_C(11644473600000)) * 10000;
+	FILETIME ft;
+	ft.dwLowDateTime  = static_cast<DWORD>(ns100 & 0xFFFFFFFF);
+	ft.dwHighDateTime = static_cast<DWORD>((ns100 >> 32) & 0xFFFFFFFF);
+	return ft;
+}
+// Restore the folder's creation/modified timestamps after dropping new .srt files
+// into it, so downloading subtitles doesn't bubble the folder up as "newest" in
+// media libraries that sort by Date Modified. Mirrors preserveTimestamps() in
+// RemuxJob.cpp/JobQueue.cpp, but needs FILE_FLAG_BACKUP_SEMANTICS to open a directory handle.
+static void preserveDirTimestamps(const QString& dirPath, const QDateTime& origCreated, const QDateTime& origModified)
+{
+	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(dirPath.utf16()),
+	                       FILE_WRITE_ATTRIBUTES,
+	                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                       nullptr, OPEN_EXISTING,
+	                       FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	FILETIME ftCreated  = origCreated.isValid()  ? toFileTime(origCreated)  : FILETIME{};
+	FILETIME ftModified = origModified.isValid() ? toFileTime(origModified) : FILETIME{};
+	SetFileTime(h,
+	            origCreated.isValid()  ? &ftCreated  : nullptr,
+	            nullptr,
+	            origModified.isValid() ? &ftModified : nullptr);
+	CloseHandle(h);
+}
+#endif
+
 namespace Mc {
 
 // ── ISO 639-2 → ISO 639-1 conversion ─────────────────────────────────────────
@@ -369,6 +401,11 @@ void SubtitleDownloadWorker::run()
 	const QString   dir      = fi.absolutePath();
 	const QString   basename = fi.completeBaseName();
 
+	// Capture the folder's timestamps before dropping new .srt files into it.
+	const QFileInfo dirFi(dir);
+	const QDateTime dirOrigCreated  = dirFi.birthTime();
+	const QDateTime dirOrigModified = dirFi.lastModified();
+
 	int downloaded = 0, failed = 0;
 
 	// Sequential, single-client downloads: OpenSubtitles' API flags concurrent
@@ -399,6 +436,11 @@ void SubtitleDownloadWorker::run()
 			++failed;
 		}
 	}
+
+#ifdef Q_OS_WIN
+	if (downloaded > 0)
+		preserveDirTimestamps(dir, dirOrigCreated, dirOrigModified);
+#endif
 
 	QString statusMsg;
 	if (downloaded > 0)
