@@ -114,6 +114,7 @@ signals:
 	void posterReady(qint64 fileId, QString imagePath);
 	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
 	void tmdbDataReady(qint64 fileId, QString title, int year, double rating);
+	void imdbIdSaved(qint64 fileId, QString imdbId);
 
 private slots:
 	void processNext()
@@ -176,6 +177,10 @@ private:
 			if (!resolvedImdbId.isEmpty() && !info.title.isEmpty()
 			    && !QFile::exists(NfoParser::nfoPathFor(filePath)))
 				NfoParser::writeMovieNfo(filePath, resolvedImdbId, info.title, info.year);
+			// Newly-discovered imdbId (title-search recovery) needs to reach the live
+			// UI models too -- upsertPosterRecord() alone only updates the DB.
+			if (!resolvedImdbId.isEmpty())
+				emit imdbIdSaved(fileId, resolvedImdbId);
 		};
 
 		// Skip files that are already fully done (poster + rating + title).
@@ -602,6 +607,8 @@ void PosterManager::start(const QString& tmdbApiKey)
 	        this,     &PosterManager::fanartReady);
 	connect(m_worker, &PosterWorker::tmdbDataReady,
 	        this,     &PosterManager::tmdbDataReady);
+	connect(m_worker, &PosterWorker::imdbIdSaved,
+	        this,     &PosterManager::imdbIdSaved);
 
 	connect(this, &PosterManager::workerTmdbKeyChanged,
 	        m_worker, &PosterWorker::setTmdbApiKey,
