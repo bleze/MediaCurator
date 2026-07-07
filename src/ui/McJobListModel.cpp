@@ -363,6 +363,18 @@ void McJobListModel::updateOutputSize(qint64 jobId, qint64 bytes)
 	}
 }
 
+void McJobListModel::updatePhase(qint64 jobId, const QString& label)
+{
+	m_phaseLabel.insert(jobId, label);
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.jobId == jobId) {
+			const QModelIndex idx = index(i);
+			emit dataChanged(idx, idx, { PhaseLabelRole });
+			return;
+		}
+	}
+}
+
 bool McJobListModel::statusMatchesFilter(const QString& status) const
 {
 	if (m_filterStatus.isEmpty()) return true;
@@ -524,6 +536,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case SummaryRole:       return e.job.summary;
 	case ProgressRole:      return m_progress.value(e.job.jobId, 0);
 	case OutputSizeRole:    return m_outputSize.value(e.job.jobId, 0);
+	case PhaseLabelRole:    return m_phaseLabel.value(e.job.jobId);
 	case PosterRole:        return m_posterPaths.value(e.job.fileId);
 	case PosterVersionRole: return m_posterVersions.value(e.job.fileId, 0);
 	case FanartRole:        return m_fanartPaths.value(e.job.fileId);

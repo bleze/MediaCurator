@@ -258,10 +258,14 @@ McMainWindow::McMainWindow(QWidget* parent)
 	m_jobQueue = new JobQueue(this);
 	m_jobQueue->setWriteJobLog(m_profile->writeJobLog());
 	m_jobQueue->setMergeSidecarSubtitles(m_profile->mergeSidecarSubtitles());
+	m_jobQueue->setUseLocalStaging(m_profile->useLocalStaging());
+	m_jobQueue->setLocalStagingDir(m_profile->localStagingDir());
 
 	connect(m_profile, &UserProfile::profileChanged, this, [this]() {
 		m_jobQueue->setWriteJobLog(m_profile->writeJobLog());
 		m_jobQueue->setMergeSidecarSubtitles(m_profile->mergeSidecarSubtitles());
+		m_jobQueue->setUseLocalStaging(m_profile->useLocalStaging());
+		m_jobQueue->setLocalStagingDir(m_profile->localStagingDir());
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 	});
 

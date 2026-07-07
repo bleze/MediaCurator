@@ -237,6 +237,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.durationSec      = index.data(McJobListModel::DurationRole).toDouble();
 		d.progress         = index.data(McJobListModel::ProgressRole).toInt();
 		d.outputSizeBytes  = index.data(McJobListModel::OutputSizeRole).toLongLong();
+		d.phaseLabel       = index.data(McJobListModel::PhaseLabelRole).toString();
 		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
 		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued") || d.status == QLatin1String("failed"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
@@ -1280,8 +1281,10 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 			// Status pill (with progress/saved annotation if relevant)
 			QString pillText = statusLabel(d.status);
-			if (d.status == QLatin1String("running") && d.progress > 0)
-				pillText = QStringLiteral("Running %1%\xE2\x80\xA6").arg(d.progress);
+			if (d.status == QLatin1String("running") && d.progress > 0) {
+				const QString phase = d.phaseLabel.isEmpty() ? tr("Running") : d.phaseLabel;
+				pillText = QStringLiteral("%1 %2%\xE2\x80\xA6").arg(phase).arg(d.progress);
+			}
 
 			const bool isPending = (d.status == QLatin1String("proposed")
 			                     || d.status == QLatin1String("queued")

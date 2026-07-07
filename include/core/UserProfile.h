@@ -70,6 +70,16 @@ public:
 	bool writeJobLog() const { return m_writeJobLog; }
 	void setWriteJobLog(bool v);
 
+	// Mux to a local folder first, then copy the finished file back to its real
+	// destination — avoids reading and writing the same NAS share at once.
+	bool useLocalStaging() const { return m_useLocalStaging; }
+	void setUseLocalStaging(bool v);
+
+	// Local folder used for staged muxing (ignored when useLocalStaging is false
+	// or this is empty — falls back to muxing in place).
+	QString localStagingDir() const { return m_localStagingDir; }
+	void setLocalStagingDir(const QString& dir);
+
 	// TMDB API key for poster/metadata enrichment (empty = feature disabled)
 	QString tmdbApiKey() const { return m_tmdbApiKey; }
 	void setTmdbApiKey(const QString& key);
@@ -134,6 +144,8 @@ private:
 	bool        m_mergeSidecarSubtitles     = true;
 	bool        m_removeMjpegCoverArt       = true;
 	bool        m_writeJobLog               = false;
+	bool        m_useLocalStaging          = false;
+	QString     m_localStagingDir;
 	QString     m_tmdbApiKey;
 	QString     m_openSubtitlesApiKey;
 	QString     m_openSubtitlesUsername;

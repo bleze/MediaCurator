@@ -11,6 +11,7 @@
 #include <QTextStream>
 #include <QThreadPool>
 
+#include <algorithm>
 #include <filesystem>
 
 #ifdef Q_OS_WIN
@@ -49,6 +50,7 @@ RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
 				   const QString& sourceFilePath,
 				   const QString& descriptionText,
 				   bool writeLog,
+				   const QString& finalOutputPathOverride,
 				   QObject* parent)
 	: QObject(parent)
 	, m_jobId(jobId)
@@ -61,10 +63,17 @@ RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
 	if (args.size() >= 2 && args.first() == QLatin1String("-o"))
 		m_outputPath = args.at(1);
 
-	// Strip .tmp suffix to get the final destination path
-	m_finalOutputPath = m_outputPath.endsWith(QLatin1String(".tmp"))
-		? m_outputPath.left(m_outputPath.length() - 4)
-		: m_outputPath;
+	if (!finalOutputPathOverride.isEmpty()) {
+		// -o points at a local staging file — the final destination can't be
+		// derived from it by string manipulation, since it lives elsewhere.
+		m_finalOutputPath = finalOutputPathOverride;
+		m_stagedLocally   = true;
+	} else {
+		// Strip .tmp suffix to get the final destination path
+		m_finalOutputPath = m_outputPath.endsWith(QLatin1String(".tmp"))
+			? m_outputPath.left(m_outputPath.length() - 4)
+			: m_outputPath;
+	}
 
 	// Real input filesystem path — ISO files have a "bluray://" or "dvd://" prefix
 	// that mkvmerge needs but the filesystem does not understand.
@@ -86,6 +95,45 @@ RemuxJob::~RemuxJob()
 	}
 }
 
+bool RemuxJob::copyFileWithProgress(const QString& srcPath, const QString& dstPath,
+                                     qint64 totalBytes,
+                                     const std::function<void(int, qint64)>& onProgress,
+                                     const std::atomic<bool>* cancelRequested)
+{
+	QFile in(srcPath);
+	if (!in.open(QIODevice::ReadOnly))
+		return false;
+	QFile out(dstPath);
+	if (!out.open(QIODevice::WriteOnly))
+		return false;
+
+	constexpr qint64 kChunkSize = 8 * 1024 * 1024;
+	QByteArray buffer(kChunkSize, Qt::Uninitialized);
+
+	qint64 copied      = 0;
+	int    lastPercent = -1;
+	while (!in.atEnd()) {
+		if (cancelRequested && cancelRequested->load())
+			return false;
+
+		const qint64 bytesRead = in.read(buffer.data(), kChunkSize);
+		if (bytesRead < 0 || out.write(buffer.constData(), bytesRead) != bytesRead)
+			return false;
+
+		copied += bytesRead;
+		const int percent = totalBytes > 0
+		    ? static_cast<int>(std::min<qint64>(100, copied * 100 / totalBytes))
+		    : 0;
+		if (percent != lastPercent && onProgress) {
+			onProgress(percent, copied);
+			lastPercent = percent;
+		}
+	}
+	out.close();
+	in.close();
+	return out.error() == QFile::NoError && in.error() == QFile::NoError;
+}
+
 void RemuxJob::run()
 {
 	m_originalSize = QFileInfo(m_inputPath).size();
@@ -104,6 +152,9 @@ void RemuxJob::run()
 
 void RemuxJob::cancel()
 {
+	// Also observed by the staged copy-back loop in the background finalize
+	// thread, so Cancel takes effect even after mkvmerge itself has exited.
+	m_cancelRequested = true;
 	if (m_process && m_process->state() != QProcess::NotRunning)
 		m_process->kill();
 }
@@ -168,13 +219,14 @@ void RemuxJob::onProcessFinished(int exitCode)
 		const qint64      originalSize    = m_originalSize;
 		const QString     log             = m_log;
 		const bool        writeLog        = m_writeLog;
+		const bool        stagedLocally   = m_stagedLocally;
 		const QString     mkvmergePath    = m_mkvmergePath;
 		const QStringList args            = m_args;
 		const QString     descriptionText = m_descriptionText;
 
 		QThreadPool::globalInstance()->start(
 		    [this, outputPath, finalOutputPath, inputPath, originalSize, log,
-		     writeLog, mkvmergePath, args, descriptionText, exitCode]() mutable {
+		     writeLog, stagedLocally, mkvmergePath, args, descriptionText, exitCode]() mutable {
 			QString finishLog  = log;
 			qint64  savedBytes = 0;
 
@@ -186,6 +238,63 @@ void RemuxJob::onProcessFinished(int exitCode)
 			const QDateTime origModified = origFi.lastModified();
 
 			const bool isInPlace = (finalOutputPath == inputPath);
+			if (stagedLocally) {
+				// outputPath is a local staging file — it lives on a different
+				// volume than finalOutputPath, so a plain rename can't work.
+				// Copy it to a same-directory tmp beside the real destination
+				// first (atomic-on-destination, same naming convention as the
+				// non-staged path below), then do the fast same-volume rename.
+				const QFileInfo finalFi(finalOutputPath);
+				const QString remoteTmp = finalFi.absolutePath() + QLatin1Char('/')
+				                          + finalFi.fileName() + QStringLiteral(".tmp");
+
+				QMetaObject::invokeMethod(this, [this] {
+					emit phaseChanged(tr("Copying to NAS"));
+				}, Qt::QueuedConnection);
+
+				const bool copyOk = RemuxJob::copyFileWithProgress(
+				    outputPath, remoteTmp, outputSize,
+				    [this](int pct, qint64 bytes) {
+					QMetaObject::invokeMethod(this, [this, pct, bytes] {
+						emit progressChanged(pct, bytes);
+					}, Qt::QueuedConnection);
+				    }, &m_cancelRequested);
+
+				if (copyOk) {
+					try {
+						std::filesystem::rename(remoteTmp.toStdWString(),
+						                        finalOutputPath.toStdWString());
+#ifdef Q_OS_WIN
+						preserveTimestamps(finalOutputPath, origCreated, origModified);
+#endif
+						QFile::remove(outputPath); // drop the local staged tmp
+						if (!isInPlace)
+							QFile::remove(inputPath);
+						savedBytes = qMax(0LL, originalSize - outputSize);
+					} catch (const std::filesystem::filesystem_error& e) {
+						const bool destExists = QFileInfo::exists(finalOutputPath);
+						const bool srcGone    = !QFileInfo::exists(remoteTmp);
+						if (destExists && srcGone) {
+							savedBytes = qMax(0LL, originalSize - outputSize);
+							QFile::remove(outputPath);
+							if (!isInPlace) QFile::remove(inputPath);
+							finishLog += QStringLiteral("\nNote: rename reported a network error but the file is in the correct state (%1)").arg(e.what());
+						} else {
+							finishLog += QStringLiteral(
+							    "\nCopied to %1 but the final rename failed: %2. Muxed output also retained locally at %3.")
+							    .arg(remoteTmp, e.what(), outputPath);
+							exitCode = -2;
+						}
+					}
+				} else {
+					QFile::remove(remoteTmp); // best-effort cleanup of a partial copy
+					finishLog += m_cancelRequested
+					    ? QStringLiteral("\nCancelled while copying staged output back to %1.").arg(finalOutputPath)
+					    : QStringLiteral("\nCopying staged output to %1 failed. Muxed output retained locally at %2.")
+					          .arg(finalOutputPath, outputPath);
+					exitCode = -2;
+				}
+			} else {
 			try {
 				// Rename temp file to final destination (same as input for MKV in-place)
 				std::filesystem::rename(outputPath.toStdWString(),
@@ -213,6 +322,7 @@ void RemuxJob::onProcessFinished(int exitCode)
 					finishLog += QStringLiteral("\nRename failed: %1").arg(e.what());
 					exitCode = -2;
 				}
+			}
 			}
 
 			if ((exitCode == 0 || exitCode == 1) && writeLog) {

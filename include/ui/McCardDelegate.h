@@ -128,6 +128,7 @@ private:
 		int                 progress       = 0;
 		qint64              savedBytes     = 0;
 		qint64              outputSizeBytes = 0;  // live .tmp size while running
+		QString             phaseLabel;             // sub-phase label (e.g. "Copying to NAS"), empty = default "Running"
 		bool                checked        = false;
 		bool                toggleable     = false;  // true for proposed jobs
 	};

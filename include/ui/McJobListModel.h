@@ -42,6 +42,7 @@ public:
 		FlagChangesRole       = Qt::UserRole + 18,  // QString flag_changes_json for this job
 		JobTypeRole           = Qt::UserRole + 19,  // QString "remux" | "tag_edit"
 		OutputSizeRole        = Qt::UserRole + 20,  // qint64 live .tmp output size, only meaningful when status=="running"
+		PhaseLabelRole        = Qt::UserRole + 22,  // QString sub-phase label (e.g. "Copying to NAS"), empty = default "Running"
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -106,6 +107,7 @@ public slots:
 	void setRatingForFile(qint64 fileId, double rating);
 	void updateProgress(qint64 jobId, int percent);
 	void updateOutputSize(qint64 jobId, qint64 bytes);
+	void updatePhase(qint64 jobId, const QString& label);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void updateImdbId(qint64 fileId, const QString& imdbId);
@@ -124,6 +126,7 @@ private:
 	QList<Qt::CheckState>  m_checkStates;
 	QHash<qint64, int>     m_progress;       // jobId → 0-100
 	QHash<qint64, qint64>  m_outputSize;     // jobId → live .tmp output size in bytes
+	QHash<qint64, QString> m_phaseLabel;     // jobId → sub-phase label, empty = default "Running"
 	QHash<qint64, QString> m_posterPaths;    // fileId → local poster image path
 	QHash<qint64, int>     m_posterVersions; // fileId → version counter (increments on update)
 	QHash<qint64, QString> m_fanartPaths;    // fileId → local fanart (backdrop) path

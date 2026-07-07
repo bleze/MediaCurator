@@ -9,6 +9,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -244,8 +246,9 @@ void JobQueue::startJob(const JobRecord& job)
 	// Disk space guard — need at least as much free space as the source file.
 	// Network drives (UNC paths, mapped drives) may return isValid()=false or
 	// report inaccurate values; skip the check silently in that case.
+	std::optional<FileRecord> fileOpt;
 	if (fileId > 0) {
-		const auto fileOpt = db.fileById(fileId);
+		fileOpt = db.fileById(fileId);
 		if (fileOpt && fileOpt->sizeBytes > 0) {
 			const QStorageInfo storage(QFileInfo(fileOpt->path).absolutePath());
 			if (!storage.isValid() || storage.isReadOnly()) {
@@ -324,8 +327,39 @@ void JobQueue::startJob(const JobRecord& job)
 		}
 	}
 
+	// Local staging — redirect mkvmerge's -o target to a local folder so the NAS
+	// (or whatever volume the source lives on) is only read, not written to, while
+	// muxing. The finished file is copied back to its real destination afterward
+	// (see RemuxJob's staged-finish path). Falls back to muxing in place whenever
+	// staging is off, unconfigured, or there isn't enough local free space —
+	// this never blocks the queue.
+	QString finalOutputPathOverride;
+	if (m_useLocalStaging && !m_localStagingDir.isEmpty()
+	        && args.size() >= 2 && args.first() == QLatin1String("-o")) {
+		const QString proposedOutput = args.at(1);
+		const QString realFinalPath  = proposedOutput.endsWith(QLatin1String(".tmp"))
+			? proposedOutput.left(proposedOutput.length() - 4)
+			: proposedOutput;
+
+		const QStorageInfo stagingStorage(m_localStagingDir);
+		const qint64 neededBytes = fileOpt ? fileOpt->sizeBytes : 0;
+		if (stagingStorage.isValid() && !stagingStorage.isReadOnly()
+		        && (neededBytes <= 0 || stagingStorage.bytesAvailable() >= neededBytes)) {
+			const QString localTmp = QDir(m_localStagingDir).filePath(
+				QString::number(jobId) + QLatin1Char('_') + QFileInfo(realFinalPath).fileName()
+				+ QStringLiteral(".tmp"));
+			args[1] = localTmp;
+			finalOutputPathOverride = realFinalPath;
+		} else {
+			emit warning(QStringLiteral(
+			    "Not enough space in the local staging folder for \"%1\" — muxing in place instead.")
+			    .arg(QFileInfo(realFinalPath).fileName()));
+		}
+	}
+
 	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
-	m_currentJob    = new RemuxJob(jobId, mkvmergePath, args, sourcePath, descriptionText, m_writeJobLog, this);
+	m_currentJob    = new RemuxJob(jobId, mkvmergePath, args, sourcePath, descriptionText,
+	                                m_writeJobLog, finalOutputPathOverride, this);
 	m_currentJobId  = jobId;
 	m_currentFileId = fileId;
 
@@ -337,6 +371,10 @@ void JobQueue::startJob(const JobRecord& job)
 		        // one source, one signal, no separate timer or thread to fall out of sync.
 		        emit progressChanged(m_currentJobId, pct);
 		        emit outputSizeChanged(m_currentJobId, outputBytes);
+	        });
+	connect(m_currentJob, &RemuxJob::phaseChanged,
+	        this, [this](const QString& label) {
+		        emit phaseChanged(m_currentJobId, label);
 	        });
 
 	db.updateJobStatus(jobId, "running");
@@ -467,6 +505,7 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 		m_reviewSrcPath  = srcPath;
 		m_reviewOrigSize = fileOpt ? fileOpt->sizeBytes : 0;
 		m_reviewExitCode = exitCode;
+		m_reviewWasStaged = m_currentJob->wasStaged();
 
 		db.updateJobStatus(jobId, "needs_review", exitCode, log);
 
@@ -611,6 +650,7 @@ void JobQueue::commitReview(qint64 jobId)
 	const qint64  fileId     = m_reviewFileId;
 	const qint64  origSize   = m_reviewOrigSize;
 	const int     exitCode   = m_reviewExitCode;
+	const bool    wasStaged  = m_reviewWasStaged;
 
 	m_reviewJobId    = -1;
 	m_reviewFileId   = -1;
@@ -618,6 +658,7 @@ void JobQueue::commitReview(qint64 jobId)
 	m_reviewFinalPath.clear();
 	m_reviewSrcPath.clear();
 	m_reviewOrigSize = 0;
+	m_reviewWasStaged = false;
 
 	m_finishBusy = true;
 
@@ -625,7 +666,7 @@ void JobQueue::commitReview(qint64 jobId)
 	// on this object's own state — run them off the UI thread, same pattern as the
 	// remux-completion path in RemuxJob::onProcessFinished().
 	QThreadPool::globalInstance()->start(
-	    [this, jobId, fileId, tmpPath, finalPath, srcPath, origSize, exitCode]() {
+	    [this, jobId, fileId, tmpPath, finalPath, srcPath, origSize, exitCode, wasStaged]() {
 		auto& db = DatabaseManager::instance();
 
 		const bool isInPlace = (finalPath == srcPath);
@@ -635,8 +676,52 @@ void JobQueue::commitReview(qint64 jobId)
 
 		qint64 savedBytes   = 0;
 		bool   renameFailed = false;
+		const qint64 outputSize = QFileInfo(tmpPath).size();
+		if (wasStaged) {
+			// tmpPath is a local staging file, not next to finalPath — copy it to
+			// the NAS (same convention as RemuxJob's staged-finish path: a
+			// same-directory tmp beside the real destination, then an atomic
+			// same-volume rename), same pattern as RemuxJob::onProcessFinished.
+			const QFileInfo finalFi(finalPath);
+			const QString remoteTmp = finalFi.absolutePath() + QLatin1Char('/')
+			                          + finalFi.fileName() + QStringLiteral(".tmp");
+
+			QMetaObject::invokeMethod(this, [this, jobId] {
+				emit phaseChanged(jobId, tr("Copying to NAS"));
+			}, Qt::QueuedConnection);
+
+			const bool copyOk = RemuxJob::copyFileWithProgress(
+			    tmpPath, remoteTmp, outputSize,
+			    [this, jobId](int pct, qint64 bytes) {
+				QMetaObject::invokeMethod(this, [this, jobId, pct, bytes] {
+					emit progressChanged(jobId, pct);
+					emit outputSizeChanged(jobId, bytes);
+				}, Qt::QueuedConnection);
+			    });
+
+			if (copyOk) {
+				try {
+					std::filesystem::rename(remoteTmp.toStdWString(), finalPath.toStdWString());
+#ifdef Q_OS_WIN
+					preserveTimestamps(finalPath, origCreated, origModified);
+#endif
+					QFile::remove(tmpPath); // drop the local staged tmp
+					if (!isInPlace)
+						QFile::remove(srcPath);
+					savedBytes = qMax(0LL, origSize - outputSize);
+				} catch (const std::filesystem::filesystem_error& e) {
+					qWarning() << "JobQueue::commitReview: staged rename failed:" << e.what();
+					db.updateJobStatus(jobId, "failed", -2);
+					renameFailed = true;
+				}
+			} else {
+				QFile::remove(remoteTmp); // best-effort cleanup of a partial copy
+				qWarning() << "JobQueue::commitReview: copy to NAS destination failed for" << finalPath;
+				db.updateJobStatus(jobId, "failed", -2);
+				renameFailed = true;
+			}
+		} else {
 		try {
-			const qint64 outputSize = QFileInfo(tmpPath).size();
 			std::filesystem::rename(tmpPath.toStdWString(), finalPath.toStdWString());
 #ifdef Q_OS_WIN
 			preserveTimestamps(finalPath, origCreated, origModified);
@@ -648,6 +733,7 @@ void JobQueue::commitReview(qint64 jobId)
 			qWarning() << "JobQueue::commitReview: rename failed:" << e.what();
 			db.updateJobStatus(jobId, "failed", -2);
 			renameFailed = true;
+		}
 		}
 
 		if (renameFailed) {

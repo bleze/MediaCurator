@@ -23,6 +23,8 @@ public:
 	void setWriteJobLog(bool v) { m_writeJobLog = v; }
 	void setMergeSidecarSubtitles(bool v) { m_mergeSidecarSubtitles = v; }
 	void setSortMode(JobSortMode mode) { m_sortMode = mode; }
+	void setUseLocalStaging(bool v) { m_useLocalStaging = v; }
+	void setLocalStagingDir(const QString& dir) { m_localStagingDir = dir; }
 
 	bool isRunning()   const { return m_running; }
 	bool isPaused()    const { return m_paused; }
@@ -44,6 +46,10 @@ signals:
 	// RemuxJob parses a new percent from mkvmerge's stdout — lets the UI show a live
 	// output-size-vs-original bar while running.
 	void outputSizeChanged(qint64 jobId, qint64 bytes);
+	// Emitted when a running job enters a distinct sub-phase (e.g. copying a
+	// staged output back to its real destination) — UI relabels the progress
+	// pill using this instead of the default "Running" text.
+	void phaseChanged(qint64 jobId, const QString& label);
 	void warning(const QString& message);
 
 	// Emitted when mkvmerge completed but reported a "track not found" mismatch.
@@ -91,6 +97,8 @@ private:
 	bool           m_paused       = false;
 	bool           m_writeJobLog  = false;
 	bool           m_mergeSidecarSubtitles = true;
+	bool           m_useLocalStaging = false;
+	QString        m_localStagingDir;
 	JobSortMode    m_sortMode     = JobSortMode::SmallestFirst;
 	// True whenever a job (remux, tag-edit, or review commit) is in its terminal
 	// file-I/O phase — set at the start of that phase, cleared right before runNext().
@@ -104,6 +112,9 @@ private:
 	QString        m_reviewSrcPath;
 	qint64         m_reviewOrigSize = 0;
 	int            m_reviewExitCode = 1;
+	// True when m_reviewTmpPath is a local staging file rather than sitting next
+	// to m_reviewFinalPath — commitReview() must copy it over instead of renaming.
+	bool           m_reviewWasStaged = false;
 };
 
 } // namespace Mc

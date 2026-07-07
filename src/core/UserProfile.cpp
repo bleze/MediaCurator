@@ -121,6 +121,22 @@ void UserProfile::setWriteJobLog(bool v)
 	}
 }
 
+void UserProfile::setUseLocalStaging(bool v)
+{
+	if (m_useLocalStaging != v) {
+		m_useLocalStaging = v;
+		emit profileChanged();
+	}
+}
+
+void UserProfile::setLocalStagingDir(const QString& dir)
+{
+	if (m_localStagingDir != dir) {
+		m_localStagingDir = dir;
+		emit profileChanged();
+	}
+}
+
 void UserProfile::setTmdbApiKey(const QString& key)
 {
 	if (m_tmdbApiKey != key) {
@@ -252,6 +268,8 @@ QJsonObject UserProfile::toJson() const
 	o["subtitle_format_order"]           = QJsonArray::fromStringList(m_subtitleFormatOrder);
 	o["disabled_subtitle_formats"]       = QJsonArray::fromStringList(m_disabledSubtitleFormats);
 	o["write_job_log"]                   = m_writeJobLog;
+	o["use_local_staging"]               = m_useLocalStaging;
+	o["local_staging_dir"]               = m_localStagingDir;
 	o["tmdb_api_key"]                    = m_tmdbApiKey;
 	o["opensubtitles_api_key"]           = m_openSubtitlesApiKey;
 	o["opensubtitles_username"]          = m_openSubtitlesUsername;
@@ -288,6 +306,8 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_mergeSidecarSubtitles      = json["merge_sidecar_subtitles"].toBool(true);
 	m_removeMjpegCoverArt        = json["remove_mjpeg_cover_art"].toBool(true);
 	m_writeJobLog                = json["write_job_log"].toBool(false);
+	m_useLocalStaging            = json["use_local_staging"].toBool(false);
+	m_localStagingDir            = json["local_staging_dir"].toString();
 	m_tmdbApiKey                 = json["tmdb_api_key"].toString();
 	m_openSubtitlesApiKey        = json["opensubtitles_api_key"].toString();
 	m_openSubtitlesUsername      = json["opensubtitles_username"].toString();

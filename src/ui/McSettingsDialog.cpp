@@ -7,6 +7,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -206,7 +208,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	: QDialog(parent), m_profile(profile)
 {
 	setWindowTitle(tr("Settings"));
-	setMinimumSize(760, 520);
+	setMinimumSize(760, 622);
 
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty())
@@ -560,6 +562,36 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
 	jobLayout->addWidget(m_chkAutoTrack);
 	genPageLo->addWidget(jobGroup);
+
+	// Local Staging
+	auto* stagingGroup  = new QGroupBox(tr("Local Staging"), genPage);
+	auto* stagingLayout = new QVBoxLayout(stagingGroup);
+
+	m_chkUseLocalStaging = new QCheckBox(tr("Mux to a local folder, then copy the result back"), stagingGroup);
+	m_chkUseLocalStaging->setToolTip(tr(
+		"When the source file lives on a network share, reading and writing to it at the "
+		"same time can slow both down. Enabling this writes the muxed output to a local "
+		"folder first, then copies the finished file back over the network as a separate "
+		"step. Requires enough free space in the local folder to hold the output file — "
+		"falls back to muxing in place when there isn't enough room."));
+	m_chkUseLocalStaging->setChecked(profile->useLocalStaging());
+	stagingLayout->addWidget(m_chkUseLocalStaging);
+
+	auto* stagingDirRow = new QHBoxLayout();
+	m_editStagingDir = new QLineEdit(profile->localStagingDir(), stagingGroup);
+	m_editStagingDir->setPlaceholderText(tr("Local staging folder…"));
+	m_btnBrowseStagingDir = new QPushButton(tr("Browse…"), stagingGroup);
+	stagingDirRow->addWidget(m_editStagingDir);
+	stagingDirRow->addWidget(m_btnBrowseStagingDir);
+	stagingLayout->addLayout(stagingDirRow);
+
+	m_editStagingDir->setEnabled(m_chkUseLocalStaging->isChecked());
+	m_btnBrowseStagingDir->setEnabled(m_chkUseLocalStaging->isChecked());
+	connect(m_chkUseLocalStaging, &QCheckBox::toggled, m_editStagingDir, &QLineEdit::setEnabled);
+	connect(m_chkUseLocalStaging, &QCheckBox::toggled, m_btnBrowseStagingDir, &QPushButton::setEnabled);
+	connect(m_btnBrowseStagingDir, &QPushButton::clicked, this, &McSettingsDialog::onBrowseStagingDir);
+
+	genPageLo->addWidget(stagingGroup);
 	genPageLo->addStretch();
 
 	// ── Buttons ───────────────────────────────────────────────────────────────
@@ -575,6 +607,15 @@ void McSettingsDialog::done(int result)
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	s.setValue("settingsDialog/geometry", saveGeometry());
 	QDialog::done(result);
+}
+
+void McSettingsDialog::onBrowseStagingDir()
+{
+	const QString raw = QFileDialog::getExistingDirectory(
+		this, tr("Choose Local Staging Folder"), m_editStagingDir->text(),
+		QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+	if (raw.isEmpty()) return;
+	m_editStagingDir->setText(QDir::fromNativeSeparators(raw));
 }
 
 void McSettingsDialog::onAddLanguage()
@@ -682,6 +723,8 @@ void McSettingsDialog::accept()
 	m_profile->setKeepOriginalLanguageSubtitle(m_chkKeepOriginalSub->isChecked());
 	m_profile->setMergeSidecarSubtitles(m_chkMergeSidecarSubs->isChecked());
 	m_profile->setWriteJobLog(m_chkWriteLog->isChecked());
+	m_profile->setUseLocalStaging(m_chkUseLocalStaging->isChecked());
+	m_profile->setLocalStagingDir(QDir::fromNativeSeparators(m_editStagingDir->text().trimmed()));
 	m_profile->setTmdbApiKey(m_editTmdbKey->text().trimmed());
 	m_profile->setOpenSubtitlesApiKey(m_editOsApiKey->text().trimmed());
 	m_profile->setOpenSubtitlesUsername(m_editOsUsername->text().trimmed());

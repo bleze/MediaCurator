@@ -27,6 +27,7 @@ private slots:
 	void onAudioFormatDown();
 	void onSubFmtUp();
 	void onSubFmtDown();
+	void onBrowseStagingDir();
 
 private:
 	void accept() override;
@@ -51,6 +52,9 @@ private:
 	QCheckBox*   m_chkKeepOriginalSub;
 	QCheckBox*   m_chkMergeSidecarSubs;
 	QCheckBox*   m_chkWriteLog;
+	QCheckBox*   m_chkUseLocalStaging;
+	QLineEdit*   m_editStagingDir;
+	QPushButton* m_btnBrowseStagingDir;
 	QLineEdit*   m_editTmdbKey;
 	QLineEdit*   m_editOsApiKey;
 	QLineEdit*   m_editOsUsername;

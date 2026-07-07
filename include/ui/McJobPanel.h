@@ -102,6 +102,11 @@ private:
 	qint64  m_etaLastSampleMs = -1;
 	int     m_etaLastProgress = -1;
 	double  m_etaEmaRatePerMs = -1.0;
+	// Sub-phase label (e.g. "Copying to NAS") the current sample window was
+	// established under — a change here (mux -> copy) resets the EMA the same
+	// way a job-ID change does, since progress resets to 0 and the two phases
+	// have unrelated throughput.
+	QString m_etaLastPhase;
 };
 
 } // namespace Mc

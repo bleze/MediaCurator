@@ -1271,6 +1271,8 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	        m_model, &McJobListModel::updateProgress);
 	connect(queue, &JobQueue::outputSizeChanged,
 	        m_model, &McJobListModel::updateOutputSize);
+	connect(queue, &JobQueue::phaseChanged,
+	        m_model, &McJobListModel::updatePhase);
 
 	// A rescan (e.g. after renaming a sidecar subtitle from the badge menu) runs
 	// asynchronously and updates streams/jobs in the DB out from under the model —
@@ -1696,9 +1698,15 @@ void McJobPanel::updateFooter()
 			const qint64 jobId    = idx.data(McJobListModel::JobIdRole).toLongLong();
 			const int    progress = idx.data(McJobListModel::ProgressRole).toInt();
 			const qint64 fileSize = idx.data(McJobListModel::FileSizeRole).toLongLong();
+			const QString phase   = idx.data(McJobListModel::PhaseLabelRole).toString();
 
-			if (jobId != m_etaSampleJobId) {
+			// A phase change (e.g. muxing -> copying to NAS) resets progress to 0
+			// under an unrelated throughput regime — treat it like a new job for
+			// EMA purposes, otherwise the reset reads as a huge negative-rate
+			// sample and produces a bogus ETA spike for one tick.
+			if (jobId != m_etaSampleJobId || phase != m_etaLastPhase) {
 				m_etaSampleJobId  = jobId;
+				m_etaLastPhase    = phase;
 				m_etaLastSampleMs = -1;
 				m_etaLastProgress = -1;
 				m_etaEmaRatePerMs = -1.0;
