@@ -12,13 +12,17 @@ MediaCurator scans your library, identifies which tracks you actually want, and 
 
 ## Screenshots
 
+For a small test library of 5 movies, here is what MediaCurator looks like in action:
+
 | Library view | "What If" simulation |
 |---|---|
-| ![Library grid with file cards](docs/screenshots/library-grid.png) | ![What If dry-run results](docs/screenshots/what-if.png) |
+| ![Library grid with file cards](docs/screenshots/library-grid.png)<br>*Every file scanned with full stream metadata — audio, subtitles, resolution, and HDR format at a glance.* | ![What If dry-run results](docs/screenshots/what-if.png)<br>*Preview affected files and estimated space savings across the whole library before creating a single job.* |
 
 | Job queue | Done jobs — space reclaimed |
 |---|---|
-| ![Job queue with pending removals](docs/screenshots/job-queue.png) | ![Completed job queue showing space saved per file](docs/screenshots/job-queue-done.png) |
+| ![Job queue with pending removals](docs/screenshots/job-queue.png)<br>*Proposed track removals queued for review — nothing is touched until you approve.* | ![Completed job queue showing space saved per file](docs/screenshots/job-queue-done.png)<br>*Finished jobs show exactly how much space was reclaimed, file by file.* |
+
+After setting rules to retain only english and danish audio and subtitle tracks (no commentary), the estimate is that we can reclaim 10 GB of disk space, and the final result is exactly that — **10 GB** of irrelevant or redundant audio tracks and subtitles removed.
 
 ## Features
 
