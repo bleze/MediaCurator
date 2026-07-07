@@ -10,6 +10,18 @@ MediaCurator scans your library, identifies which tracks you actually want, and 
 
 **Practical savings:** removing a 5.1 DTS-HD MA English track plus a Dolby Atmos track from a 4K Blu-ray rip can save 2–4 GB per file. For a library of 200 films that is 400–800 GB — the equivalent of a mid-size NAS drive.
 
+## Screenshots
+
+<!-- TODO: replace with real captures from docs/screenshots/ -->
+
+| Library view | Job queue |
+|---|---|
+| ![Library grid with file cards](docs/screenshots/library-grid.png) | ![Job queue with pending removals](docs/screenshots/job-queue.png) |
+
+| Rule engine | "What If" simulation |
+|---|---|
+| ![Rule editor](docs/screenshots/rule-editor.png) | ![What If dry-run results](docs/screenshots/what-if.png) |
+
 ## Features
 
 - **Library scanning** — Point MediaCurator at a folder and it catalogues every video file with full stream information (codec, language, channels, resolution, HDR format). Incremental rescans skip unchanged files.

@@ -26,6 +26,9 @@ public:
 	void refresh();
 	void refreshPaged(int limit);
 
+	// Forwarded to the card delegate — see McCardDelegate::setTmdbConfigured.
+	void setTmdbConfigured(bool configured);
+
 	QComboBox* statusCombo() const { return m_statusFilter; }
 	QComboBox* sortCombo()   const { return m_sortCombo;    }
 

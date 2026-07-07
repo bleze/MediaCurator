@@ -621,7 +621,9 @@ void McJobPanel::setupUi()
 		const qint64 fileId = idx.data(McJobListModel::FileIdRole).toLongLong();
 		const QPoint pos    = m_listView->viewport()->mapFromGlobal(QCursor::pos());
 		const QRect  iRect  = m_listView->visualRect(idx);
-		if (pos.x() <= iRect.left() + McJobCardDelegate::kPosterW)
+		const auto*  cardDelegate = qobject_cast<McCardDelegate*>(m_listView->itemDelegate());
+		const int    posterW = cardDelegate ? cardDelegate->posterColumnWidth() : McJobCardDelegate::kPosterW;
+		if (pos.x() <= iRect.left() + posterW)
 			emit editImdbLinkRequested(fileId);
 		else
 			emit previewRequested(fileId);
@@ -1294,6 +1296,12 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	        m_model, &McJobListModel::onFanartReady);
 	connect(&PosterManager::instance(), &PosterManager::imdbIdSaved,
 	        m_model, &McJobListModel::updateImdbId);
+}
+
+void McJobPanel::setTmdbConfigured(bool configured)
+{
+	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))
+		d->setTmdbConfigured(configured);
 }
 
 void McJobPanel::refresh()

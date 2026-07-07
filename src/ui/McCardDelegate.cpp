@@ -241,6 +241,9 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
 		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued") || d.status == QLatin1String("failed"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
+		d.displayTitle      = index.data(McJobListModel::DisplayTitleRole).toString();
+		d.displayYear       = index.data(McJobListModel::DisplayYearRole).toInt();
+		d.containerTitle    = index.data(McJobListModel::ContainerTitleRole).toString();
 		d.fanartPath        = index.data(McJobListModel::FanartRole).toString();
 		d.allStreams         = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 		const auto kept    = index.data(McJobListModel::KeptStreamsRole).value<QList<StreamRecord>>();
@@ -675,7 +678,7 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 
 bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect, bool hasImdb) const
 {
-	const QRect content = itemRect.adjusted(kPosterW + kPosterGap, kPadV, -kPadH, -kPadBottom);
+	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 	if (playButtonRect(content).contains(pos)) return true;
 	if (hasImdb && imdbButtonRect(content).contains(pos)) return true;
 	return false;
@@ -687,7 +690,7 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
                                         bool hasImdb,
                                         const QString& originalLang) const
 {
-	const QRect content = itemRect.adjusted(kPosterW + kPosterGap, kPadV, -kPadH, -kPadBottom);
+	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 	QFont badgeFont = baseFont;
 	badgeFont.setPointSizeF(baseFont.pointSizeF() * 0.82);
 	const QFontMetrics fm(badgeFont);
@@ -813,7 +816,7 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
                                   const QFont& viewFont, const QModelIndex& index)
 {
 	if (!index.isValid()) return false;
-	const QRect content = itemRect.adjusted(kPosterW + kPosterGap, kPadV, -kPadH, -kPadBottom);
+	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 
 	if (playButtonRect(content).contains(pos)) {
 		emit playRequested(index);
@@ -851,7 +854,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	if (event->type() != QEvent::ToolTip)
 		return QStyledItemDelegate::helpEvent(event, view, option, index);
 
-	const QRect content = option.rect.adjusted(kPosterW + kPosterGap, kPadV, -kPadH, -kPadBottom);
+	const QRect content = option.rect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 	const CardData d = fetchData(index);
 
 	// IMDb button tooltip
@@ -1006,7 +1009,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 		}
 	}
 	const QFontMetrics& fm = m_badgeFm;
-	const int totalContentW = m_cacheWidth - kPosterW - kPosterGap - kPadH;
+	const int totalContentW = m_cacheWidth - leftContentInset() - kPadH;
 	const int rightReserve  = hasImdb ? kImdbBtnW + kBadgeGap : 0;
 	const int badgeAreaW    = totalContentW - rightReserve;
 
@@ -1044,6 +1047,31 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 
 void McCardDelegate::clearSizeCache()   { m_sizeCache.clear(); }
 void McCardDelegate::invalidateSizeCacheFor(qint64 itemId) { m_sizeCache.remove(itemId); }
+
+int McCardDelegate::posterColumnWidth() const
+{
+	if (m_tmdbConfigured) return kPosterW;
+	return m_mode == Mode::JobQueue ? kCheckboxColW : 0;
+}
+
+int McCardDelegate::leftContentInset() const
+{
+	const int col = posterColumnWidth();
+	return col > 0 ? col + kPosterGap : kPadH;
+}
+
+void McCardDelegate::setTmdbConfigured(bool configured)
+{
+	if (m_tmdbConfigured == configured) return;
+	m_tmdbConfigured = configured;
+	m_sizeCache.clear();
+	if (!m_view) return;
+	if (QAbstractItemModel* model = m_view->model()) {
+		for (int row = 0; row < model->rowCount(); ++row)
+			emit sizeHintChanged(model->index(row, 0));
+	}
+	m_view->viewport()->update();
+}
 
 // ── paint ─────────────────────────────────────────────────────────────────────
 
@@ -1106,9 +1134,11 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	}
 
 	// ── Poster column ─────────────────────────────────────────────────────────
+	// Collapsed to 0 (library) or just a checkbox's width (job queue) when TMDB isn't
+	// configured, since no poster will ever arrive — see setTmdbConfigured.
 	const QRect posterRect(option.rect.left(), option.rect.top(),
-	                       kPosterW, option.rect.height());
-	if (!d.posterPath.isEmpty()) {
+	                       posterColumnWidth(), option.rect.height());
+	if (m_tmdbConfigured && !d.posterPath.isEmpty()) {
 		QPixmap pm;
 		// Cache keyed by path+version only — NOT card height — so poster survives
 		// resize events where badge reflow changes card height (avoids disk re-read
@@ -1118,7 +1148,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		if (!QPixmapCache::find(cacheKey, &pm)) {
 			const QPixmap src(d.posterPath);
 			if (!src.isNull()) {
-				pm = src.scaledToWidth(kPosterW, Qt::SmoothTransformation);
+				pm = src.scaledToWidth(posterRect.width(), Qt::SmoothTransformation);
 				QPixmapCache::insert(cacheKey, pm);
 			}
 		}
@@ -1132,6 +1162,16 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			painter->drawPixmap(px, py, pm);
 			painter->restore();
 		}
+	} else if (m_tmdbConfigured) {
+		// TMDB is configured but this file has no poster yet (still fetching, or no
+		// match) — draw a subtle placeholder so the card stays aligned with the rest
+		// of the list instead of leaving a poster-shaped blank.
+		painter->save();
+		painter->setPen(Qt::NoPen);
+		QColor ph = pal.color(QPalette::Mid);
+		ph.setAlpha(60);
+		painter->fillRect(posterRect, ph);
+		painter->restore();
 	}
 
 	// Job queue: checkbox overlaid on bottom-left of poster column for proposed jobs
@@ -1143,12 +1183,15 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	}
 
 	// ── Content area ─────────────────────────────────────────────────────────
-	const QRect content = option.rect.adjusted(kPosterW + kPosterGap, kPadV, -kPadH, -kPadBottom);
+	const QRect content = option.rect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 	const QColor textColor = sel ? pal.color(QPalette::HighlightedText) : pal.color(QPalette::Text);
 	const QColor dimColor  = sel ? textColor.darker(140) : pal.color(QPalette::PlaceholderText);
 
-	painter->setClipRect(QRect(option.rect.left() + kPosterW, option.rect.top(),
-	                           option.rect.width() - kPosterW, option.rect.height()));
+	{
+		const int posterColW = posterColumnWidth();
+		painter->setClipRect(QRect(option.rect.left() + posterColW, option.rect.top(),
+		                           option.rect.width() - posterColW, option.rect.height()));
+	}
 
 	// ── Folder / title row: smart title (left) | duration · size | rating ─────
 	{

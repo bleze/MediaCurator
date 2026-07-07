@@ -43,6 +43,9 @@ public:
 		JobTypeRole           = Qt::UserRole + 19,  // QString "remux" | "tag_edit"
 		OutputSizeRole        = Qt::UserRole + 20,  // qint64 live .tmp output size, only meaningful when status=="running"
 		PhaseLabelRole        = Qt::UserRole + 22,  // QString sub-phase label (e.g. "Copying to NAS"), empty = default "Running"
+		ContainerTitleRole    = Qt::UserRole + 23,  // QString title from ffprobe format tags; may be absent or junk
+		DisplayTitleRole      = Qt::UserRole + 24,  // QString TMDB/user-assigned override; preferred over all others
+		DisplayYearRole       = Qt::UserRole + 25,  // int release year from TMDB (0 = unknown)
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);

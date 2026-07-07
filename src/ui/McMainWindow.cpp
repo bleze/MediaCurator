@@ -267,6 +267,10 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_jobQueue->setUseLocalStaging(m_profile->useLocalStaging());
 		m_jobQueue->setLocalStagingDir(m_profile->localStagingDir());
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
+		const bool tmdbConfigured = !m_profile->tmdbApiKey().isEmpty();
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->setTmdbConfigured(tmdbConfigured);
+		m_jobPanel->setTmdbConfigured(tmdbConfigured);
 	});
 
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
@@ -474,6 +478,7 @@ void McMainWindow::setupUi()
 	});
 
 	m_listView->setItemDelegate(fileDelegate);
+	fileDelegate->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
 
 	// When stream layout changes, the delegate's size cache may hold stale heights.
 	// Only clear it for roles that actually affect card height (streams / overrides).
@@ -495,7 +500,9 @@ void McMainWindow::setupUi()
 		if (!idx.isValid()) return;
 		const QPoint pos    = m_listView->viewport()->mapFromGlobal(QCursor::pos());
 		const QRect  iRect  = m_listView->visualRect(idx);
-		if (pos.x() > iRect.left() + McFileCardDelegate::kPosterW) return;
+		const auto*  cardDelegate = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate());
+		const int    posterW = cardDelegate ? cardDelegate->posterColumnWidth() : McFileCardDelegate::kPosterW;
+		if (pos.x() > iRect.left() + posterW) return;
 		const FileRecord file     = idx.data(McFileListModel::FileRole).value<FileRecord>();
 		const QString    suggested = smartSuggestedTitle(file);
 		const QString    existing  = NfoParser::readImdbId(file.path);
@@ -950,6 +957,7 @@ void McMainWindow::setupUi()
 	// ── Job panel (bottom) ────────────────────────────────────────────────────
 	m_jobPanel = new McJobPanel(this);
 	m_jobPanel->setJobQueue(m_jobQueue);
+	m_jobPanel->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
 	m_jobPanel->setMinimumHeight(120);
 	splitter->addWidget(m_jobPanel);
 
@@ -2450,10 +2458,16 @@ void McMainWindow::onAbout()
 			bp.drawText(QRect(BSTRIP, 78, BW - BSTRIP * 2, 36),
 			            Qt::AlignHCenter | Qt::AlignVCenter, "MediaCurator");
 
-			constexpr int LW = 48;
+			// Sample of the Job Queue card's live size bar: green (mkvmerge progress,
+			// complete) fills the full width, blue (output bytes vs. original size)
+			// sits on top and stops short by the saved fraction, exposing a green sliver.
+			constexpr int LW = 190, LH = 3;
 			const int lx = (BW - LW) / 2;
-			bp.setPen(QPen(QColor(0x55, 0x78, 0xe8, 185), 1.5));
-			bp.drawLine(lx, 119, lx + LW, 119);
+			constexpr int ly = 118;
+			constexpr double kSavedFraction = 0.10;
+			bp.fillRect(lx, ly, LW, LH, QColor(0x30, 0x30, 0x40));
+			bp.fillRect(lx, ly, LW, LH, QColor(0x5a, 0xe8, 0x5a));
+			bp.fillRect(lx, ly, qRound(LW * (1.0 - kSavedFraction)), LH, QColor(0x64, 0xb4, 0xf0));
 		}
 
 		// 9. Version + brand

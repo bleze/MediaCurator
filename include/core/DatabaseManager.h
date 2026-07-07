@@ -137,6 +137,9 @@ struct JobDisplayRecord {
 	QString commandArgsJson;
 	QString originalStreamsJson;
 	QString flagChangesJson;
+	QString containerTitle;   // title from ffprobe format tags; may be absent or junk
+	QString displayTitle;     // TMDB/user-assigned override; preferred over all others
+	int     displayYear = 0;  // release year from TMDB (0 = unknown)
 };
 
 enum class JobSortMode {

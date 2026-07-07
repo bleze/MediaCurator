@@ -84,9 +84,22 @@ public:
 	// Called from model slots after a new fanart arrives so paint() never hits disk.
 	static void prefetchFanart(const QString& path, QPixmap raw);
 
+	// Width actually reserved on-screen for the poster/checkbox column right now —
+	// depends on whether TMDB is configured (see setTmdbConfigured). Callers outside
+	// the delegate that hit-test the poster column (e.g. double-click-to-open-IMDb-
+	// search) must use this instead of the fixed kPosterW constant.
+	int posterColumnWidth() const;
+
 public slots:
 	void invalidateSizeCacheFor(qint64 fileId);
 	void clearSizeCache();
+
+	// Whether TMDB is configured (non-empty API key). When false, no posters will
+	// ever arrive, so the poster column is collapsed entirely instead of leaving a
+	// permanently-empty indent. When true but an individual card has no poster yet
+	// (still fetching, or no match), a placeholder box is drawn in its place so
+	// cards stay aligned with the rest of the list.
+	void setTmdbConfigured(bool configured);
 
 signals:
 	void playRequested(const QModelIndex& index);
@@ -172,7 +185,14 @@ private:
 
 	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect, bool hasImdb = false) const;
 
+	// Left inset of the content area from the card's left edge — kPosterW + kPosterGap
+	// when TMDB is configured, otherwise just enough for a checkbox column (job queue)
+	// or nothing at all (library), so cards don't sit indented for a poster that will
+	// never arrive. See setTmdbConfigured.
+	int leftContentInset() const;
+
 	Mode                  m_mode;
+	bool                  m_tmdbConfigured   = true;
 	QAbstractItemView*    m_view             = nullptr;
 	QPersistentModelIndex m_lastHoveredIndex;
 	mutable QPoint        m_lastMousePos     {-1, -1};
@@ -203,6 +223,7 @@ private:
 	static constexpr int kImdbBtnW  = 24; // width and height of the IMDb shortcut button on the right
 	static constexpr int kPosterGap = 8;  // gap between the poster column right edge and the content area
 	static constexpr int kMinRowH   = 140; // minimum card height; ensures the poster column never looks cramped
+	static constexpr int kCheckboxColW = 24; // poster-column width when TMDB isn't configured but a per-row checkbox (job queue) still needs room
 };
 
 } // namespace Mc

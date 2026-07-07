@@ -548,6 +548,9 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case OriginalLanguageRole: return e.job.originalLanguage;
 	case FlagChangesRole: return e.flagChangesJson;
 	case JobTypeRole:     return e.job.jobType;
+	case ContainerTitleRole: return e.job.containerTitle;
+	case DisplayTitleRole:   return e.job.displayTitle;
+	case DisplayYearRole:    return e.job.displayYear;
 	default:                   return {};
 	}
 }

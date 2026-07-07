@@ -1420,6 +1420,9 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.originalStreamsJson = q.value("original_streams_json").toString();
 		r.flagChangesJson    = q.value("flag_changes_json").toString();
 		r.finishedAt         = q.value("finished_at").toLongLong();
+		r.containerTitle     = q.value("container_title").toString();
+		r.displayTitle       = q.value("display_title").toString();
+		r.displayYear        = q.value("display_year").toInt();
 		result.append(r);
 	}
 }
@@ -1443,7 +1446,10 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
 		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
 		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json,"
-		"       COALESCE(j.finished_at, 0) AS finished_at"
+		"       COALESCE(j.finished_at, 0) AS finished_at,"
+		"       COALESCE(f.container_title, '') AS container_title,"
+		"       COALESCE(f.display_title, '') AS display_title,"
+		"       COALESCE(f.display_year, 0) AS display_year"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -1473,7 +1479,10 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
 		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
 		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json,"
-		"       COALESCE(j.finished_at, 0) AS finished_at"
+		"       COALESCE(j.finished_at, 0) AS finished_at,"
+		"       COALESCE(f.container_title, '') AS container_title,"
+		"       COALESCE(f.display_title, '') AS display_title,"
+		"       COALESCE(f.display_year, 0) AS display_year"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	if (!statusFilter.isEmpty())
