@@ -82,6 +82,7 @@ public slots:
 	void setFilterHasRemovals(bool on);
 	void setFilterMissingImdb(bool on);
 	void setFilterIgnoredOnly(bool on);   // true = show only ignored; false = hide ignored
+	void setStatusFilter(int statusIndex); // 0=all, 1=proposed, 2=missing-poster, 3=ignored
 	void setIgnoredBatch(const QList<qint64>& fileIds, bool ignored); // update flag in-place + refilter
 	void setQuickFilters(quint32 flags);
 	void setSortOrder(int order);

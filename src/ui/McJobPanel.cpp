@@ -618,6 +618,8 @@ void McJobPanel::setupUi()
 		AppSettings::instance().setValue("jobPanel/statusFilter", v);
 		m_model->setFilterStatus(v);
 		applySortForFilter(v);
+		if ((v == QLatin1String("running") || v == QLatin1String("queued")) && m_focusJobId > 0)
+			QTimer::singleShot(0, this, [this] { focusJob(m_focusJobId); });
 	});
 
 	// Restore the previously saved status filter (block signals so the save slot
@@ -816,11 +818,18 @@ void McJobPanel::setupUi()
 				for (qint64 jid : selectedProposedJobIds)
 					m_model->updateJob(jid, "queued");
 				updateFooter();
-				const int n = m_model->rowCount();
-				if (n > 0) {
-					const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
-					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
-					m_listView->scrollTo(next);
+				if (!selectedProposedJobIds.isEmpty())
+					markJobForFocus(selectedProposedJobIds.first());
+				const QString filter = m_statusFilter->currentData().toString();
+				if (filter == QLatin1String("running") || filter == QLatin1String("queued"))
+					focusJob(selectedProposedJobIds.first());
+				else {
+					const int n = m_model->rowCount();
+					if (n > 0) {
+						const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+						m_listView->scrollTo(next);
+					}
 				}
 			});
 			menu.addSeparator();
@@ -1247,23 +1256,9 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 				m_listView->selectionModel()->select(idx, QItemSelectionModel::Select);
 		}
 
-		// Scroll the newly-running job into view. Defer by one event-loop tick so the
-		// view has finished laying out after the model reset triggered by jobFinished.
-		QTimer::singleShot(0, this, [this, jobId] {
-			QModelIndex target;
-			for (int row = 0; row < m_model->rowCount(); ++row) {
-				const QModelIndex idx = m_model->index(row);
-				if (idx.data(McJobListModel::JobIdRole).toLongLong() == jobId) {
-					target = idx;
-					break;
-				}
-				if (!target.isValid()
-				    && idx.data(McJobListModel::StatusRole).toString() == QLatin1String("running"))
-					target = idx;   // fallback: first running item
-			}
-			if (target.isValid())
-				m_listView->scrollTo(target, QAbstractItemView::PositionAtCenter);
-		});
+		// Select + scroll the newly-running job. Defer one tick so layout settles after
+		// any filter switch / model reset triggered above.
+		QTimer::singleShot(0, this, [this, jobId] { focusJob(jobId); });
 	});
 	connect(queue, &JobQueue::jobFinished, this,
 	        [this](qint64 jobId, bool ok, qint64 savedBytes) {
@@ -1373,6 +1368,29 @@ QList<qint64> McJobPanel::visibleFileIds() const
 	return ids;
 }
 
+void McJobPanel::markJobForFocus(qint64 jobId)
+{
+	if (jobId > 0)
+		m_focusJobId = jobId;
+}
+
+void McJobPanel::focusJob(qint64 jobId)
+{
+	if (jobId <= 0) return;
+
+	for (int row = 0; row < m_model->rowCount(); ++row) {
+		const QModelIndex idx = m_model->index(row);
+		if (idx.data(McJobListModel::JobIdRole).toLongLong() != jobId)
+			continue;
+		m_listView->setCurrentIndex(idx);
+		m_listView->selectionModel()->setCurrentIndex(idx, QItemSelectionModel::ClearAndSelect);
+		m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+		if (m_focusJobId == jobId)
+			m_focusJobId = -1;
+		return;
+	}
+}
+
 void McJobPanel::scrollToFileJob(qint64 fileId)
 {
 	// Only select+scroll when the current filter already shows proposed jobs.
@@ -1386,6 +1404,7 @@ void McJobPanel::scrollToFileJob(qint64 fileId)
 		const QModelIndex idx = m_model->index(row);
 		if (idx.data(McJobListModel::FileIdRole).toLongLong() == fileId) {
 			m_listView->setCurrentIndex(idx);
+			m_listView->selectionModel()->setCurrentIndex(idx, QItemSelectionModel::ClearAndSelect);
 			m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
 			break;
 		}
@@ -1444,6 +1463,13 @@ void McJobPanel::onQueueSelected()
 	for (qint64 id : ids)
 		m_model->updateJob(id, "queued");
 	updateFooter();
+
+	if (!ids.isEmpty()) {
+		markJobForFocus(ids.first());
+		const QString filter = m_statusFilter->currentData().toString();
+		if (filter == QLatin1String("running") || filter == QLatin1String("queued"))
+			QTimer::singleShot(0, this, [this, id = ids.first()] { focusJob(id); });
+	}
 
 	// Disable Queue Selected — there are no more proposed items in the selection.
 	m_btnQueueSelected->setEnabled(false);

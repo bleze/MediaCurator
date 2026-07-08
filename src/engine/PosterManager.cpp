@@ -110,6 +110,17 @@ public slots:
 			m_timer->start();
 	}
 
+	void enqueueBatch(const QList<qint64>& fileIds)
+	{
+		if (m_stopping || fileIds.isEmpty()) return;
+		for (qint64 id : fileIds) {
+			if (id > 0 && !m_queue.contains(id))
+				m_queue.append(id);
+		}
+		if (m_timer && !m_timer->isActive() && !m_queue.isEmpty())
+			m_timer->start();
+	}
+
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
 	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
@@ -616,6 +627,9 @@ void PosterManager::start(const QString& tmdbApiKey)
 	connect(this, &PosterManager::workerEnqueueFile,
 	        m_worker, &PosterWorker::enqueueFile,
 	        Qt::QueuedConnection);
+	connect(this, &PosterManager::workerEnqueueBatch,
+	        m_worker, &PosterWorker::enqueueBatch,
+	        Qt::QueuedConnection);
 	connect(this, &PosterManager::workerStop,
 	        m_worker, &PosterWorker::stop,
 	        Qt::QueuedConnection);
@@ -651,6 +665,12 @@ void PosterManager::setTmdbApiKey(const QString& key)
 void PosterManager::enqueue(qint64 fileId)
 {
 	emit workerEnqueueFile(fileId);
+}
+
+void PosterManager::enqueueBatch(const QList<qint64>& fileIds)
+{
+	if (fileIds.isEmpty()) return;
+	emit workerEnqueueBatch(fileIds);
 }
 
 void PosterManager::refresh(qint64 fileId, const QString& posterPath,

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <QIcon>
 #include <QLabel>
 #include <QListView>
 #include <QMainWindow>
@@ -9,6 +10,9 @@
 #include <QStringList>
 #include <QThread>
 #include <QTimer>
+
+class QPaintEvent;
+class QSplashScreen;
 
 #ifdef Q_OS_WIN
 struct ITaskbarList3;
@@ -36,12 +40,18 @@ public:
 	explicit McMainWindow(QWidget* parent = nullptr);
 	~McMainWindow() override;
 
+	// main() hands off the splash; window stays hidden until dismissSplash().
+	void attachSplash(QSplashScreen* splash, const QIcon& appIcon = {});
+
 protected:
 	void closeEvent(QCloseEvent* event) override;
 	void showEvent(QShowEvent* event) override;
+	void paintEvent(QPaintEvent* event) override;
 	void keyPressEvent(QKeyEvent* event) override;
 
 private slots:
+	void dismissSplash();
+	void completeStartup();
 	void onScanFolder();
 	void onScanLibrary();
 	void onQuickScan();
@@ -70,7 +80,11 @@ private:
 	void setupToolBar();
 	void setupMenuBar();
 	void setupStatusBar();
+	void applyDarkBackgrounds();
 	void startLibraryLoader();
+	void startBackgroundLibraryLoad();
+	void ensureOnScreen();
+	void setNativeWindowBackground();
 	void createScanWorker(const QString& folderPath, bool quickScan = false);
 	void setScanningState(bool scanning);
 	void updateSavedLabel();
@@ -126,12 +140,18 @@ private:
 	int              m_analyzeJobCount     = 0;
 	int              m_savedJobPanelHeight = 0;
 	bool             m_jobPanelPinned     = false;
-	bool             m_firstShowDone     = false;
+	bool             m_firstShowDone       = false;
+	bool             m_startupCompleteDone = false;
+	bool             m_splashDismissed     = false;
+	bool             m_backgroundLoadStarted = false;
 	bool             m_splitterRestored  = false;
+	QSplashScreen*   m_splash            = nullptr;
+	QIcon            m_startupIcon;
 	QString          m_currentJobFilename;
 	int              m_queuedAtStart   = 0;
 #ifdef Q_OS_WIN
 	ITaskbarList3*   m_taskbar = nullptr;
+	void*            m_nativeBgBrush = nullptr;   // HBRUSH — deleted before replace / in dtor
 #endif
 };
 

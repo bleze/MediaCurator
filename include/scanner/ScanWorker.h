@@ -40,9 +40,15 @@ public:
 	// File extensions considered as video files
 	static const QStringList& videoExtensions();
 
+	// First stream_index for a new sidecar — max(existing container index) + 1.
+	// Using stream count alone is wrong when ffprobe indices have gaps (attachments, etc.).
+	static int nextSidecarStreamIndex(const QList<StreamRecord>& containerStreams);
+
 	// Discover subtitle sidecar files next to a video file and return synthetic StreamRecords.
-	// startIndex is the first stream_index to assign (should be result.streams.size() so indices don't collide).
 	static QList<StreamRecord> scanSidecarSubtitles(const QString& videoPath, int startIndex);
+
+	// Re-scan sidecar files without ffprobe; updates DB only when sidecars changed.
+	static bool refreshSidecarStreamsIfChanged(DatabaseManager& db, qint64 fileId, const QString& videoPath);
 
 public slots:
 	void run();
@@ -54,6 +60,11 @@ signals:
 	void fileRemoved(qint64 fileId);
 	void finished(int scanned, int added, int updated, int failed, int skipped, int removed, QStringList newFiles);
 	void error(const QString& message);
+	// Poster/subtitle managers live on the UI thread — never call them directly from run().
+	void posterEnqueueRequested(qint64 fileId);
+	void subtitleEnqueueRequested(qint64 fileId);
+	void posterEnqueueBatchRequested(Mc::FileIdList fileIds);
+	void subtitleEnqueueBatchRequested(Mc::FileIdList fileIds);
 
 private:
 	QString        m_rootPath;

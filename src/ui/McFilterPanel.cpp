@@ -1,4 +1,5 @@
 #include "ui/McFilterPanel.h"
+
 #include "ui/RangeSlider.h"
 
 #include <QColor>
@@ -10,6 +11,7 @@
 #include <QPainter>
 #include <QStandardItemModel>
 #include <QStyledItemDelegate>
+#include <QTimer>
 #include <QToolButton>
 
 namespace Mc {
@@ -97,7 +99,13 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	m_search->setMinimumWidth(180);
 	lay->addWidget(m_search, 1);
 
-	connect(m_search, &QLineEdit::textChanged, this, &McFilterPanel::filterTextChanged);
+	m_searchTimer = new QTimer(this);
+	m_searchTimer->setSingleShot(true);
+	m_searchTimer->setInterval(250);
+	connect(m_search, &QLineEdit::textChanged, m_searchTimer, QOverload<>::of(&QTimer::start));
+	connect(m_searchTimer, &QTimer::timeout, this, [this]() {
+		emit filterTextChanged(m_search->text());
+	});
 
 	// ── Status filter ─────────────────────────────────────────────────────────
 	m_statusCombo = new QComboBox(this);
@@ -173,8 +181,18 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	slider->SetLowerValue(0);
 	slider->SetUpperValue(100);
 	slider->setFixedWidth(110);
-	connect(slider, &RangeSlider::lowerValueChanged, this, &McFilterPanel::onRatingChanged);
-	connect(slider, &RangeSlider::upperValueChanged, this, &McFilterPanel::onRatingChanged);
+	m_ratingTimer = new QTimer(this);
+	m_ratingTimer->setSingleShot(true);
+	m_ratingTimer->setInterval(150);
+	connect(slider, &RangeSlider::lowerValueChanged, this, [this]() {
+		updateRatingLabel();
+		m_ratingTimer->start();
+	});
+	connect(slider, &RangeSlider::upperValueChanged, this, [this]() {
+		updateRatingLabel();
+		m_ratingTimer->start();
+	});
+	connect(m_ratingTimer, &QTimer::timeout, this, &McFilterPanel::emitRatingFilter);
 	lay->addWidget(slider);
 
 	// ── Sort combo ────────────────────────────────────────────────────────────
@@ -207,7 +225,7 @@ void McFilterPanel::onPillToggled(quint32 flag, bool on)
 	emit quickFiltersChanged(m_activeFilters);
 }
 
-void McFilterPanel::onRatingChanged()
+void McFilterPanel::updateRatingLabel()
 {
 	auto* slider = qobject_cast<RangeSlider*>(m_ratingSlider);
 	if (!slider) return;
@@ -221,7 +239,13 @@ void McFilterPanel::onRatingChanged()
 		m_ratingLabel->setText(tr("Rating: ≥%1").arg(lo, 0, 'f', 1));
 	else
 		m_ratingLabel->setText(tr("Rating: %1–%2").arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1));
-	emit ratingFilterChanged(lo, hi);
+}
+
+void McFilterPanel::emitRatingFilter()
+{
+	auto* slider = qobject_cast<RangeSlider*>(m_ratingSlider);
+	if (!slider) return;
+	emit ratingFilterChanged(slider->GetLowerValue() / 10.0, slider->GetUpperValue() / 10.0);
 }
 
 } // namespace Mc

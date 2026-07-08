@@ -37,10 +37,8 @@ void LibraryLoader::run()
 		for (const auto& f : files) ids << f.id;
 
 		const auto streams = db.streamsForFiles(ids);
-		for (const auto& f : files) {
-			if (m_cancelled.load(std::memory_order_relaxed)) return;
-			emit fileReady(f, streams.value(f.id));
-		}
+		if (m_cancelled.load(std::memory_order_relaxed)) return;
+		emit pageReady(files, streams);
 
 		total  += files.size();
 		offset += files.size();

@@ -99,8 +99,8 @@ QSqlDatabase DatabaseManager::connection() const
 		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", name);
 		db.setDatabaseName(m_dbPath);
 		if (!db.open()) {
-			qWarning() << "DatabaseManager: failed to open worker thread connection:" << db.lastError().text();
-			return m_db;   // unsafe fallback — log loudly so it's noticed
+			qCritical() << "DatabaseManager: failed to open worker thread connection:" << db.lastError().text();
+			return QSqlDatabase();
 		}
 		QSqlQuery q(db);
 		q.exec("PRAGMA journal_mode=WAL");
@@ -378,6 +378,14 @@ bool DatabaseManager::initSchema()
 		}
 	}
 
+	// Performance indexes for hot query paths (idempotent).
+	{
+		QSqlQuery m(connection());
+		m.exec("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)");
+		m.exec("CREATE INDEX IF NOT EXISTS idx_jobs_file_status ON jobs(file_id, status)");
+		m.exec("CREATE INDEX IF NOT EXISTS idx_poster_cache_status ON poster_cache(status)");
+	}
+
 	return true;
 }
 
@@ -591,17 +599,9 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 	QHash<qint64, QList<StreamRecord>> result;
 	if (fileIds.isEmpty()) return result;
 
-	QStringList ph;
-	ph.reserve(fileIds.size());
-	for (int i = 0; i < fileIds.size(); ++i) ph << QStringLiteral("?");
+	static constexpr int kMaxInClause = 500;
 
-	QSqlQuery q(connection());
-	q.prepare(QStringLiteral("SELECT * FROM streams WHERE file_id IN (%1) ORDER BY file_id, stream_index")
-	          .arg(ph.join(',')));
-	for (qint64 id : fileIds) q.addBindValue(id);
-	if (!q.exec()) return result;
-
-	while (q.next()) {
+	auto appendRow = [&result](const QSqlQuery& q) {
 		StreamRecord s;
 		s.id                = q.value("id").toLongLong();
 		s.fileId            = q.value("file_id").toLongLong();
@@ -632,6 +632,24 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 		s.isExternal        = q.value("is_external").toInt() != 0;
 		s.externalPath      = q.value("external_path").toString();
 		result[s.fileId].append(s);
+	};
+
+	for (int off = 0; off < fileIds.size(); off += kMaxInClause) {
+		const int chunkEnd = qMin(off + kMaxInClause, fileIds.size());
+		QStringList ph;
+		ph.reserve(chunkEnd - off);
+		for (int i = off; i < chunkEnd; ++i)
+			ph << QStringLiteral("?");
+
+		QSqlQuery q(connection());
+		q.prepare(QStringLiteral("SELECT * FROM streams WHERE file_id IN (%1) ORDER BY file_id, stream_index")
+		          .arg(ph.join(',')));
+		for (int i = off; i < chunkEnd; ++i)
+			q.addBindValue(fileIds.at(i));
+		if (!q.exec()) continue;
+
+		while (q.next())
+			appendRow(q);
 	}
 	return result;
 }
@@ -708,13 +726,26 @@ void DatabaseManager::updateFilePath(qint64 fileId, const QString& newPath, cons
 
 // ── Streams ───────────────────────────────────────────────────────────────────
 
+namespace {
+
+bool deleteStreamsOnDb(const QSqlDatabase& db, qint64 fileId)
+{
+	QSqlQuery q(db);
+	q.prepare("DELETE FROM streams WHERE file_id=?");
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
+} // namespace
+
 bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& streams)
 {
-	if (!deleteStreamsForFile(fileId))
+	auto db = connection();
+	if (!db.isValid() || !db.isOpen())
 		return false;
 
-	QSqlQuery q(connection());
-	q.prepare(R"(
+	QSqlQuery ins(db);
+	ins.prepare(R"(
 		INSERT INTO streams(file_id, stream_index, codec_type, codec_name, language, title,
 			track_type, type_confidence, channels, sample_rate, bit_rate, width, height,
 			hdr_format, is_default, is_forced, is_original, is_commentary,
@@ -724,51 +755,58 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 
-	connection().transaction();
+	if (!db.transaction())
+		return false;
+
+	if (!deleteStreamsOnDb(db, fileId)) {
+		qWarning() << "insertStreams delete failed";
+		db.rollback();
+		return false;
+	}
+
 	for (const auto& s : streams) {
-		q.addBindValue(fileId);
-		q.addBindValue(s.streamIndex);
-		q.addBindValue(s.codecType);
-		q.addBindValue(s.codecName);
-		q.addBindValue(s.language);
-		q.addBindValue(s.title);
-		q.addBindValue(s.trackType);
-		q.addBindValue(s.typeConfidence);
-		q.addBindValue(s.channels);
-		q.addBindValue(s.sampleRate);
-		q.addBindValue(s.bitRate);
-		q.addBindValue(s.width);
-		q.addBindValue(s.height);
-		q.addBindValue(s.hdrFormat);
-		q.addBindValue(s.isDefault ? 1 : 0);
-		q.addBindValue(s.isForced ? 1 : 0);
-		q.addBindValue(s.isOriginal ? 1 : 0);
-		q.addBindValue(s.isCommentary ? 1 : 0);
-		q.addBindValue(s.isHearingImpaired ? 1 : 0);
-		q.addBindValue(s.isVisualImpaired ? 1 : 0);
-		q.addBindValue(s.pixelFormat);
-		q.addBindValue(s.frameRate);
-		q.addBindValue(s.codecLevel);
-		q.addBindValue(s.codecProfile);
-		q.addBindValue(s.extraJson);
-		q.addBindValue(s.isExternal ? 1 : 0);
-		q.addBindValue(s.externalPath);
-		if (!q.exec()) {
-			qWarning() << "insertStreams row failed:" << q.lastError().text();
-			connection().rollback();
+		ins.addBindValue(fileId);
+		ins.addBindValue(s.streamIndex);
+		ins.addBindValue(s.codecType);
+		ins.addBindValue(s.codecName);
+		ins.addBindValue(s.language);
+		ins.addBindValue(s.title);
+		ins.addBindValue(s.trackType);
+		ins.addBindValue(s.typeConfidence);
+		ins.addBindValue(s.channels);
+		ins.addBindValue(s.sampleRate);
+		ins.addBindValue(s.bitRate);
+		ins.addBindValue(s.width);
+		ins.addBindValue(s.height);
+		ins.addBindValue(s.hdrFormat);
+		ins.addBindValue(s.isDefault ? 1 : 0);
+		ins.addBindValue(s.isForced ? 1 : 0);
+		ins.addBindValue(s.isOriginal ? 1 : 0);
+		ins.addBindValue(s.isCommentary ? 1 : 0);
+		ins.addBindValue(s.isHearingImpaired ? 1 : 0);
+		ins.addBindValue(s.isVisualImpaired ? 1 : 0);
+		ins.addBindValue(s.pixelFormat);
+		ins.addBindValue(s.frameRate);
+		ins.addBindValue(s.codecLevel);
+		ins.addBindValue(s.codecProfile);
+		ins.addBindValue(s.extraJson);
+		ins.addBindValue(s.isExternal ? 1 : 0);
+		ins.addBindValue(s.externalPath);
+		if (!ins.exec()) {
+			qWarning() << "insertStreams row failed:" << ins.lastError().text();
+			db.rollback();
 			return false;
 		}
 	}
-	connection().commit();
-	return true;
+	return db.commit();
 }
 
 bool DatabaseManager::deleteStreamsForFile(qint64 fileId)
 {
-	QSqlQuery q(connection());
-	q.prepare("DELETE FROM streams WHERE file_id=?");
-	q.addBindValue(fileId);
-	return q.exec();
+	const auto db = connection();
+	if (!db.isValid() || !db.isOpen())
+		return false;
+	return deleteStreamsOnDb(db, fileId);
 }
 
 bool DatabaseManager::updateStreamExternalInfo(qint64 fileId, int streamIndex,

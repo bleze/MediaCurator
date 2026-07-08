@@ -267,7 +267,7 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 			if (passes) {
 				m_entries[i] = entry;
 				const QModelIndex idx = index(i);
-				emit dataChanged(idx, idx);
+				emit dataChanged(idx, idx, { FileRole, StreamsRole });
 			} else {
 				beginRemoveRows({}, i, i);
 				m_entries.removeAt(i);
@@ -400,6 +400,20 @@ void McFileListModel::setFilterIgnoredOnly(bool on)
 {
 	if (m_filterIgnoredOnly == on) return;
 	m_filterIgnoredOnly = on;
+	applyFilter();
+}
+
+void McFileListModel::setStatusFilter(int statusIndex)
+{
+	const bool hasRemovals  = (statusIndex == 1);
+	const bool missingImdb  = (statusIndex == 2);
+	const bool ignoredOnly  = (statusIndex == 3);
+	if (m_filterHasRemovals == hasRemovals && m_filterMissingImdb == missingImdb
+	    && m_filterIgnoredOnly == ignoredOnly)
+		return;
+	m_filterHasRemovals = hasRemovals;
+	m_filterMissingImdb = missingImdb;
+	m_filterIgnoredOnly = ignoredOnly;
 	applyFilter();
 }
 

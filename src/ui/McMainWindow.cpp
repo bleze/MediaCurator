@@ -38,15 +38,19 @@
 
 #ifdef Q_OS_WIN
 #include <shobjidl.h>
+#include <windows.h>
 #endif
 
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QShowEvent>
+#include <QPaintEvent>
+#include <QSplashScreen>
 #include <QTimer>
 #include <functional>
 #include <QAction>
 #include <QApplication>
+#include <QEventLoop>
 #include <QClipboard>
 #include <QIcon>
 #include <QLineEdit>
@@ -70,6 +74,7 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QGuiApplication>
+#include <QWindow>
 #include <QScreen>
 #include <QSettings>
 #include <QSplitter>
@@ -263,6 +268,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	if (!firstLaunch) {
 		restoreGeometry(s.value("mainWindow/geometry").toByteArray());
 		restoreState(s.value("mainWindow/state").toByteArray());
+		// Never start hidden/minimized — splash.finish() skips show() when isVisible().
+		setWindowState(windowState() & ~Qt::WindowMinimized);
 	}
 	// Splitter state is restored after setupUi() creates m_splitter
 
@@ -490,6 +497,10 @@ McMainWindow::~McMainWindow()
 {
 #ifdef Q_OS_WIN
 	if (m_taskbar) { m_taskbar->Release(); m_taskbar = nullptr; }
+	if (m_nativeBgBrush) {
+		DeleteObject(static_cast<HBRUSH>(m_nativeBgBrush));
+		m_nativeBgBrush = nullptr;
+	}
 #endif
 }
 
@@ -530,13 +541,14 @@ void McMainWindow::setupUi()
 	// Only clear it for roles that actually affect card height (streams / overrides).
 	// Title, year, rating, and poster path never change the badge row count or height.
 	connect(m_listModel, &QAbstractItemModel::dataChanged, this,
-	        [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
-		const bool affectsHeight = roles.isEmpty()
-		    || roles.contains(McFileListModel::StreamsRole)
+	        [this](const QModelIndex& topLeft, const QModelIndex&, const QList<int>& roles) {
+		if (!topLeft.isValid()) return;
+		const bool affectsHeight = roles.contains(McFileListModel::StreamsRole)
 		    || roles.contains(McFileListModel::OverridesRole);
-		if (affectsHeight) {
-			if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
-				d->clearSizeCache();
+		if (!affectsHeight) return;
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate())) {
+			const auto file = topLeft.data(McFileListModel::FileRole).value<FileRecord>();
+			d->invalidateSizeCacheFor(file.id);
 		}
 	});
 
@@ -794,7 +806,7 @@ void McMainWindow::setupUi()
 					for (const auto& s : existing)
 						if (!s.isExternal) containerStreams << s;
 					const auto sidecars = ScanWorker::scanSidecarSubtitles(
-						filePath, containerStreams.size());
+						filePath, ScanWorker::nextSidecarStreamIndex(containerStreams));
 					auto allStreams = containerStreams;
 					allStreams.append(sidecars);
 					db.insertStreams(fileId, allStreams);
@@ -966,9 +978,7 @@ void McMainWindow::setupUi()
 	});
 	connect(m_filterPanel, &McFilterPanel::filterStatusChanged,
 	        this, [this](int status) {
-		m_listModel->setFilterHasRemovals(status == 1);
-		m_listModel->setFilterMissingImdb(status == 2);
-		m_listModel->setFilterIgnoredOnly(status == 3);
+		m_listModel->setStatusFilter(status);
 	});
 	connect(m_filterPanel, &McFilterPanel::quickFiltersChanged,
 	        m_listModel, &McFileListModel::setQuickFilters);
@@ -1186,7 +1196,7 @@ void McMainWindow::setupUi()
 				for (const auto& s : existing)
 					if (!s.isExternal) containerStreams << s;
 				const auto sidecars = ScanWorker::scanSidecarSubtitles(
-					filePath, containerStreams.size());
+					filePath, ScanWorker::nextSidecarStreamIndex(containerStreams));
 				auto allStreams = containerStreams;
 				allStreams.append(sidecars);
 				db.insertStreams(fileId, allStreams);
@@ -1210,6 +1220,148 @@ void McMainWindow::setupUi()
 	splitter->setSizes({ 450, 160 });
 
 	setCentralWidget(splitter);
+	applyDarkBackgrounds();
+}
+
+void McMainWindow::applyDarkBackgrounds()
+{
+	// QListView's viewport defaults to a light Base on Windows until the first
+	// delegate paint — fill every ancestor with the themed Window/Base colors so
+	// the gap between splash.finish() and the first card paint isn't a white flash.
+	const QColor win  = palette().color(QPalette::Window);
+	const QColor base = palette().color(QPalette::Base);
+	const QColor alt  = palette().color(QPalette::AlternateBase);
+
+	auto fill = [](QWidget* w, const QColor& window, const QColor& baseColor,
+	               const QColor& altColor) {
+		if (!w) return;
+		w->setAutoFillBackground(true);
+		QPalette pal = w->palette();
+		pal.setColor(QPalette::Window, window);
+		pal.setColor(QPalette::Base, baseColor);
+		pal.setColor(QPalette::AlternateBase, altColor);
+		w->setPalette(pal);
+	};
+
+	fill(this, win, base, alt);
+	fill(m_splitter, win, base, alt);
+	fill(m_filterPanel, win, base, alt);
+	fill(m_listView, win, base, alt);
+	if (m_listView && m_listView->viewport())
+		fill(m_listView->viewport(), base, base, alt);
+	fill(m_jobPanel, win, base, alt);
+}
+
+void McMainWindow::attachSplash(QSplashScreen* splash, const QIcon& appIcon)
+{
+	m_splash      = splash;
+	m_startupIcon = appIcon;
+	// Queued so this runs on the first app.exec() iteration, not during main().
+	QMetaObject::invokeMethod(this, &McMainWindow::dismissSplash, Qt::QueuedConnection);
+}
+
+void McMainWindow::dismissSplash()
+{
+	if (m_splashDismissed)
+		return;
+	m_splashDismissed = true;
+
+	if (windowState() & Qt::WindowMinimized)
+		setWindowState(windowState() & ~Qt::WindowMinimized);
+
+	if (m_splash) {
+		m_splash->finish(this);
+		m_splash = nullptr;
+	}
+
+	showNormal();
+	ensureOnScreen();
+	raise();
+	activateWindow();
+
+	if (!m_startupIcon.isNull())
+		setWindowIcon(m_startupIcon);
+	if (QWindow* wh = windowHandle())
+		wh->setIcon(m_startupIcon);
+	setNativeWindowBackground();
+
+	QMetaObject::invokeMethod(this, &McMainWindow::completeStartup, Qt::QueuedConnection);
+}
+
+void McMainWindow::ensureOnScreen()
+{
+	QScreen* screen = nullptr;
+	if (QWindow* wh = windowHandle())
+		screen = wh->screen();
+	if (!screen)
+		screen = QGuiApplication::primaryScreen();
+	if (!screen)
+		return;
+
+	const QRect avail = screen->availableGeometry();
+	QRect geo = frameGeometry();
+
+	const bool offScreen = !avail.intersects(geo)
+	    || geo.width() < minimumWidth() / 2
+	    || geo.height() < minimumHeight() / 2;
+
+	if (offScreen) {
+		const int w = qBound(minimumWidth(), width(), avail.width() - 80);
+		const int h = qBound(minimumHeight(), height(), avail.height() - 80);
+		const int x = avail.x() + (avail.width() - w) / 2;
+		const int y = avail.y() + (avail.height() - h) / 2;
+		setGeometry(x, y, w, h);
+	}
+}
+
+void McMainWindow::paintEvent(QPaintEvent* event)
+{
+	// Native Win32 HWND defaults to white until Qt children paint — fill immediately.
+	QPainter p(this);
+	p.fillRect(event->rect(), palette().color(QPalette::Window));
+	QMainWindow::paintEvent(event);
+}
+
+void McMainWindow::setNativeWindowBackground()
+{
+#ifdef Q_OS_WIN
+	if (!internalWinId())
+		return;
+	const QColor bg = palette().color(QPalette::Window);
+	const COLORREF cref = RGB(bg.red(), bg.green(), bg.blue());
+	if (m_nativeBgBrush)
+		DeleteObject(static_cast<HBRUSH>(m_nativeBgBrush));
+	m_nativeBgBrush = CreateSolidBrush(cref);
+	SetClassLongPtr(reinterpret_cast<HWND>(winId()), GCLP_HBRBACKGROUND,
+	                reinterpret_cast<LONG_PTR>(m_nativeBgBrush));
+#endif
+}
+
+void McMainWindow::completeStartup()
+{
+	if (m_startupCompleteDone)
+		return;
+	m_startupCompleteDone = true;
+
+	updateJobPanelVisibility(/*forceShow=*/true);
+
+	if (!AppSettings::instance().value("onboarding/seen", false).toBool()) {
+		McOnboardingDialog dlg(this);
+		dlg.exec();
+		AppSettings::instance().setValue("onboarding/seen", true);
+	}
+
+	QTimer::singleShot(2000, this, [] { UpdateChecker::instance().check(/*silent=*/true); });
+
+	startBackgroundLibraryLoad();
+}
+
+void McMainWindow::startBackgroundLibraryLoad()
+{
+	if (m_backgroundLoadStarted || !m_loadThread)
+		return;
+	m_backgroundLoadStarted = true;
+	m_loadThread->start();
 }
 
 void McMainWindow::setupActions()
@@ -1550,25 +1702,10 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 void McMainWindow::showEvent(QShowEvent* event)
 {
 	QMainWindow::showEvent(event);
-	if (!m_firstShowDone) {
+	if (!m_firstShowDone)
 		m_firstShowDone = true;
-		// First show: always reveal the queue if jobs exist — the "pinned hidden"
-		// setting is a within-session preference, not a permanent preference.
-		updateJobPanelVisibility(/*forceShow=*/true);
-
-		if (!AppSettings::instance().value("onboarding/seen", false).toBool()) {
-			QTimer::singleShot(0, this, [this] {
-				McOnboardingDialog dlg(this);
-				dlg.exec();
-				AppSettings::instance().setValue("onboarding/seen", true);
-			});
-		}
-
-		QTimer::singleShot(2000, this, [] { UpdateChecker::instance().check(/*silent=*/true); });
-	} else {
-		// Un-minimise / screen restore: just sync state, don't override user's choice.
+	else
 		updateJobPanelVisibility();
-	}
 }
 
 // ── Slots ─────────────────────────────────────────────────────────────────────
@@ -1694,6 +1831,16 @@ void McMainWindow::createScanWorker(const QString& folderPath, bool quickScan)
 	connect(m_scanWorker, &ScanWorker::fileProcessed,  m_listModel, &McFileListModel::applyFileUpdate);
 	connect(m_scanWorker, &ScanWorker::imdbIdFound,    m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(m_scanWorker, &ScanWorker::fileRemoved,    m_listModel, &McFileListModel::removeEntry);
+	connect(m_scanWorker, &ScanWorker::posterEnqueueRequested, this,
+	        [](qint64 id) { PosterManager::instance().enqueue(id); }, Qt::QueuedConnection);
+	connect(m_scanWorker, &ScanWorker::subtitleEnqueueRequested, this,
+	        [](qint64 id) { SubtitleManager::instance().enqueue(id); }, Qt::QueuedConnection);
+	connect(m_scanWorker, &ScanWorker::posterEnqueueBatchRequested, this,
+	        [](const Mc::FileIdList& ids) { PosterManager::instance().enqueueBatch(ids); },
+	        Qt::QueuedConnection);
+	connect(m_scanWorker, &ScanWorker::subtitleEnqueueBatchRequested, this,
+	        [](const Mc::FileIdList& ids) { SubtitleManager::instance().enqueueBatch(ids); },
+	        Qt::QueuedConnection);
 
 	setScanningState(true);
 	m_scanThread->start();
@@ -1789,8 +1936,12 @@ void McMainWindow::startLibraryLoader()
 			ids.reserve(firstFiles.size());
 			for (const auto& f : firstFiles) ids << f.id;
 			const auto streams = db.streamsForFiles(ids);
+			if (m_listView)
+				m_listView->setUpdatesEnabled(false);
 			for (const auto& f : firstFiles)
 				m_listModel->applyFileUpdate(f, streams.value(f.id));
+			if (m_listView)
+				m_listView->setUpdatesEnabled(true);
 		}
 		m_jobPanel->refreshPaged(kFirstPageSize);   // uses batch streams — fast
 	}
@@ -1809,6 +1960,9 @@ void McMainWindow::startLibraryLoader()
 
 	updateActionStates();
 	updateSavedLabel();
+
+	// Keep the splash painted while the constructor blocks the main thread.
+	QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
 	// ── Loading progress bar ─────────────────────────────────────────────────
 	// Query the total once — a fast COUNT(*) before the background thread starts.
@@ -1859,15 +2013,22 @@ void McMainWindow::startLibraryLoader()
 		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths);
 	});
 
-	connect(loader, &LibraryLoader::fileReady,
-	        m_listModel, &McFileListModel::applyFileUpdate);
+	connect(loader, &LibraryLoader::pageReady, this,
+	        [this](const QList<Mc::FileRecord>& files, const Mc::FileStreamMap& streams) {
+		if (files.isEmpty()) return;
+		if (m_listView)
+			m_listView->setUpdatesEnabled(false);
+		for (const auto& f : files)
+			m_listModel->applyFileUpdate(f, streams.value(f.id));
+		if (m_listView) {
+			m_listView->setUpdatesEnabled(true);
+			m_listView->viewport()->update();
+		}
+	});
 
-	// Update progress bar on each file arriving from the background thread.
-	// This connection is registered after the model's so m_listModel->totalCount()
-	// already reflects the newly added entry when this lambda runs.
 	if (dbTotal > kFirstPageSize) {
-		connect(loader, &LibraryLoader::fileReady, this,
-		        [this](const Mc::FileRecord&, const QList<Mc::StreamRecord>&) {
+		connect(loader, &LibraryLoader::pageReady, this,
+		        [this](const QList<Mc::FileRecord>&, const Mc::FileStreamMap&) {
 			m_progressBar->setValue(m_listModel->totalCount());
 		});
 	}
@@ -1896,7 +2057,7 @@ void McMainWindow::startLibraryLoader()
 		}
 	});
 
-	m_loadThread->start();
+	// Thread start is deferred to startBackgroundLibraryLoad() after the window is shown.
 }
 
 bool McMainWindow::analyzeSingleFile(qint64 fileId)
@@ -2310,7 +2471,7 @@ void McMainWindow::updateJobPanelVisibility(bool forceShow)
 
 	if (shouldShow) {
 		const int total = m_splitter->height();
-		if (total <= 0) return;   // window not yet laid out — showEvent will call us again
+		if (total <= 0) return;   // window not yet laid out — retry on next visibility sync
 
 		const bool wasHidden = !m_jobPanel->isVisible();
 		m_jobPanel->setVisible(true);

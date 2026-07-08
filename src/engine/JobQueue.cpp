@@ -233,7 +233,10 @@ void JobQueue::startJob(const JobRecord& job)
 	// tag_edit jobs have no commandArgsJson — that's expected; other types must have it.
 	const bool isTagEdit = (jobType == QLatin1String("tag_edit"));
 	if (!isTagEdit && commandArgsJson.isEmpty()) {
-		runNext();
+		qWarning() << "JobQueue: job" << jobId << "has empty command_args_json — marking failed";
+		db.updateJobStatus(jobId, "failed", -1);
+		emit jobFinished(jobId, false, 0);
+		if (m_running && !m_paused) runNext();
 		return;
 	}
 
@@ -519,7 +522,8 @@ void JobQueue::rescanFile(qint64 fileId, const QString& filePath, bool triggerRe
 			updated.originalLanguage = fileCopy.originalLanguage;
 		(void)db2.upsertFile(updated);
 		// Re-discover sidecar subtitles alongside the (possibly renamed) file
-		const auto sidecars = ScanWorker::scanSidecarSubtitles(fileCopy.path, result.streams.size());
+		const auto sidecars = ScanWorker::scanSidecarSubtitles(
+		    fileCopy.path, ScanWorker::nextSidecarStreamIndex(result.streams));
 		auto allStreams      = result.streams;
 		allStreams.append(sidecars);
 		db2.insertStreams(fileId, allStreams);

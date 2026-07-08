@@ -78,6 +78,8 @@ private:
 	void setupUi();
 	void updateFooter();
 	void updateStatusCombo();
+	void focusJob(qint64 jobId);
+	void markJobForFocus(qint64 jobId);
 	bool eventFilter(QObject* obj, QEvent* event) override;
 	static QString formatSaved(qint64 bytes);
 
@@ -116,6 +118,8 @@ private:
 	// way a job-ID change does, since progress resets to 0 and the two phases
 	// have unrelated throughput.
 	QString m_etaLastPhase;
+	// Set when a job is promoted to queued; consumed when Running/Queued filter is shown.
+	qint64 m_focusJobId = -1;
 };
 
 } // namespace Mc

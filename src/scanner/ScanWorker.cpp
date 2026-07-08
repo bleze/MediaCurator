@@ -1,7 +1,5 @@
 ﻿#include "scanner/ScanWorker.h"
 #include "core/DatabaseManager.h"
-#include "engine/PosterManager.h"
-#include "engine/SubtitleManager.h"
 #include "scanner/NfoParser.h"
 
 #include <QDateTime>
@@ -72,6 +70,55 @@ static const QHash<QString, QString>& subtitleLangMap()
 		{"ukrainian","ukr"},{"croatian","hrv"},{"serbian","srp"},{"bulgarian","bul"},
 	};
 	return m;
+}
+
+int ScanWorker::nextSidecarStreamIndex(const QList<StreamRecord>& containerStreams)
+{
+	int maxIdx = -1;
+	for (const StreamRecord& s : containerStreams) {
+		if (!s.isExternal && s.streamIndex > maxIdx)
+			maxIdx = s.streamIndex;
+	}
+	return maxIdx + 1;
+}
+
+static bool externalSidecarsEqual(const QList<StreamRecord>& a, const QList<StreamRecord>& b)
+{
+	auto fingerprint = [](const QList<StreamRecord>& streams) {
+		QStringList parts;
+		for (const StreamRecord& s : streams) {
+			if (!s.isExternal) continue;
+			parts << QStringLiteral("%1|%2|%3")
+			             .arg(s.externalPath, s.language)
+			             .arg(s.isForced ? 1 : 0);
+		}
+		parts.sort();
+		return parts;
+	};
+	return fingerprint(a) == fingerprint(b);
+}
+
+bool ScanWorker::refreshSidecarStreamsIfChanged(DatabaseManager& db, qint64 fileId,
+                                                const QString& videoPath)
+{
+	const auto existing = db.streamsForFile(fileId);
+	QList<StreamRecord> container;
+	QList<StreamRecord> oldExternal;
+	container.reserve(existing.size());
+	for (const StreamRecord& s : existing) {
+		if (s.isExternal)
+			oldExternal << s;
+		else
+			container << s;
+	}
+
+	const auto newSidecars = scanSidecarSubtitles(videoPath, nextSidecarStreamIndex(container));
+	if (externalSidecarsEqual(oldExternal, newSidecars))
+		return false;
+
+	auto allStreams = container;
+	allStreams.append(newSidecars);
+	return db.insertStreams(fileId, allStreams);
 }
 
 QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, int startIndex)
@@ -187,10 +234,12 @@ void ScanWorker::run()
 			const qint64 curSize  = fi.size();
 			if (existing->mtimeMs == curMtime && existing->sizeBytes == curSize) {
 				++skipped;
+				if (refreshSidecarStreamsIfChanged(db, existing->id, path))
+					emit fileProcessed(*existing, db.streamsForFile(existing->id));
 				// Enqueue even for unchanged files so PosterManager can backfill
 				// any missing display_title or rating without re-running ffprobe.
-				PosterManager::instance().enqueue(existing->id);
-				SubtitleManager::instance().enqueue(existing->id);
+				emit posterEnqueueRequested(existing->id);
+				emit subtitleEnqueueRequested(existing->id);
 				return;
 			}
 		}
@@ -212,7 +261,7 @@ void ScanWorker::run()
 		}
 
 		// Combine container streams with any sidecar subtitle files found alongside
-		const auto sidecars  = scanSidecarSubtitles(path, result.streams.size());
+		const auto sidecars  = scanSidecarSubtitles(path, nextSidecarStreamIndex(result.streams));
 		auto allStreams       = result.streams;
 		allStreams.append(sidecars);
 		db.insertStreams(*fileId, allStreams);
@@ -243,8 +292,8 @@ void ScanWorker::run()
 		emit fileProcessed(fileWithId, allStreams);
 
 		// Kick off poster lookup in parallel with the next FFprobe call.
-		PosterManager::instance().enqueue(*fileId);
-		SubtitleManager::instance().enqueue(*fileId);
+		emit posterEnqueueRequested(*fileId);
+		emit subtitleEnqueueRequested(*fileId);
 	};
 
 	if (m_quickScan) {
@@ -254,12 +303,39 @@ void ScanWorker::run()
 		// size round-trips across the existing library, just directory listings down
 		// to the first already-known folder in each branch.
 		QSet<QString> knownDirs;
-		for (const auto& f : db.filesUnderPath(m_rootPath))
+		const auto knownFiles = db.filesUnderPath(m_rootPath);
+		for (const auto& f : knownFiles)
 			knownDirs.insert(QFileInfo(f.path).absolutePath());
 
+		// Already-known files are never touched by the walk below, so backfill
+		// managers here for files that may still need work under this root.
+		{
+			const QList<qint64> needingPosters = db.fileIdsNeedingPosters();
+			const QSet<qint64> needsPoster(needingPosters.begin(), needingPosters.end());
+			const QHash<qint64, QString> imdbIds = db.allKnownImdbIds();
+			QList<qint64> posterIds, subtitleIds;
+			posterIds.reserve(knownFiles.size());
+			subtitleIds.reserve(knownFiles.size());
+			for (const auto& f : knownFiles) {
+				if (needsPoster.contains(f.id))
+					posterIds << f.id;
+				if (!imdbIds.value(f.id).isEmpty())
+					subtitleIds << f.id;
+			}
+			if (!posterIds.isEmpty())
+				emit posterEnqueueBatchRequested(posterIds);
+			if (!subtitleIds.isEmpty())
+				emit subtitleEnqueueBatchRequested(subtitleIds);
+		}
+
+		QSet<QString> visitedDirs;
+		const auto dirFilters = QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks;
 		std::function<void(const QString&)> walkNewFolders = [&](const QString& dir) {
 			if (m_cancelled.loadRelaxed()) return;
-			const QFileInfoList entries = QDir(dir).entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+			const QString normDir = QDir::cleanPath(dir);
+			if (visitedDirs.contains(normDir)) return;
+			visitedDirs.insert(normDir);
+			const QFileInfoList entries = QDir(normDir).entryInfoList(dirFilters);
 			for (const QFileInfo& fi : entries) {
 				if (m_cancelled.loadRelaxed()) return;
 				if (fi.isDir()) {

@@ -1,4 +1,5 @@
 #pragma once
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -43,6 +44,9 @@ public:
 	// No-op if disabled, no API key configured, or the file is already fully covered.
 	void enqueue(qint64 fileId);
 
+	// Batch enqueue — one cross-thread signal for many IDs (e.g. quick-scan backfill).
+	void enqueueBatch(const QList<qint64>& fileIds);
+
 signals:
 	// A background download wrote new subtitle file(s) for fileId; streams table
 	// has already been updated — listeners only need to refresh their view.
@@ -56,6 +60,7 @@ signals:
 	void workerSetEnabled(bool enabled);
 	void workerSetUnderstoodLanguages(QStringList languages);
 	void workerEnqueueFile(qint64 fileId);
+	void workerEnqueueBatch(QList<qint64> fileIds);
 	void workerStop();
 
 private:

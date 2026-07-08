@@ -60,6 +60,16 @@ public slots:
 		startTimerIfWork();
 	}
 
+	void enqueueBatch(const QList<qint64>& fileIds)
+	{
+		if (m_stopping || fileIds.isEmpty()) return;
+		for (qint64 id : fileIds) {
+			if (id > 0 && !m_queue.contains(id))
+				m_queue.append(id);
+		}
+		startTimerIfWork();
+	}
+
 signals:
 	void subtitlesReady(qint64 fileId, int downloadedCount);
 	void quotaExhausted();
@@ -136,7 +146,8 @@ private:
 			QList<StreamRecord> containerStreams;
 			for (const auto& s : streams)
 				if (!s.isExternal) containerStreams << s;
-			const auto sidecars = ScanWorker::scanSidecarSubtitles(file.path, containerStreams.size());
+			const auto sidecars = ScanWorker::scanSidecarSubtitles(
+			    file.path, ScanWorker::nextSidecarStreamIndex(containerStreams));
 			auto allStreams = containerStreams;
 			allStreams.append(sidecars);
 			DatabaseManager::instance().insertStreams(fileId, allStreams);
@@ -196,6 +207,8 @@ void SubtitleManager::start(const QString& apiKey, const QString& username, cons
 	        m_worker, &SubtitleWorker::setUnderstoodLanguages, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueFile,
 	        m_worker, &SubtitleWorker::enqueueFile, Qt::QueuedConnection);
+	connect(this, &SubtitleManager::workerEnqueueBatch,
+	        m_worker, &SubtitleWorker::enqueueBatch, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerStop,
 	        m_worker, &SubtitleWorker::stop, Qt::QueuedConnection);
 
@@ -236,6 +249,12 @@ void SubtitleManager::setUnderstoodLanguages(const QStringList& languages)
 void SubtitleManager::enqueue(qint64 fileId)
 {
 	emit workerEnqueueFile(fileId);
+}
+
+void SubtitleManager::enqueueBatch(const QList<qint64>& fileIds)
+{
+	if (fileIds.isEmpty()) return;
+	emit workerEnqueueBatch(fileIds);
 }
 
 } // namespace Mc

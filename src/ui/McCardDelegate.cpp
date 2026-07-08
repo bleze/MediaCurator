@@ -29,6 +29,7 @@
 #include <QStyleOptionButton>
 #include <QTimer>
 #include <QToolTip>
+#include <QtConcurrent>
 #include <QtMath>
 #include <algorithm>
 
@@ -42,6 +43,51 @@ static QHash<QString, QPixmap> s_fanartRawCache;
 // that the derived scaled entries in QPixmapCache (keyed by path+version+width) are
 // automatically invalidated without needing a wildcard-remove API.
 static QHash<QString, int> s_fanartVersions;
+
+static QSet<QString> s_asyncImagePending;
+
+static void requestAsyncFanart(const QString& path, QWidget* viewport)
+{
+	if (path.isEmpty() || s_asyncImagePending.contains(path) || !viewport)
+		return;
+	s_asyncImagePending.insert(path);
+	(void)QtConcurrent::run([path, viewport]() {
+		QPixmap raw(path);
+		if (!raw.isNull() && raw.height() > 300) {
+			const int y = (raw.height() - 300) / 2;
+			raw = raw.copy(0, y, raw.width(), 300);
+		}
+		QMetaObject::invokeMethod(viewport, [path, raw, viewport]() {
+			s_asyncImagePending.remove(path);
+			if (!raw.isNull()) {
+				s_fanartRawCache.insert(path, raw);
+				s_fanartVersions[path]++;
+			}
+			viewport->update();
+		}, Qt::QueuedConnection);
+	});
+}
+
+static void requestAsyncPoster(const QString& path, int posterVersion, int targetWidth,
+                               QWidget* viewport)
+{
+	const QString cacheKey = QStringLiteral("poster:%1:%2").arg(path).arg(posterVersion);
+	if (path.isEmpty() || s_asyncImagePending.contains(cacheKey) || !viewport)
+		return;
+	s_asyncImagePending.insert(cacheKey);
+	(void)QtConcurrent::run([path, cacheKey, posterVersion, targetWidth, viewport]() {
+		const QPixmap src(path);
+		QPixmap pm;
+		if (!src.isNull())
+			pm = src.scaledToWidth(targetWidth, Qt::SmoothTransformation);
+		QMetaObject::invokeMethod(viewport, [cacheKey, pm, viewport]() {
+			s_asyncImagePending.remove(cacheKey);
+			if (!pm.isNull())
+				QPixmapCache::insert(cacheKey, pm);
+			viewport->update();
+		}, Qt::QueuedConnection);
+	});
+}
 
 // Loads an SVG resource, injects a fill color into the root element (same
 // logic as SvgIcon.cpp's recolorSvg), and renders it to a cached QPixmap.
@@ -1103,19 +1149,9 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		                              .arg(s_fanartVersions.value(d.fanartPath, 0))
 		                              .arg(option.rect.width());
 		if (!QPixmapCache::find(fanartKey, &fanart)) {
-			// Raw cache: populated by prefetchFanart() on download (never evicts).
-			// Falls back to disk only for pre-existing fanart on first access.
 			QPixmap raw = s_fanartRawCache.value(d.fanartPath);
-			if (raw.isNull()) {
-				raw = QPixmap(d.fanartPath);
-				if (!raw.isNull()) {
-					if (raw.height() > 300) {
-						const int y = (raw.height() - 300) / 2;
-						raw = raw.copy(0, y, raw.width(), 300);
-					}
-					s_fanartRawCache.insert(d.fanartPath, raw);
-				}
-			}
+			if (raw.isNull() && m_view && m_view->viewport())
+				requestAsyncFanart(d.fanartPath, m_view->viewport());
 			if (!raw.isNull()) {
 				fanart = raw.scaled(option.rect.size(), Qt::KeepAspectRatioByExpanding,
 				                    Qt::SmoothTransformation);
@@ -1146,11 +1182,9 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		const QString cacheKey = QStringLiteral("poster:%1:%2")
 		                             .arg(d.posterPath).arg(d.posterVersion);
 		if (!QPixmapCache::find(cacheKey, &pm)) {
-			const QPixmap src(d.posterPath);
-			if (!src.isNull()) {
-				pm = src.scaledToWidth(posterRect.width(), Qt::SmoothTransformation);
-				QPixmapCache::insert(cacheKey, pm);
-			}
+			if (m_view && m_view->viewport())
+				requestAsyncPoster(d.posterPath, d.posterVersion, posterRect.width(),
+				                   m_view->viewport());
 		}
 		if (!pm.isNull()) {
 			const int px = posterRect.left();

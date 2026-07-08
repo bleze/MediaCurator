@@ -4,6 +4,7 @@
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QTimer;
 
 namespace Mc {
 
@@ -45,9 +46,12 @@ signals:
 private:
 	void onPillToggled(quint32 flag, bool on);
 
-	void onRatingChanged();
+	void updateRatingLabel();
+	void emitRatingFilter();
 
 	quint32    m_activeFilters  = QF_None;
+	QTimer*    m_searchTimer    = nullptr;
+	QTimer*    m_ratingTimer    = nullptr;
 	QLineEdit* m_search         = nullptr;
 	QComboBox* m_statusCombo    = nullptr;
 	QComboBox* m_sortCombo      = nullptr;

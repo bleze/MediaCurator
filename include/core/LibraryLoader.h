@@ -25,6 +25,7 @@ signals:
 	               QHash<qint64, double> ratings,
 	               QHash<qint64, QString> fanartPaths);
 	void fileReady(Mc::FileRecord file, QList<Mc::StreamRecord> streams);
+	void pageReady(QList<Mc::FileRecord> files, Mc::FileStreamMap streams);
 	void finished(int totalFileCount);
 
 private:

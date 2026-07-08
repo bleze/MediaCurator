@@ -66,6 +66,11 @@ struct StreamRecord {
 	QString     externalPath;         // absolute path to sidecar file if isExternal
 };
 
+using FileStreamMap  = QHash<qint64, QList<StreamRecord>>;
+using StreamRecordList = QList<StreamRecord>;
+using FileRecordList   = QList<FileRecord>;
+using FileIdList       = QList<qint64>;
+
 // Mirrors the 'jobs' table row
 struct JobRecord {
 	qint64      id = -1;
@@ -291,4 +296,7 @@ private:
 } // namespace Mc
 
 Q_DECLARE_METATYPE(Mc::FileRecord)
-Q_DECLARE_METATYPE(QList<Mc::StreamRecord>)
+Q_DECLARE_METATYPE(Mc::StreamRecordList)
+Q_DECLARE_METATYPE(Mc::FileRecordList)
+Q_DECLARE_METATYPE(Mc::FileStreamMap)
+Q_DECLARE_METATYPE(Mc::FileIdList)

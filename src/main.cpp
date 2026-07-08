@@ -1,6 +1,9 @@
 #include "ui/McMainWindow.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+
+#include <QHash>
+#include <QMetaType>
 #include "core/Version.h"
 
 #include <QApplication>
@@ -205,6 +208,16 @@ static QPixmap buildSplashPixmap(const QString& version)
 
 int main(int argc, char* argv[])
 {
+	// Belt-and-suspenders for these custom typedefs used as queued signal args.
+	// Not strictly required with pointer-to-member connect() (Q_DECLARE_METATYPE
+	// already lets qMetaTypeId<T>() self-register on first use), but cheap to keep.
+	// If kept, string names must match what MOC puts in signal signatures.
+	qRegisterMetaType<Mc::FileRecord>("Mc::FileRecord");
+	qRegisterMetaType<Mc::StreamRecordList>("QList<Mc::StreamRecord>");
+	qRegisterMetaType<Mc::FileRecordList>("QList<Mc::FileRecord>");
+	qRegisterMetaType<Mc::FileStreamMap>("Mc::FileStreamMap");
+	qRegisterMetaType<Mc::FileIdList>("QList<qint64>");
+
 	QApplication app(argc, argv);
 	app.setStyle(new McAppStyle(QStyleFactory::create("Fusion")));
 	QPixmapCache::setCacheLimit(256 * 1024);  // 256 MB — scaled fanart/posters never evict
@@ -229,6 +242,18 @@ int main(int argc, char* argv[])
 	}
 
 	app.setPalette(pal);
+
+	// QListView's viewport uses the native HWND background on Windows until the
+	// first delegate paint — force dark surfaces app-wide when in dark mode.
+	if (pal.color(QPalette::Window).lightness() < 128) {
+		const QString win  = pal.color(QPalette::Window).name();
+		const QString base = pal.color(QPalette::Base).name();
+		app.setStyleSheet(QStringLiteral(
+		    "QMainWindow, QWidget#qt_scrollarea_viewport { background-color: %1; }"
+		    "QAbstractScrollArea::viewport { background-color: %2; }"
+		    "QListView { background-color: %2; border: none; }"
+		).arg(win, base));
+	}
 
 	app.setApplicationName("MediaCurator");
 	app.setApplicationVersion(MC_VERSION_STRING);
@@ -275,20 +300,7 @@ int main(int argc, char* argv[])
 	Mc::DatabaseManager::instance().cleanupStalledJobs();
 
 	Mc::McMainWindow window;
-	window.show();
-	// Close the splash right away, before anything else can pump the event queue.
-	// McMainWindow::showEvent() schedules the first-run onboarding dialog via a
-	// 0 ms QTimer; if app.processEvents() below ran first, it would dispatch that
-	// timer and enter the dialog's modal event loop before this line ever ran,
-	// leaving the splash on screen for as long as onboarding stayed open.
-	splash.finish(&window);
-	// Set the icon after show() so the native HWND exists when WM_SETICON is sent.
-	// Also set via windowHandle() which goes directly to QWindowsWindow and
-	// correctly updates both ICON_SMALL (title bar) and ICON_BIG (taskbar / Alt+Tab).
-	app.processEvents();   // flush native window creation so windowHandle() is valid
-	window.setWindowIcon(appIcon);
-	if (QWindow* wh = window.windowHandle())
-		wh->setIcon(appIcon);
+	window.attachSplash(&splash, appIcon);
 
 	return app.exec();
 }

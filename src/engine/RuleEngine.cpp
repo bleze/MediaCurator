@@ -99,7 +99,7 @@ bool RuleEngine::isRedundantAudio(const StreamRecord& s, const QList<StreamRecor
 		bool hasBetterDefault = false;
 		for (const StreamRecord& sib : siblings) {
 			if (sib.id == s.id || sib.codecType != "audio") continue;
-			if (sib.language != s.language)                 continue;
+			if (normalizeLang(sib.language) != normalizeLang(s.language)) continue;
 			if (!sib.isDefault)                             continue;
 			if (isAudioFormatDisabled(sib))                 continue;
 			// Fewer channels = spatial downgrade — not a "better" default.
@@ -120,7 +120,7 @@ bool RuleEngine::isRedundantAudio(const StreamRecord& s, const QList<StreamRecor
 
 	for (const StreamRecord& sib : siblings) {
 		if (sib.id == s.id || sib.codecType != "audio") continue;
-		if (sib.language != s.language)                 continue;
+		if (normalizeLang(sib.language) != normalizeLang(s.language)) continue;
 		if (isAudioFormatDisabled(sib))                 continue;
 
 		// A sibling with fewer channels is a spatial downgrade — never treat it as a
@@ -233,7 +233,7 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 
 			for (const StreamRecord& surround : audioTracks) {
 				if (surround.id == stereo.id || surround.channels < 6) continue;
-				const bool langMatch = (stereo.language == surround.language)
+				const bool langMatch = (normalizeLang(stereo.language) == normalizeLang(surround.language))
 				                    || stereo.language.isEmpty()  || stereo.language  == "und"
 				                    || surround.language.isEmpty() || surround.language == "und";
 				if (langMatch) {
@@ -324,7 +324,7 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 				// Tier 2: language policy
 				else if (m_profile) {
 					const bool isOriginal   = !file.originalLanguage.isEmpty() &&
-					                          s.language.compare(file.originalLanguage, Qt::CaseInsensitive) == 0 &&
+					                          normalizeLang(s.language) == normalizeLang(file.originalLanguage) &&
 					                          m_profile->alwaysKeepOriginalAudio();
 					const bool isUnderstood = isInUnderstoodLanguage(s.language);
 					const bool langKnown    = !s.language.isEmpty() && s.language != "und";

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <QByteArray>
 #include <QImage>
+#include <QList>
 #include <QObject>
 #include <QString>
 
@@ -41,6 +42,9 @@ public:
 	// No-op if the file already has a poster or the TMDB key is not set.
 	void enqueue(qint64 fileId);
 
+	// Batch enqueue — one cross-thread signal for many IDs (e.g. quick-scan backfill).
+	void enqueueBatch(const QList<qint64>& fileIds);
+
 	// Reset poster for a single file and re-queue it immediately.
 	// posterPath: TMDB poster_path already known (e.g. from search dialog) — skips the API lookup.
 	// imageData:  raw image bytes already downloaded — written directly to cache, no network call.
@@ -62,6 +66,7 @@ signals:
 	// Internal — cross-thread commands to the worker.
 	void workerTmdbKeyChanged(QString key);
 	void workerEnqueueFile(qint64 fileId);
+	void workerEnqueueBatch(QList<qint64> fileIds);
 	void workerStop();
 
 private:
