@@ -10,10 +10,12 @@ class QLineEdit;
 class QListView;
 class QPushButton;
 class QTimer;
+class QToolButton;
 
 namespace Mc {
 
 class JobQueue;
+class McGoalProgressBar;
 class McJobListModel;
 
 class McJobPanel : public QWidget
@@ -69,6 +71,8 @@ private slots:
 	void onShowSummary();
 	void onStartPause();
 	void onCancel();
+	void onStartWithGoal();
+	void onEditGoal();
 
 private:
 	void setupUi();
@@ -84,9 +88,11 @@ private:
 	QPushButton*    m_btnUnqueue          = nullptr;
 	QPushButton*    m_btnQueueAll         = nullptr;
 	QPushButton*    m_btnStartPause        = nullptr;
+	QToolButton*    m_btnStartGoalMenu    = nullptr;
 	QPushButton*    m_btnCancel           = nullptr;
 	QPushButton*    m_btnRemove           = nullptr;
 	QPushButton*    m_btnSummary          = nullptr;
+	McGoalProgressBar* m_goalBar          = nullptr;
 	QLineEdit*      m_filterEdit          = nullptr;
 	QComboBox*      m_statusFilter        = nullptr;
 	QComboBox*      m_sortCombo           = nullptr;

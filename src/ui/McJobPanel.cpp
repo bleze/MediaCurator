@@ -2,6 +2,8 @@
 #include "core/AppSettings.h"
 #include "ui/McBulkSummaryDialog.h"
 #include "ui/McFilterPanel.h"
+#include "ui/McGbGoalDialog.h"
+#include "ui/McGoalProgressBar.h"
 #include "ui/McJobCardDelegate.h"
 #include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
@@ -288,10 +290,26 @@ void McJobPanel::setupUi()
 	m_btnCancel->setIcon(svgIcon(":/icons/stop_circle.svg"));
 	m_btnCancel->setIconSize(kIconSz);
 
+	// A single-arrow dropdown: deliberately NOT using setMenu()/MenuButtonPopup —
+	// with a menu attached, Qt's style draws its own small "has menu" indicator on
+	// top of setArrowType()'s glyph, producing a redundant double arrow. Popping
+	// the menu manually on click keeps just the one arrow.
+	m_btnStartGoalMenu = new QToolButton(toolbar);
+	m_btnStartGoalMenu->setArrowType(Qt::DownArrow);
+	m_btnStartGoalMenu->setToolTip(tr("Start processing toward a free-space goal"));
+	auto* startGoalMenu = new QMenu(m_btnStartGoalMenu);
+	QAction* startGoalAction = startGoalMenu->addAction(tr("Start with GB goal\xE2\x80\xA6"));
+	connect(startGoalAction, &QAction::triggered, this, &McJobPanel::onStartWithGoal);
+	connect(m_btnStartGoalMenu, &QToolButton::clicked, this, [this, startGoalMenu] {
+		startGoalMenu->exec(m_btnStartGoalMenu->mapToGlobal(
+		    QPoint(0, m_btnStartGoalMenu->height())));
+	});
+
 	m_btnQueueSelected->setEnabled(false);
 	m_btnUnqueue->setEnabled(false);
 	m_btnQueueAll->setEnabled(false);
 	m_btnStartPause->setEnabled(false);
+	m_btnStartGoalMenu->setEnabled(false);
 	m_btnCancel->setEnabled(false);
 	m_btnRemove->setEnabled(false);
 	m_btnSummary->setEnabled(false);
@@ -323,6 +341,7 @@ void McJobPanel::setupUi()
 	toolbar->addWidget(tbSpacer);
 
 	toolbar->addWidget(m_btnStartPause);
+	toolbar->addWidget(m_btnStartGoalMenu);
 	toolbar->addWidget(m_btnCancel);
 
 	root->addWidget(toolbar);
@@ -428,6 +447,11 @@ void McJobPanel::setupUi()
 	filterLayout->addWidget(vSep(filterBar));
 	filterLayout->addWidget(m_sortCombo);
 	root->addWidget(filterBar);
+
+	m_goalBar = new McGoalProgressBar(this);
+	m_goalBar->setVisible(false);
+	root->addWidget(m_goalBar);
+	connect(m_goalBar, &McGoalProgressBar::clicked, this, &McJobPanel::onEditGoal);
 
 	connect(m_btnQueueSelected, &QPushButton::clicked, this, &McJobPanel::onQueueSelected);
 	connect(m_btnUnqueue,       &QPushButton::clicked, this, &McJobPanel::onUnqueueSelected);
@@ -1276,6 +1300,28 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	connect(queue, &JobQueue::phaseChanged,
 	        m_model, &McJobListModel::updatePhase);
 
+	// Aggregate goal progress bar — completed bytes update per finished job, the
+	// live sliver fills in for whichever job is currently running.
+	connect(queue, &JobQueue::goalProgressChanged, this,
+	        [this](qint64 savedBytes, qint64 goalBytes) {
+		if (!m_goalBar) return;
+		m_goalBar->setGoal(goalBytes);
+		m_goalBar->setCompleted(savedBytes);
+		m_goalBar->setLive(0);
+		m_goalBar->setVisible(true);
+	});
+	connect(queue, &JobQueue::progressChanged, this, [this](qint64, int percent) {
+		if (!m_goalBar || !m_queue || !m_queue->isGoalMode()) return;
+		m_goalBar->setLive(m_queue->currentJobEstimatedSavings() * percent / 100);
+	});
+	connect(queue, &JobQueue::goalReached, this,
+	        [this](qint64 savedBytes, qint64 goalBytes, int jobsCompleted, qint64 elapsedMs) {
+		QMessageBox::information(this, tr("Goal Reached"),
+		    tr("Freed %1 (goal was %2) across %n file(s) in %3.", "", jobsCompleted)
+		        .arg(formatSaved(savedBytes), formatSaved(goalBytes),
+		             formatEtaDuration(elapsedMs / 1000.0)));
+	});
+
 	// A rescan (e.g. after renaming a sidecar subtitle from the badge menu) runs
 	// asynchronously and updates streams/jobs in the DB out from under the model —
 	// reload so badges reflect the new state instead of showing stale pre-rescan data.
@@ -1503,6 +1549,50 @@ void McJobPanel::onCancel()
 	refresh();
 }
 
+void McJobPanel::onStartWithGoal()
+{
+	if (!m_queue) return;
+
+	const int lastGB = AppSettings::instance().value(QStringLiteral("jobPanel/lastGoalGB"), 40).toInt();
+	McGbGoalDialog dlg(lastGB, /*minGB=*/1, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	AppSettings::instance().setValue(QStringLiteral("jobPanel/lastGoalGB"), dlg.goalGB());
+
+	// Seed the bar immediately — it otherwise only learns the goal from
+	// goalProgressChanged, which doesn't fire until the first job finishes,
+	// leaving it blank (goalBytes()==0) for the whole first file.
+	if (m_goalBar) {
+		m_goalBar->setGoal(dlg.goalBytes());
+		m_goalBar->setCompleted(0);
+		m_goalBar->setLive(0);
+		m_goalBar->setVisible(true);
+	}
+
+	// Same stall risk as onStartPause() — the disk-space check calls QStorageInfo,
+	// which can block for seconds on a sleeping/NAS drive.
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	m_queue->startWithGoal(dlg.goalBytes());
+	QApplication::restoreOverrideCursor();
+
+	updateFooter();
+}
+
+void McJobPanel::onEditGoal()
+{
+	if (!m_queue || !m_queue->isGoalMode()) return;
+
+	constexpr qint64 kGiB = 1024LL * 1024 * 1024;
+	const int minGB = qMax<int>(1, static_cast<int>(
+	    std::ceil(double(m_queue->goalSavedBytes()) / double(kGiB))));
+	const int curGB = static_cast<int>(std::ceil(double(m_queue->goalBytes()) / double(kGiB)));
+
+	McGbGoalDialog dlg(curGB, minGB, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	m_queue->setGoalBytes(dlg.goalBytes());
+}
+
 void McJobPanel::onPreviewCommand(qint64 jobId)
 {
 	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
@@ -1686,6 +1776,13 @@ void McJobPanel::updateFooter()
 		m_btnStartPause->setEnabled(queued > 0);
 	}
 
+	// "Start with GB goal…" only makes sense from a fully idle queue — once running
+	// or paused, raising the goal (if any) happens via the aggregate progress bar.
+	const bool queueIdle = running == 0 && !(m_queue && m_queue->isPaused());
+	m_btnStartGoalMenu->setEnabled(queueIdle && queued > 0);
+
+	if (m_goalBar) m_goalBar->setVisible(m_queue && m_queue->isGoalMode());
+
 	if (total == 0) { m_footerLabel->setText(tr("No jobs")); return; }
 
 	QString text = tr("%1 job(s)").arg(total);
@@ -1693,6 +1790,18 @@ void McJobPanel::updateFooter()
 	if (running > 0)    text += tr(" · %1 running").arg(running);
 	if (done    > 0)    text += tr(" · %1 done").arg(done);
 	if (savedTotal > 0) text += tr(" · %1 reclaimed").arg(formatSaved(savedTotal));
+
+	if (m_queue && m_queue->isGoalMode() && m_goalBar) {
+		// formatSaved() returns an empty string for 0 bytes (fine for the "reclaimed"
+		// stat above, which is hidden when zero) — but this readout must always show
+		// a value, including "0 GB" right after a goal run starts, so format directly
+		// in GB rather than reusing it.
+		const auto formatGoalGB = [](qint64 bytes) {
+			return tr("%1 GB").arg(qMax<qint64>(0, bytes) / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
+		};
+		text += tr(" · Goal: %1 / %2 freed")
+		    .arg(formatGoalGB(m_goalBar->currentBytes()), formatGoalGB(m_goalBar->goalBytes()));
+	}
 
 	// ETA — computed from an exponentially-smoothed recent throughput rate rather
 	// than the whole job's elapsed-time average, so a slow patch earlier in a long
@@ -1759,31 +1868,60 @@ void McJobPanel::updateFooter()
 				if (ratePerMs > 0.0) {
 					const double fileEtaSec = (100.0 - progress) / ratePerMs / 1000.0;
 					double queueEtaSec = fileEtaSec;
+					const bool goalMode = m_queue && m_queue->isGoalMode() && m_goalBar;
 
 					// Extend with queued jobs using the current byte rate
 					if (bytesPerMs > 0 && queued > 0) {
-						qint64 queuedBytes = 0;
-						for (int r = 0; r < m_model->rowCount(); ++r) {
-							const QModelIndex qi = m_model->index(r, 0);
-							if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
-								queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
+						if (goalMode) {
+							// A goal run stops once the target is hit, not once the whole
+							// queue drains — estimate time to reach it instead by walking
+							// still-queued jobs in the same largest-savings-first order the
+							// queue actually consumes them in, stopping as soon as their
+							// cumulative estimated savings would cover the shortfall.
+							const qint64 liveBytes = m_goalBar->currentBytes() - m_goalBar->completedBytes();
+							const qint64 currentFileRemainingSavings =
+							    qMax<qint64>(0, m_queue->currentJobEstimatedSavings() - liveBytes);
+							qint64 remainingGoal = m_goalBar->goalBytes() - m_goalBar->currentBytes()
+							    - currentFileRemainingSavings;
+
+							qint64 neededBytes = 0;
+							if (remainingGoal > 0) {
+								auto& db = DatabaseManager::instance();
+								const auto candidates = db.queuedJobs(JobSortMode::LargestSavingsFirst);
+								for (const JobRecord& job : candidates) {
+									if (remainingGoal <= 0) break;
+									remainingGoal -= job.estimatedSavedBytes;
+									if (const auto fileOpt = db.fileById(job.fileId))
+										neededBytes += fileOpt->sizeBytes;
+								}
+							}
+							queueEtaSec += static_cast<double>(neededBytes) / (bytesPerMs * 1000.0);
+						} else {
+							qint64 queuedBytes = 0;
+							for (int r = 0; r < m_model->rowCount(); ++r) {
+								const QModelIndex qi = m_model->index(r, 0);
+								if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
+									queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
+							}
+							queueEtaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
 						}
-						queueEtaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
 					}
 
-					// With more than one file involved, the whole-queue ETA alone hides
-					// how far along the current file is — show both. With just one file,
-					// they're the same number, so show it once.
+					// With more than one file involved, the whole-queue/goal ETA alone
+					// hides how far along the current file is — show both. With just one
+					// file, they're the same number, so show it once.
 					if (queued > 0) {
 						text += tr(" · ~%1 remaining (this file)").arg(formatEtaDuration(fileEtaSec));
-						text += tr(" · ~%1 remaining (queue)").arg(formatEtaDuration(queueEtaSec));
+						text += goalMode
+						    ? tr(" · ~%1 remaining (goal)").arg(formatEtaDuration(queueEtaSec))
+						    : tr(" · ~%1 remaining (queue)").arg(formatEtaDuration(queueEtaSec));
 					} else {
 						text += tr(" · ~%1 remaining").arg(formatEtaDuration(fileEtaSec));
 					}
 
 					if (bytesPerMs > 0) {
 						const double mbPerSec = bytesPerMs * 1000.0 / 1048576.0;
-						text += tr(" (%1 MB/s)").arg(mbPerSec, 0, 'f', 1);
+						text += tr(" · %1 MB/s").arg(mbPerSec, 0, 'f', 1);
 					}
 				}
 			}

@@ -33,6 +33,8 @@ set(MC_SOURCES
     ui/McBulkSummaryDialog.cpp
     ui/McWhatIfDialog.cpp
     ui/McJobStatsBar.cpp
+    ui/McGbGoalDialog.cpp
+    ui/McGoalProgressBar.cpp
     ui/ImdbSearchDialog.cpp
     ui/McSubtitleDownloadDialog.cpp
     ui/McCalibrationDialog.cpp
@@ -110,6 +112,8 @@ set(MC_HEADERS
     ../include/ui/McBulkSummaryDialog.h
     ../include/ui/McWhatIfDialog.h
     ../include/ui/McJobStatsBar.h
+    ../include/ui/McGbGoalDialog.h
+    ../include/ui/McGoalProgressBar.h
     ../include/ui/McSettingsDialog.h
     ../include/ui/ImdbSearchDialog.h
     ../include/ui/McSubtitleDownloadDialog.h

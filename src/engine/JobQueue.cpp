@@ -61,28 +61,33 @@ namespace Mc {
 // (McJobListModel::sortEntriesByDisplaySavings). Recomputing the same live estimate
 // here keeps the queue's actual pick order matching what "Largest savings first"
 // shows on screen, instead of drifting apart whenever the formula moves on.
+// Live-recomputed estimate for a single job — shared by the sort below and by
+// startJob() (which needs the current job's estimate for goal-progress tracking).
+static qint64 estimateJobSavingBytes(const JobRecord& job)
+{
+	auto& db = DatabaseManager::instance();
+	const auto fileOpt = db.fileById(job.fileId);
+	if (!fileOpt) return 0;
+
+	const QList<StreamRecord> allStreams = db.streamsForFile(job.fileId);
+	const QList<StreamRecord> keptStreams =
+		ActionEngine::computeKeptStreams(allStreams, job.commandArgsJson);
+	QSet<int> keptIdx;
+	for (const auto& s : keptStreams) keptIdx.insert(s.streamIndex);
+	QSet<int> removed;
+	for (const auto& s : allStreams)
+		if (!keptIdx.contains(s.streamIndex)) removed.insert(s.streamIndex);
+
+	return estimateSavingBytes(allStreams, removed, fileOpt->sizeBytes, fileOpt->durationSec);
+}
+
 static void sortQueuedJobsByLiveSavings(QList<JobRecord>& jobs)
 {
 	if (jobs.size() < 2) return;
-	auto& db = DatabaseManager::instance();
 
 	QList<qint64> saved(jobs.size());
-	for (int i = 0; i < jobs.size(); ++i) {
-		const JobRecord& job = jobs[i];
-		const auto fileOpt = db.fileById(job.fileId);
-		if (!fileOpt) { saved[i] = 0; continue; }
-
-		const QList<StreamRecord> allStreams = db.streamsForFile(job.fileId);
-		const QList<StreamRecord> keptStreams =
-			ActionEngine::computeKeptStreams(allStreams, job.commandArgsJson);
-		QSet<int> keptIdx;
-		for (const auto& s : keptStreams) keptIdx.insert(s.streamIndex);
-		QSet<int> removed;
-		for (const auto& s : allStreams)
-			if (!keptIdx.contains(s.streamIndex)) removed.insert(s.streamIndex);
-
-		saved[i] = estimateSavingBytes(allStreams, removed, fileOpt->sizeBytes, fileOpt->durationSec);
-	}
+	for (int i = 0; i < jobs.size(); ++i)
+		saved[i] = estimateJobSavingBytes(jobs[i]);
 
 	QList<int> perm(jobs.size());
 	for (int i = 0; i < jobs.size(); ++i) perm[i] = i;
@@ -96,7 +101,9 @@ static void sortQueuedJobsByLiveSavings(QList<JobRecord>& jobs)
 
 JobQueue::JobQueue(QObject* parent)
 	: QObject(parent)
-{}
+{
+	connect(this, &JobQueue::jobFinished, this, &JobQueue::accumulateGoalProgress);
+}
 
 void JobQueue::start()
 {
@@ -118,12 +125,42 @@ void JobQueue::cancel()
 {
 	m_paused  = false;
 	m_running = false;
+	m_goalBytes         = 0;
+	m_goalSavedBytes    = 0;
+	m_goalJobsCompleted = 0;
 
 	if (m_currentJob) {
 		m_currentJob->cancel();
 		// onJobFinished will fire, clean up the temp file, and mark the job failed.
 		// Remaining queued jobs stay queued — Start resumes from the next one.
 	}
+}
+
+void JobQueue::startWithGoal(qint64 goalBytes)
+{
+	m_goalBytes         = goalBytes;
+	m_goalSavedBytes    = 0;
+	m_goalJobsCompleted = 0;
+	m_goalTimer.start();
+	start();
+}
+
+void JobQueue::setGoalBytes(qint64 goalBytes)
+{
+	// Only raises the target — jobs already picked toward the old target can't be
+	// un-started, so lowering it wouldn't actually change anything mid-run.
+	if (goalBytes > m_goalBytes) {
+		m_goalBytes = goalBytes;
+		emit goalProgressChanged(m_goalSavedBytes, m_goalBytes);
+	}
+}
+
+void JobQueue::accumulateGoalProgress(qint64 /*jobId*/, bool success, qint64 savedBytes)
+{
+	if (m_goalBytes <= 0 || !success) return;
+	m_goalSavedBytes += savedBytes;
+	++m_goalJobsCompleted;
+	emit goalProgressChanged(m_goalSavedBytes, m_goalBytes);
 }
 
 void JobQueue::runJob(qint64 jobId)
@@ -148,6 +185,18 @@ void JobQueue::runNext()
 {
 	if (!m_running || m_paused) return;
 
+	if (m_goalBytes > 0 && m_goalSavedBytes >= m_goalBytes) {
+		const qint64 elapsedMs = m_goalTimer.isValid() ? m_goalTimer.elapsed() : 0;
+		emit goalReached(m_goalSavedBytes, m_goalBytes, m_goalJobsCompleted, elapsedMs);
+
+		m_running           = false;
+		m_goalBytes         = 0;
+		m_goalSavedBytes    = 0;
+		m_goalJobsCompleted = 0;
+		emit allFinished();
+		return;
+	}
+
 	// Always re-query for a fresh sorted order — new jobs may have been added
 	// while the previous job was running and must be sorted correctly.
 	auto jobs = DatabaseManager::instance().queuedJobs(m_sortMode);
@@ -158,7 +207,9 @@ void JobQueue::runNext()
 		return;
 	}
 
-	if (m_sortMode == JobSortMode::LargestSavingsFirst)
+	// A goal run always greedily picks the largest remaining savings first,
+	// regardless of the panel's selected sort mode.
+	if (m_sortMode == JobSortMode::LargestSavingsFirst || m_goalBytes > 0)
 		sortQueuedJobsByLiveSavings(jobs);
 
 	startJob(jobs.first());
@@ -174,6 +225,10 @@ void JobQueue::startJob(const JobRecord& job)
 	const QString commandArgsJson = job.commandArgsJson;
 	const QString flagChangesJson = job.flagChangesJson;
 	const QString descriptionText = job.descriptionText;
+
+	// Live estimate for the job about to run — lets the UI show partial progress
+	// toward an active goal while this job is still in flight.
+	m_currentJobEstimatedSavings = estimateJobSavingBytes(job);
 
 	// tag_edit jobs have no commandArgsJson — that's expected; other types must have it.
 	const bool isTagEdit = (jobType == QLatin1String("tag_edit"));
