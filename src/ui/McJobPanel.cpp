@@ -885,6 +885,14 @@ void McJobPanel::setupUi()
 				}
 			});
 			menu.addSeparator();
+		} else if (status == QLatin1String("running")) {
+			auto* cancelJobAct = menu.addAction(svgIcon(":/icons/stop_circle.svg"),
+			                                    tr("&Cancel This Job"));
+			cancelJobAct->setToolTip(tr("Stop just this job — other running jobs are unaffected"));
+			connect(cancelJobAct, &QAction::triggered, this, [this, jobId] {
+				if (m_queue) m_queue->cancelJob(jobId);
+			});
+			menu.addSeparator();
 		} else if (!selectedFailedJobIds.isEmpty()) {
 			const QString retryLabel = selectedFailedJobIds.size() > 1
 			    ? tr("&Retry %1 Jobs").arg(selectedFailedJobIds.size())

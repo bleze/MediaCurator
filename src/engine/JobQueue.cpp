@@ -243,6 +243,36 @@ void JobQueue::cancel()
 		emit allFinished();
 }
 
+void JobQueue::cancelJob(qint64 jobId)
+{
+	int storageGroup = -1;
+	for (auto it = m_runningByGroup.cbegin(); it != m_runningByGroup.cend(); ++it) {
+		if (it->jobId == jobId) { storageGroup = it.key(); break; }
+	}
+	if (storageGroup < 0)
+		return; // not currently running — nothing to cancel
+
+	m_cancelledJobIds.insert(jobId);
+	DatabaseManager::instance().requeueRunningJobs({ jobId });
+	emit jobRequeued(jobId);
+
+	RunningJobSlot& slot = m_runningByGroup[storageGroup];
+	if (slot.remux)
+		slot.remux->cancel();
+	if (slot.propEdit && slot.propEdit->state() != QProcess::NotRunning)
+		slot.propEdit->kill();
+	releaseSlot(storageGroup);
+
+	// The storage group this job occupied is free now — let another queued job
+	// for that group (or any other) pick up immediately instead of waiting for
+	// the next unrelated job event to trigger a dispatch. Exclude this job
+	// itself: it just went back to "queued", and without the exclusion it would
+	// be the only/best candidate for its now-idle group and get restarted in the
+	// very same tick, making Cancel look like it did nothing.
+	if (m_running && !m_paused)
+		dispatchJobs(jobId);
+}
+
 void JobQueue::startWithGoal(qint64 goalBytes)
 {
 	m_goalBytes         = goalBytes;
@@ -289,7 +319,7 @@ void JobQueue::runJob(qint64 jobId)
 	(void)tryStartJob(*jobOpt);
 }
 
-void JobQueue::dispatchJobs()
+void JobQueue::dispatchJobs(qint64 excludeJobId)
 {
 	if (!m_running || m_paused) return;
 	if (m_reviewJobId >= 0) return;
@@ -321,6 +351,8 @@ void JobQueue::dispatchJobs()
 
 	QSet<int> startedThisRound;
 	for (const JobRecord& job : jobs) {
+		if (job.id == excludeJobId)
+			continue;
 		const int group = StorageGroupSettings::groupForFileId(job.fileId);
 		if (isGroupBusy(group) || startedThisRound.contains(group))
 			continue;
@@ -573,7 +605,13 @@ bool JobQueue::consumeAbortedJob(qint64 jobId, int storageGroup)
 	if (!aborted)
 		return false;
 
-	if (auto it = m_runningByGroup.find(storageGroup); it != m_runningByGroup.end()) {
+	// Match on jobId, not just storageGroup — cancelJob() frees this slot and
+	// immediately redispatches, so by the time the killed process's async
+	// finished()/QProcess::finished signal actually arrives, a different job may
+	// already be occupying this same storage-group slot. Tearing that down would
+	// cancel a job nobody asked to cancel.
+	if (auto it = m_runningByGroup.find(storageGroup);
+	        it != m_runningByGroup.end() && it->jobId == jobId) {
 		if (it->remux)
 			it->remux->deleteLater();
 		if (it->propEdit) {

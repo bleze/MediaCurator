@@ -411,6 +411,29 @@ McMainWindow::McMainWindow(QWidget* parent)
 		updateRemuxStatusBar();
 	});
 
+	// A single-job cancel (JobQueue::cancelJob) sends one job back to "queued"
+	// without emitting allFinished (other jobs may still be running), so this is
+	// the only place that job's entry gets dropped from the running-jobs maps.
+	// A bulk cancel() also emits jobRequeued for each job it stops, but that's
+	// immediately followed by allFinished(), which does its own full clear —
+	// this handler still runs first and is harmless in that case.
+	connect(m_jobQueue, &JobQueue::jobRequeued, this, [this](qint64 jobId) {
+		m_runningJobNames.remove(jobId);
+		m_runningJobProgress.remove(jobId);
+		if (!m_runningJobNames.isEmpty()) {
+			updateRemuxStatusBar();
+		} else {
+			m_progressBar->setRange(0, 100);
+			m_progressBar->setVisible(false);
+			m_progressBar->setValue(0);
+			m_statusLabel->setText(tr("Stopped — %1 job(s) queued")
+			                       .arg(DatabaseManager::instance().queuedJobCount()));
+#ifdef Q_OS_WIN
+			clearTaskbarProgress();
+#endif
+		}
+	});
+
 	connect(m_jobQueue, &JobQueue::jobFinished, this, [this](qint64 jobId, bool success, qint64) {
 		updateSavedLabel();
 		const QString failedName = m_runningJobNames.value(jobId);

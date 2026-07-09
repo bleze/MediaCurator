@@ -20,6 +20,9 @@ public:
 	void start();
 	void pause();
 	void cancel();
+	// Cancel a single running job — it goes back to "queued" while any other
+	// concurrently-running jobs (in other storage groups) keep going.
+	void cancelJob(qint64 jobId);
 	// Start a specific job immediately when its storage group is idle.
 	void runJob(qint64 jobId);
 
@@ -84,7 +87,10 @@ private:
 		bool      finishBusy      = false;
 	};
 
-	void dispatchJobs();
+	// excludeJobId skips that one job for this pass — used right after cancelJob()
+	// frees a slot, so the job it just killed isn't immediately picked back up
+	// before its "queued" status has had a chance to mean anything.
+	void dispatchJobs(qint64 excludeJobId = -1);
 	[[nodiscard]] bool tryStartJob(const JobRecord& job);
 	void occupySlot(int storageGroup, qint64 jobId, qint64 fileId, qint64 estimatedSavings);
 	void releaseSlot(int storageGroup);

@@ -24,7 +24,7 @@ Edit `CMakeLists.txt`:
 
 ```cmake
 project(MediaCurator
-    VERSION 1.1.0
+    VERSION 1.2.0
     ...
 )
 ```
@@ -40,11 +40,11 @@ The tag **must** match the version in `CMakeLists.txt`, prefixed with `v`:
 
 ```powershell
 git add CMakeLists.txt
-git commit -m "Release 1.1.0"
+git commit -m "Release 1.2.0"
 git push origin main
 
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 #### Step 3 — Let CI do the rest
@@ -72,7 +72,7 @@ wiring didn't drift.
 
 Don't move an existing tag to a new commit — treat pushed tags as immutable. If a
 release build had a bug, bump the patch version and cut a new tag instead
-(e.g. `v1.1.0` → `v1.1.1`).
+(e.g. `v1.2.0` → `v1.1.1`).
 
 If a release job fails after the platform builds already succeeded (e.g. a transient
 `action-gh-release` error), re-run just the failed `release` job from the Actions tab

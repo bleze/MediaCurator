@@ -122,4 +122,3 @@ If MediaCurator saves you money on storage or just makes managing your media lib
 
 - **Fanart export to disk** — save the selected backdrop as `fanart.jpg` (Kodi) / `<title>-fanart.jpg` (Plex) next to the movie file, so external media centers pick it up (in-app backdrop selection and card display are already supported)
 - **Job history** — persistent log of all completed jobs, viewable in a separate History tab
-- **Per-group job concurrency tuning** — optional cap on how many storage groups may remux at once (today: all configured groups may run in parallel)
