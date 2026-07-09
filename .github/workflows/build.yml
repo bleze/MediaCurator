@@ -219,6 +219,19 @@ jobs:
         key: ccache-linux-${{ github.sha }}
         restore-keys: ccache-linux-
 
+    # linuxdeployqt bundles Qt's .so files + plugins into the .deb (see
+    # src/CMakeLists.txt) so the package doesn't depend on the target
+    # machine's distro Qt6 version. Ships as an AppImage; extract it up front
+    # rather than running the AppImage directly, since GitHub-hosted runners
+    # don't reliably have FUSE available to mount it.
+    - name: Install linuxdeployqt
+      run: |
+        curl -fsSL -o linuxdeployqt.AppImage \
+          "https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage"
+        chmod +x linuxdeployqt.AppImage
+        ./linuxdeployqt.AppImage --appimage-extract
+        sudo ln -sf "$PWD/squashfs-root/AppRun" /usr/local/bin/linuxdeployqt
+
     - name: Configure CMake
       run: >
         cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release

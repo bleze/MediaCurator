@@ -1295,6 +1295,19 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 			if (prevSelected.contains(idx.data(McJobListModel::JobIdRole).toLongLong()))
 				m_listView->selectionModel()->select(idx, QItemSelectionModel::Select);
 		}
+
+		// Scroll the newly running job into view (selection is left untouched above).
+		// Deferred a tick: the filter switch above resets the model synchronously, and
+		// the view needs an event-loop turn to finish laying out before scrollTo works.
+		QTimer::singleShot(0, this, [this, jobId] {
+			for (int row = 0; row < m_model->rowCount(); ++row) {
+				const QModelIndex idx = m_model->index(row);
+				if (idx.data(McJobListModel::JobIdRole).toLongLong() == jobId) {
+					m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+					break;
+				}
+			}
+		});
 	});
 	connect(queue, &JobQueue::jobRequeued, this, [this](qint64 jobId) {
 		m_etaByJob.remove(jobId);

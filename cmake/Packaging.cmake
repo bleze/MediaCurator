@@ -87,6 +87,13 @@ elseif(APPLE)
 else()
     set(CPACK_GENERATOR "DEB")
 
+    # Self-contained install tree (same convention as Chrome/Slack/VS Code .deb
+    # packages) instead of scattering files under the shared /usr/bin, /usr/lib.
+    # This matters because src/CMakeLists.txt now bundles Qt's own .so files
+    # via linuxdeployqt — dropping unnamespaced libQt6*.so files directly into
+    # /usr/lib would risk colliding with (or shadowing) other packages' copies.
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/opt/mediacurator")
+
     set(CPACK_DEBIAN_PACKAGE_NAME        "mediacurator")
     set(CPACK_DEBIAN_PACKAGE_VERSION     "${PROJECT_VERSION}")
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
@@ -97,19 +104,14 @@ else()
         " mkvmerge to losslessly remove unwanted audio/subtitle tracks.")
     set(CPACK_DEBIAN_PACKAGE_SECTION     "video")
     set(CPACK_DEBIAN_PACKAGE_PRIORITY    "optional")
-    # libqt6sql6 only pulls in the QtSql module itself — the SQLite backend
-    # (QSQLITE, what DatabaseManager actually opens) ships in the separate
-    # libqt6sql6-sqlite driver plugin package. Without it, QSqlDatabase has
-    # no usable driver and the app fails on first launch, which looks like
-    # "Qt is missing" even though every libqt6*6 package installed fine.
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "libqt6core6t64 | libqt6core6, \
-libqt6gui6t64 | libqt6gui6, \
-libqt6widgets6t64 | libqt6widgets6, \
-libqt6sql6t64 | libqt6sql6, \
-libqt6sql6-sqlite, \
-libqt6network6t64 | libqt6network6, \
-libqt6svg6")
+    # No libqt6* Depends here on purpose. Qt (including the QSQLITE driver
+    # plugin that used to need its own libqt6sql6-sqlite Depends entry) is now
+    # bundled directly into the package by linuxdeployqt (see src/CMakeLists.txt),
+    # so the app never touches the distro's Qt6 packages. Relying on apt Depends
+    # meant the app linked against whatever Qt6 minor version the target distro
+    # shipped, which doesn't have to match the 6.8.3 build used in CI — that
+    # mismatch is what caused crashes like "libQt6Svg.so.6: version 'qt_6.8'
+    # not found".
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE    "https://github.com/bleze/MediaCurator")
 endif()
 

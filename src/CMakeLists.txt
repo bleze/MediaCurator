@@ -167,6 +167,28 @@ if(APPLE)
     )
 endif()
 
+if(UNIX AND NOT APPLE)
+    # Only force the install rpath when linuxdeployqt is actually available to
+    # populate "../lib" (see the POST_BUILD block further down). Forcing it
+    # unconditionally would break plain local builds on machines without
+    # linuxdeployqt installed: CMake's default build-tree rpath (pointing at
+    # the Qt SDK's own lib dir) is what makes running the freshly built binary
+    # work at all in that case, and BUILD_WITH_INSTALL_RPATH would discard it.
+    find_program(LINUXDEPLOYQT linuxdeployqt)
+    find_program(QT_QMAKE_EXE NAMES qmake6 qmake HINTS "${Qt6_DIR}/../../../bin")
+    if(LINUXDEPLOYQT AND QT_QMAKE_EXE)
+        # Same rationale as the APPLE block above: bake the install rpath in
+        # at build time so the linuxdeployqt POST_BUILD run (below) and any
+        # later install-time rpath rewrite don't fight each other.
+        # "$ORIGIN/../lib" matches where linuxdeployqt places the bundled Qt
+        # .so files relative to the executable (bin/MediaCurator -> ../lib).
+        set_target_properties(MediaCurator PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "$ORIGIN/../lib"
+        )
+    endif()
+endif()
+
 target_include_directories(MediaCurator PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_SOURCE_DIR}/include"
@@ -283,6 +305,31 @@ if(APPLE)
     endif()
 endif()
 
+# Linux: bundle Qt shared libraries + plugins so the package never falls back
+# to (and mismatches with) whatever Qt6 the target distro's repos happen to
+# ship. Without this, the executable links against libQt6*.so.6 by SONAME
+# only, so at runtime it can load an ABI-incompatible system Qt build — e.g.
+# "libQt6Svg.so.6: version 'qt_6.8' not found" when the distro's Qt6 predates
+# the one this was built against.
+if(UNIX AND NOT APPLE)
+    # LINUXDEPLOYQT / QT_QMAKE_EXE were probed above (guarding the rpath block).
+    if(LINUXDEPLOYQT AND QT_QMAKE_EXE)
+        add_custom_command(TARGET MediaCurator POST_BUILD
+            COMMAND "${LINUXDEPLOYQT}"
+                "$<TARGET_FILE:MediaCurator>"
+                -bundle-non-qt-libs
+                -no-translations
+                "-qmake=${QT_QMAKE_EXE}"
+            COMMENT "Running linuxdeployqt to bundle Qt libraries"
+        )
+    else()
+        message(WARNING "linuxdeployqt (and/or qmake) not found — MediaCurator "
+                         "will link against system Qt6 only; the .deb will not "
+                         "be self-contained and may fail on machines whose Qt6 "
+                         "differs from this build's.")
+    endif()
+endif()
+
 # ── Install rules (used by CPack and cmake --install) ─────────────────────────
 if(WIN32)
     install(TARGETS MediaCurator RUNTIME DESTINATION .)
@@ -354,6 +401,33 @@ else()
     if(EXISTS "${CMAKE_SOURCE_DIR}/data")
         install(DIRECTORY "${CMAKE_SOURCE_DIR}/data/" DESTINATION lib/MediaCurator/data)
     endif()
+    # Re-run linuxdeployqt against the staged install so the packaged .deb
+    # gets its own copy of Qt's .so files + plugins (platforms, sqldrivers,
+    # iconengines, etc.) under CMAKE_INSTALL_PREFIX/lib and .../plugins,
+    # matching the "$ORIGIN/../lib" INSTALL_RPATH set above. This mirrors the
+    # windeployqt re-run done for the Windows installer above.
+    if(LINUXDEPLOYQT AND QT_QMAKE_EXE)
+        # CPack's DEB/RPM generators do the "install project" step with
+        # DESTDIR set to a temporary staging directory rather than actually
+        # writing to CMAKE_INSTALL_PREFIX (/opt/mediacurator) — so the real
+        # on-disk path to operate on is $ENV{DESTDIR} + the prefix, not the
+        # prefix alone. install(TARGETS/FILES/DIRECTORY) handle this
+        # automatically; a raw execute_process() here does not.
+        install(CODE "
+            message(STATUS \"Running linuxdeployqt for install...\")
+            execute_process(
+                COMMAND \"${LINUXDEPLOYQT}\"
+                    \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/MediaCurator\"
+                    -bundle-non-qt-libs
+                    -no-translations
+                    \"-qmake=${QT_QMAKE_EXE}\"
+                RESULT_VARIABLE _linuxdeployqt_result
+            )
+            if(NOT _linuxdeployqt_result EQUAL 0)
+                message(FATAL_ERROR \"linuxdeployqt failed with exit code \${_linuxdeployqt_result}\")
+            endif()
+        ")
+    endif()
     # .desktop entry + icon so the app shows up in the desktop environment's
     # application menu after installing the .deb (desktop-file-utils' dpkg
     # trigger on /usr/share/applications picks these up automatically).
@@ -362,4 +436,15 @@ else()
     install(FILES "${CMAKE_SOURCE_DIR}/src/resources/icons/app_icon.svg"
             DESTINATION share/icons/hicolor/scalable/apps
             RENAME mediacurator.svg)
+    # CPACK_PACKAGING_INSTALL_PREFIX (cmake/Packaging.cmake) puts the app in
+    # its own /opt/mediacurator tree so the bundled Qt libs never land in the
+    # shared /usr/lib. mediacurator.desktop's Exec= still points at
+    # /usr/bin/MediaCurator, so symlink that name into place rather than
+    # editing the desktop file.
+    install(CODE "
+        file(MAKE_DIRECTORY \"\$ENV{DESTDIR}/usr/bin\")
+        file(CREATE_LINK \"\${CMAKE_INSTALL_PREFIX}/bin/MediaCurator\"
+             \"\$ENV{DESTDIR}/usr/bin/MediaCurator\"
+             SYMBOLIC)
+    ")
 endif()
