@@ -218,15 +218,6 @@ jobs:
         arch: 'linux_gcc_64'
         cache: true
 
-    # DatabaseManager only ever opens QSQLITE. The other sqldrivers plugins
-    # Qt ships (odbc, psql, mimer, ...) link against third-party client
-    # libraries that aren't installed on this runner or on end-user machines.
-    # linuxdeployqt tries to bundle every plugin it finds and aborts if ldd
-    # can't resolve any of their dependencies, even for drivers we never
-    # load, so strip the unused ones before it runs.
-    - name: Remove unused Qt SQL driver plugins
-      run: find "${{ env.QT_PLUGIN_PATH }}/sqldrivers" -type f ! -name 'libqsqlite.so' -delete
-
     - name: Cache ccache
       uses: actions/cache@v4
       with:
@@ -253,6 +244,19 @@ jobs:
         -DQt6_DIR="${{ env.Qt6_DIR }}"
         -DCMAKE_C_COMPILER_LAUNCHER=ccache
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+    # DatabaseManager only ever opens QSQLITE. The other sqldrivers plugins
+    # Qt ships (odbc, psql, mimer, ...) link against third-party client
+    # libraries that aren't installed on this runner or on end-user machines.
+    # linuxdeployqt tries to bundle every plugin it finds and aborts if ldd
+    # can't resolve any of their dependencies, even for drivers we never
+    # load, so strip the unused ones before it runs. Must come AFTER
+    # "Configure CMake": Qt6Sql's own CMake package config declares an
+    # imported target per driver plugin and errors out of find_package(Qt6)
+    # if any referenced plugin file is missing, so the files have to still
+    # be there at configure time.
+    - name: Remove unused Qt SQL driver plugins
+      run: find "${{ env.QT_PLUGIN_PATH }}/sqldrivers" -type f ! -name 'libqsqlite.so' -delete
 
     - name: Build
       run: cmake --build build --parallel
