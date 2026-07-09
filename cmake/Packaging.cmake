@@ -97,11 +97,17 @@ else()
         " mkvmerge to losslessly remove unwanted audio/subtitle tracks.")
     set(CPACK_DEBIAN_PACKAGE_SECTION     "video")
     set(CPACK_DEBIAN_PACKAGE_PRIORITY    "optional")
+    # libqt6sql6 only pulls in the QtSql module itself — the SQLite backend
+    # (QSQLITE, what DatabaseManager actually opens) ships in the separate
+    # libqt6sql6-sqlite driver plugin package. Without it, QSqlDatabase has
+    # no usable driver and the app fails on first launch, which looks like
+    # "Qt is missing" even though every libqt6*6 package installed fine.
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
         "libqt6core6t64 | libqt6core6, \
 libqt6gui6t64 | libqt6gui6, \
 libqt6widgets6t64 | libqt6widgets6, \
 libqt6sql6t64 | libqt6sql6, \
+libqt6sql6-sqlite, \
 libqt6network6t64 | libqt6network6, \
 libqt6svg6")
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE    "https://github.com/bleze/MediaCurator")

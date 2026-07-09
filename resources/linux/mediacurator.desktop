@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MediaCurator
+Comment=Smart media library curator — scan, filter, and clean your video collection
+Exec=/usr/bin/MediaCurator
+Icon=mediacurator
+Terminal=false
+Categories=AudioVideo;Video;
+StartupNotify=true

@@ -329,4 +329,12 @@ else()
     if(EXISTS "${CMAKE_SOURCE_DIR}/data")
         install(DIRECTORY "${CMAKE_SOURCE_DIR}/data/" DESTINATION lib/MediaCurator/data)
     endif()
+    # .desktop entry + icon so the app shows up in the desktop environment's
+    # application menu after installing the .deb (desktop-file-utils' dpkg
+    # trigger on /usr/share/applications picks these up automatically).
+    install(FILES "${CMAKE_SOURCE_DIR}/resources/linux/mediacurator.desktop"
+            DESTINATION share/applications)
+    install(FILES "${CMAKE_SOURCE_DIR}/src/resources/icons/app_icon.svg"
+            DESTINATION share/icons/hicolor/scalable/apps
+            RENAME mediacurator.svg)
 endif()
