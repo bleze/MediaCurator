@@ -180,8 +180,19 @@ public:
 	[[nodiscard]] std::optional<qint64> upsertFile(const FileRecord& rec);
 	[[nodiscard]] std::optional<FileRecord> fileById(qint64 id) const;
 	[[nodiscard]] std::optional<FileRecord> fileByPath(const QString& path) const;
+	// Batched form of fileById() — one query (chunked) instead of one round trip per
+	// id. Use this instead of calling fileById() in a loop over more than a handful
+	// of ids (see streamsForFiles() for the same pattern with streams).
+	QHash<qint64, FileRecord> filesByIds(const QList<qint64>& ids) const;
 	QList<FileRecord> allFiles() const;
-	QList<FileRecord> allFilesPaged(int offset, int limit) const;
+	// sortOrder mirrors Mc::McFileListModel::SortOrder (0=Name, 1=Newest, 2=Oldest,
+	// 3=Largest, 4=RatingHigh, 5=RatingLow) — duplicated as a plain int here so this
+	// core class doesn't depend on a UI header. Callers must keep pages in the same
+	// order the model itself sorts by (McFileListModel::sortOrder()), or the "first
+	// page" loaded synchronously at startup won't match what's actually about to
+	// land in the viewport, and every later background page reshuffles rows above
+	// the fold as it arrives.
+	QList<FileRecord> allFilesPaged(int offset, int limit, int sortOrder = 0) const;
 	QList<FileRecord> filesUnderPath(const QString& rootPath) const;
 	int fileCount() const;
 	int fileCountUnderPath(const QString& rootPath) const;
@@ -227,6 +238,7 @@ public:
 	bool deleteJobsBatch(const QList<qint64>& jobIds);
 	bool clearJobsByStatus(const QString& status);
 	bool promoteJobsToQueued(const QList<qint64>& jobIds);
+	bool requeueRunningJobs(const QList<qint64>& jobIds);
 	bool requeueFailedJobs(const QList<qint64>& jobIds);
 	bool recoverRunningJobs();
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
@@ -239,6 +251,8 @@ public:
 	QList<JobRecord> allJobs() const;
 	QList<JobDisplayRecord> allJobsForPanel(JobSortMode sortMode = JobSortMode::SmallestFirst) const;
 	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}, JobSortMode sortMode = JobSortMode::SmallestFirst) const;
+	[[nodiscard]] std::optional<JobDisplayRecord> jobDisplayRecordById(qint64 jobId) const;
+	QList<JobDisplayRecord> liveJobsForPanel() const;
 	int                     totalJobCount() const;
 	int                     queuedJobCount() const;
 	QHash<QString, int>     jobStatusCounts() const;

@@ -174,6 +174,12 @@ bool DatabaseManager::initSchema()
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_streams_file_id ON streams(file_id);
+		-- Composite index so "WHERE file_id IN (...) ORDER BY file_id, stream_index"
+		-- (streamsForFiles(), the hot path behind every job-panel/library reload) can
+		-- satisfy the ORDER BY directly from the index instead of collecting matches
+		-- into a temp B-tree to sort — that sort was measured taking 500ms-1.2s per
+		-- ~500-file chunk against a real ~38k-row streams table.
+		CREATE INDEX IF NOT EXISTS idx_streams_file_stream ON streams(file_id, stream_index);
 
 		CREATE TABLE IF NOT EXISTS jobs (
 			id                      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -508,6 +514,54 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	return r;
 }
 
+QHash<qint64, FileRecord> DatabaseManager::filesByIds(const QList<qint64>& ids) const
+{
+	QHash<qint64, FileRecord> result;
+	if (ids.isEmpty()) return result;
+
+	static constexpr int kMaxInClause = 500;
+
+	auto appendRow = [&result](const QSqlQuery& q) {
+		FileRecord r;
+		r.id               = q.value("id").toLongLong();
+		r.path             = q.value("path").toString();
+		r.filename         = q.value("filename").toString();
+		r.sizeBytes        = q.value("size_bytes").toLongLong();
+		r.mtimeMs          = q.value("mtime_ms").toLongLong();
+		r.createdMs        = q.value("created_ms").toLongLong();
+		r.container        = q.value("container").toString();
+		r.durationSec      = q.value("duration_s").toDouble();
+		r.overallBitrate   = q.value("overall_bitrate").toLongLong();
+		r.originalLanguage = q.value("original_language").toString();
+		r.scanTime         = q.value("scan_time").toLongLong();
+		r.scanRunId        = q.value("scan_run_id").toLongLong();
+		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+		r.containerTitle   = q.value("container_title").toString();
+		r.displayTitle     = q.value("display_title").toString();
+		r.displayYear      = q.value("display_year").toInt();
+		r.ignored          = q.value("ignored").toInt() != 0;
+		result[r.id] = std::move(r);
+	};
+
+	for (int off = 0; off < ids.size(); off += kMaxInClause) {
+		const int chunkEnd = qMin(off + kMaxInClause, ids.size());
+		QStringList ph;
+		ph.reserve(chunkEnd - off);
+		for (int i = off; i < chunkEnd; ++i)
+			ph << QStringLiteral("?");
+
+		QSqlQuery q(connection());
+		q.prepare(QStringLiteral("SELECT * FROM files WHERE id IN (%1)").arg(ph.join(',')));
+		for (int i = off; i < chunkEnd; ++i)
+			q.addBindValue(ids.at(i));
+		if (!q.exec()) continue;
+
+		while (q.next())
+			appendRow(q);
+	}
+	return result;
+}
+
 std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 {
 	QSqlQuery q(connection());
@@ -563,11 +617,30 @@ QList<FileRecord> DatabaseManager::allFiles() const
 	return result;
 }
 
-QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit) const
+QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit, int sortOrder) const
 {
 	QList<FileRecord> result;
 	QSqlQuery q(connection());
-	q.prepare("SELECT * FROM files ORDER BY filename LIMIT ? OFFSET ?");
+
+	QString orderBy;
+	bool    needsRatingJoin = false;
+	switch (sortOrder) {
+	case 1: orderBy = QStringLiteral("f.created_ms DESC");             break; // SortByNewest
+	case 2: orderBy = QStringLiteral("f.created_ms ASC");              break; // SortByOldest
+	case 3: orderBy = QStringLiteral("f.size_bytes DESC");             break; // SortByLargest
+	case 4: orderBy = QStringLiteral("COALESCE(pc.vote_average, 0.0) DESC");
+	        needsRatingJoin = true;                                   break; // SortByRatingHigh
+	case 5: orderBy = QStringLiteral("COALESCE(pc.vote_average, 0.0) ASC");
+	        needsRatingJoin = true;                                   break; // SortByRatingLow
+	default: orderBy = QStringLiteral("f.filename COLLATE NOCASE ASC"); break; // SortByName
+	}
+
+	const QString sql = needsRatingJoin
+	    ? QStringLiteral("SELECT f.* FROM files f LEFT JOIN poster_cache pc ON pc.file_id = f.id "
+	                      "ORDER BY %1 LIMIT ? OFFSET ?").arg(orderBy)
+	    : QStringLiteral("SELECT f.* FROM files f ORDER BY %1 LIMIT ? OFFSET ?").arg(orderBy);
+
+	q.prepare(sql);
 	q.addBindValue(limit);
 	q.addBindValue(offset);
 	if (!q.exec()) return result;
@@ -642,6 +715,7 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 			ph << QStringLiteral("?");
 
 		QSqlQuery q(connection());
+		q.setForwardOnly(true);
 		q.prepare(QStringLiteral("SELECT * FROM streams WHERE file_id IN (%1) ORDER BY file_id, stream_index")
 		          .arg(ph.join(',')));
 		for (int i = off; i < chunkEnd; ++i)
@@ -1264,6 +1338,22 @@ bool DatabaseManager::promoteJobsToQueued(const QList<qint64>& jobIds)
 	return true;
 }
 
+bool DatabaseManager::requeueRunningJobs(const QList<qint64>& jobIds)
+{
+	if (jobIds.isEmpty()) return true;
+	auto db = connection();
+	db.transaction();
+	QSqlQuery q(db);
+	q.prepare("UPDATE jobs SET status='queued', started_at=NULL, finished_at=NULL, "
+	          "result_code=NULL, output_log=NULL WHERE id=? AND status='running'");
+	for (qint64 id : jobIds) {
+		q.addBindValue(id);
+		if (!q.exec()) { db.rollback(); return false; }
+		emit jobStatusChanged(id, "queued");
+	}
+	return db.commit();
+}
+
 bool DatabaseManager::requeueFailedJobs(const QList<qint64>& jobIds)
 {
 	if (jobIds.isEmpty()) return true;
@@ -1271,7 +1361,7 @@ bool DatabaseManager::requeueFailedJobs(const QList<qint64>& jobIds)
 	db.transaction();
 	QSqlQuery q(db);
 	q.prepare("UPDATE jobs SET status='queued', started_at=NULL, finished_at=NULL, "
-	          "result_code=NULL, output_log=NULL WHERE id=? AND status IN ('failed','running')");
+	          "result_code=NULL, output_log=NULL WHERE id=? AND status='failed'");
 	for (qint64 id : jobIds) {
 		q.addBindValue(id);
 		if (!q.exec()) { db.rollback(); return false; }
@@ -1523,13 +1613,81 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(f.display_year, 0) AS display_year"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
-	if (!statusFilter.isEmpty())
+	// The panel's "running" filter tab means "actively running OR queued to run
+	// next" (see McJobListModel::statusMatchesFilter), not the literal
+	// jobs.status='running' value — match both directly in SQL so the paged query
+	// doesn't drop queued jobs. Callers used to work around that mismatch by
+	// bypassing paging entirely (McJobListModel::reloadPaged called the unpaged
+	// reload() instead), which meant every job's data got fetched and materialized
+	// on every refresh — measured taking multiple seconds against a real ~900-job
+	// queue, on the UI thread, at startup.
+	const bool runningTab = statusFilter == QLatin1String("running");
+	if (runningTab)
+		sql += QStringLiteral(" WHERE j.status IN ('running', 'queued')");
+	else if (!statusFilter.isEmpty())
 		sql += QStringLiteral(" WHERE j.status = ?");
 	sql += QStringLiteral(" ORDER BY %1 LIMIT ?").arg(orderBy);
 	q.prepare(sql);
-	if (!statusFilter.isEmpty()) q.addBindValue(statusFilter);
+	if (!statusFilter.isEmpty() && !runningTab) q.addBindValue(statusFilter);
 	q.addBindValue(limit);
 	q.exec();
+	parseJobDisplayRecord(q, result);
+	return result;
+}
+
+std::optional<JobDisplayRecord> DatabaseManager::jobDisplayRecordById(qint64 jobId) const
+{
+	QList<JobDisplayRecord> result;
+	QSqlQuery q(connection());
+	q.prepare(QStringLiteral(
+		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
+		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
+		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       j.job_type,"
+		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
+		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
+		"       COALESCE(f.original_language, '') AS original_language,"
+		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
+		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
+		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json,"
+		"       COALESCE(j.finished_at, 0) AS finished_at,"
+		"       COALESCE(f.container_title, '') AS container_title,"
+		"       COALESCE(f.display_title, '') AS display_title,"
+		"       COALESCE(f.display_year, 0) AS display_year"
+		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
+		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
+		" WHERE j.id = ?"));
+	q.addBindValue(jobId);
+	q.exec();
+	parseJobDisplayRecord(q, result);
+	if (result.isEmpty())
+		return std::nullopt;
+	return result.first();
+}
+
+QList<JobDisplayRecord> DatabaseManager::liveJobsForPanel() const
+{
+	QList<JobDisplayRecord> result;
+	QSqlQuery q(connection());
+	q.exec(QStringLiteral(
+		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
+		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
+		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       j.job_type,"
+		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
+		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
+		"       COALESCE(f.original_language, '') AS original_language,"
+		"       COALESCE(j.command_args_json, '[]') AS command_args_json,"
+		"       COALESCE(j.original_streams_json, '') AS original_streams_json,"
+		"       COALESCE(j.flag_changes_json, '') AS flag_changes_json,"
+		"       COALESCE(j.finished_at, 0) AS finished_at,"
+		"       COALESCE(f.container_title, '') AS container_title,"
+		"       COALESCE(f.display_title, '') AS display_title,"
+		"       COALESCE(f.display_year, 0) AS display_year"
+		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
+		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
+		" WHERE j.status IN ('running', 'queued')"
+		" ORDER BY COALESCE(f.size_bytes, 0) ASC, j.created_at ASC"));
 	parseJobDisplayRecord(q, result);
 	return result;
 }

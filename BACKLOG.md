@@ -75,7 +75,7 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 - [ ] `[P2]` Undo via trash — move original to OS recycle bin before overwrite (Windows: SHFileOperation / IFileOperation)
 - [x] `[P3]` **Status combobox badge delegate** — the job-panel status filter combobox items (proposed / pending / running / done / failed) should render using the same pill style as the card badges: coloured background, rounded rect, matching font size and padding; implement as a `QStyledItemDelegate` on the combobox's view
 - [x] `[P2]` **ETA display in job panel** — show estimated time remaining for the current job (based on elapsed time vs progress %) and for the whole queue (sum of per-job estimates using average MB/s from completed jobs); displayed in the McJobPanel footer next to the space-saved total
-- [ ] `[P3]` Parallel jobs — configurable worker count (2–4); useful on NAS/RAID where I/O is not the bottleneck
+- [X] `[P3]` Parallel jobs — configurable worker count (2–4); useful on NAS/RAID where I/O is not the bottleneck
 
 ---
 

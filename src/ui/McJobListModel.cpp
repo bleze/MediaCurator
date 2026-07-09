@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QSet>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -94,6 +95,42 @@ McJobListModel::McJobListModel(QObject* parent)
 	});
 }
 
+JobCardEntry McJobListModel::buildCardEntry(
+    const JobDisplayRecord& djr,
+    const QHash<qint64, QList<StreamRecord>>& streamsMap) const
+{
+	JobCardEntry e;
+	e.job = djr;
+	if (djr.status == QLatin1String("done") && !djr.originalStreamsJson.isEmpty())
+		e.allStreams = streamsFromJson(djr.originalStreamsJson);
+	else
+		e.allStreams = streamsMap.value(djr.fileId);
+	e.flagChangesJson = djr.flagChangesJson;
+	applyPendingFlagChanges(e.allStreams, e.flagChangesJson);
+	e.keptStreams = computeKeptStreams(e.allStreams, djr.commandArgsJson);
+	return e;
+}
+
+bool McJobListModel::ensureJobInMasterList(qint64 jobId)
+{
+	for (const JobCardEntry& e : m_allEntries) {
+		if (e.job.jobId == jobId)
+			return true;
+	}
+
+	const auto djrOpt = DatabaseManager::instance().jobDisplayRecordById(jobId);
+	if (!djrOpt)
+		return false;
+
+	QHash<qint64, QList<StreamRecord>> streamsMap;
+	if (!(djrOpt->status == QLatin1String("done") && !djrOpt->originalStreamsJson.isEmpty()))
+		streamsMap = DatabaseManager::instance().streamsForFiles({djrOpt->fileId});
+
+	m_allEntries.append(buildCardEntry(*djrOpt, streamsMap));
+	m_allCheckStates.append(djrOpt->status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
+	return true;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void McJobListModel::reload()
@@ -161,20 +198,28 @@ void McJobListModel::reload()
 
 void McJobListModel::reloadPaged(int limit)
 {
-	// "Running" filter must also show queued jobs — delegate to full reload so both
-	// statuses enter m_allEntries (the paged DB query would otherwise drop 'queued').
-	if (m_filterStatus == QLatin1String("running")) {
-		reload();
-		return;
-	}
-
+	// allJobsForPanelPaged() matches both 'running' and 'queued' status rows when
+	// m_filterStatus is "running" (mirroring statusMatchesFilter() below), so this
+	// can stay on the cheap paged path instead of falling back to the unpaged
+	// reload() — that fallback used to fetch/materialize every job in the queue on
+	// every refresh, which measured multiple seconds against a real ~900-job queue.
 	m_allEntries.clear();
 	m_allCheckStates.clear();
 
 	auto& db = DatabaseManager::instance();
 	m_posterPaths = db.allDonePosterPaths();
 	m_fanartPaths = db.allDoneFanartPaths();
-	const auto displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode);
+	QList<JobDisplayRecord> displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode);
+	QSet<qint64> seenJobIds;
+	seenJobIds.reserve(displayJobs.size());
+	for (const JobDisplayRecord& djr : displayJobs)
+		seenJobIds.insert(djr.jobId);
+	for (const JobDisplayRecord& djr : db.liveJobsForPanel()) {
+		if (!seenJobIds.contains(djr.jobId)) {
+			displayJobs.append(djr);
+			seenJobIds.insert(djr.jobId);
+		}
+	}
 
 	// Batch-load live streams for jobs that don't have an original-streams snapshot
 	QList<qint64> fileIds;
@@ -185,16 +230,7 @@ void McJobListModel::reloadPaged(int limit)
 	const auto streamsMap = db.streamsForFiles(fileIds);
 
 	for (const JobDisplayRecord& djr : displayJobs) {
-		JobCardEntry e;
-		e.job = djr;
-		if (djr.status == QLatin1String("done") && !djr.originalStreamsJson.isEmpty())
-			e.allStreams = streamsFromJson(djr.originalStreamsJson);
-		else
-			e.allStreams = streamsMap.value(djr.fileId);
-		e.flagChangesJson = djr.flagChangesJson;
-		applyPendingFlagChanges(e.allStreams, e.flagChangesJson);
-		e.keptStreams = computeKeptStreams(e.allStreams, djr.commandArgsJson);
-		m_allEntries.append(e);
+		m_allEntries.append(buildCardEntry(djr, streamsMap));
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
 
@@ -210,7 +246,8 @@ void McJobListModel::setSortMode(JobSortMode sortMode)
 
 void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 savedBytes)
 {
-	// Update master list
+	if (!ensureJobInMasterList(jobId))
+		return;
 	for (auto& e : m_allEntries) {
 		if (e.job.jobId != jobId) continue;
 		e.job.status = status;

@@ -1,11 +1,13 @@
 #include "ui/McManageFoldersDialog.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "core/StorageGroupSettings.h"
 #include "ui/SvgIcon.h"
 
 #include <algorithm>
 
 #include <QAction>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
@@ -16,7 +18,10 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QModelIndex>
+#include <QPainter>
 #include <QPalette>
+#include <QStyle>
+#include <QStyleOptionHeader>
 #include <QStyledItemDelegate>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -34,6 +39,39 @@ public:
 		QStyleOptionViewItem o = opt;
 		o.state &= ~QStyle::State_HasFocus;
 		QStyledItemDelegate::paint(p, o, idx);
+	}
+};
+
+// QHeaderView bolds section labels when the table has focus (Windows/modern style).
+class StableHeaderView : public QHeaderView {
+public:
+	explicit StableHeaderView(Qt::Orientation orientation, QWidget* parent = nullptr)
+	    : QHeaderView(orientation, parent)
+	{
+		QFont f = font();
+		f.setBold(false);
+		setFont(f);
+	}
+
+protected:
+	void paintSection(QPainter* painter, const QRect& rect, int logicalIndex) const override
+	{
+		QStyleOptionHeader option;
+		initStyleOption(&option);
+		option.rect          = rect;
+		option.section       = logicalIndex;
+		option.text          = model()->headerData(logicalIndex, orientation(),
+		                                           Qt::DisplayRole).toString();
+		option.textAlignment = defaultAlignment();
+		option.state &= ~(QStyle::State_Active | QStyle::State_HasFocus);
+
+		if (isSortIndicatorShown() && logicalIndex == sortIndicatorSection()) {
+			option.sortIndicator = (sortIndicatorOrder() == Qt::AscendingOrder)
+			    ? QStyleOptionHeader::SortDown
+			    : QStyleOptionHeader::SortUp;
+		}
+
+		style()->drawControl(QStyle::CE_Header, &option, painter, this);
 	}
 };
 } // namespace
@@ -72,8 +110,9 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 
 	// ── Table ─────────────────────────────────────────────────────────────────
 	m_table = new QTableWidget(this);
-	m_table->setColumnCount(2);
-	m_table->setHorizontalHeaderLabels({tr("Folder"), tr("Media Files")});
+	m_table->setColumnCount(3);
+	m_table->setHorizontalHeader(new StableHeaderView(Qt::Horizontal, m_table));
+	m_table->setHorizontalHeaderLabels({tr("Folder"), tr("Media Files"), tr("Storage Group")});
 	m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
 	m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -83,6 +122,7 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	m_table->verticalHeader()->setVisible(false);
 	m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 	m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+	m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 	m_table->horizontalHeader()->setMinimumSectionSize(100);
 	m_table->setItemDelegate(new NoFocusDelegate(m_table));
 
@@ -96,7 +136,10 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	// ── Disclaimer ────────────────────────────────────────────────────────────
 	auto* note = new QLabel(
 		tr("Removing a folder only removes its entries from the MediaCurator library database."
-		   " No files on disk are deleted."), this);
+		   " No files on disk are deleted.\n"
+		   "Storage groups group folders that share the same drive or NAS volume."
+		   " Different groups can scan and remux in parallel; folders in the same group"
+		   " are processed one at a time."), this);
 	note->setWordWrap(true);
 	note->setContentsMargins(8, 4, 8, 4);
 	QPalette pal = note->palette();
@@ -120,8 +163,8 @@ void McManageFoldersDialog::loadFolders()
 	m_table->setRowCount(roots.size());
 
 	for (int i = 0; i < roots.size(); ++i) {
-		const QString& path  = roots[i];
-		const int      count = DatabaseManager::instance().fileCountUnderPath(path);
+		const QString path  = StorageGroupSettings::normalizedRoot(roots[i]);
+		const int     count = DatabaseManager::instance().fileCountUnderPath(path);
 
 		auto* pathItem = new QTableWidgetItem(path);
 		pathItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
@@ -132,6 +175,22 @@ void McManageFoldersDialog::loadFolders()
 
 		m_table->setItem(i, 0, pathItem);
 		m_table->setItem(i, 1, countItem);
+
+		auto* groupCombo = new QComboBox(m_table);
+		groupCombo->setToolTip(tr(
+			"Assign folders on the same drive or NAS to the same storage group."
+			" Different groups can scan and remux in parallel."));
+		for (int g = StorageGroupSettings::MinGroup; g <= StorageGroupSettings::uiMaxGroup(); ++g)
+			groupCombo->addItem(tr("Group %1").arg(g), g);
+		const int idx = groupCombo->findData(StorageGroupSettings::groupForRoot(path));
+		groupCombo->blockSignals(true);
+		groupCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+		groupCombo->blockSignals(false);
+		connect(groupCombo, &QComboBox::currentIndexChanged, this,
+		        [path, groupCombo](int) {
+			StorageGroupSettings::setGroupForRoot(path, groupCombo->currentData().toInt());
+		});
+		m_table->setCellWidget(i, 2, groupCombo);
 	}
 }
 
@@ -144,7 +203,7 @@ void McManageFoldersDialog::onAddFolder()
 		this, tr("Add Media Folder"), hint,
 		QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
 	if (raw.isEmpty()) return;
-	const QString folder = QDir::fromNativeSeparators(raw);
+	const QString folder = StorageGroupSettings::normalizedRoot(raw);
 
 	if (roots.contains(folder)) {
 		QMessageBox::information(this, tr("Already Added"),
@@ -169,6 +228,22 @@ void McManageFoldersDialog::onAddFolder()
 	countItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
 	countItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 	m_table->setItem(row, 1, countItem);
+
+	auto* groupCombo = new QComboBox(m_table);
+	groupCombo->setToolTip(tr(
+		"Assign folders on the same drive or NAS to the same storage group."
+		" Different groups can scan and remux in parallel."));
+	for (int g = StorageGroupSettings::MinGroup; g <= StorageGroupSettings::uiMaxGroup(); ++g)
+		groupCombo->addItem(tr("Group %1").arg(g), g);
+	groupCombo->blockSignals(true);
+	groupCombo->setCurrentIndex(0);
+	groupCombo->blockSignals(false);
+	StorageGroupSettings::setGroupForRoot(folder, groupCombo->currentData().toInt());
+	connect(groupCombo, &QComboBox::currentIndexChanged, this,
+	        [folder, groupCombo](int) {
+		StorageGroupSettings::setGroupForRoot(folder, groupCombo->currentData().toInt());
+	});
+	m_table->setCellWidget(row, 2, groupCombo);
 
 	// Let McMainWindow's existing scan infrastructure handle this —
 	// no duplicate worker here.
@@ -212,8 +287,10 @@ void McManageFoldersDialog::onRemoveSelected()
 	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 
 	for (const QString& folder : std::as_const(folders)) {
-		DatabaseManager::instance().removeFilesUnderPath(folder);
-		roots.removeAll(folder);
+		const QString norm = StorageGroupSettings::normalizedRoot(folder);
+		DatabaseManager::instance().removeFilesUnderPath(norm);
+		StorageGroupSettings::removeRoot(norm);
+		roots.removeAll(norm);
 	}
 
 	AppSettings::instance().setValue("scan/roots", roots);

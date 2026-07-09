@@ -13,7 +13,7 @@ namespace Mc {
 class PosterWorker;
 
 /**
- * PosterManager — downloads TMDB posters for the library on a background thread.
+ * PosterManager — downloads TMDB posters for the library on a pool of background threads.
  *
  * Requires a TMDB API key and an .nfo file containing an IMDB ID alongside each
  * media file. Nothing is processed until a key is configured.
@@ -29,6 +29,9 @@ public:
 
 	// Call once at startup (after profile is loaded).
 	void start(const QString& tmdbApiKey);
+
+	// Resize the TMDB worker pool (1–12). Safe to call after start(); takes effect immediately.
+	void setParallelWorkers(int count);
 
 	// Stop the background thread gracefully. Call from closeEvent before accept().
 	void stop();
@@ -63,18 +66,23 @@ signals:
 	// before any async poster download.  Lets the UI update the IMDb button immediately.
 	void imdbIdSaved(qint64 fileId, QString imdbId);
 
-	// Internal — cross-thread commands to the worker.
+	// Internal — cross-thread commands to workers.
 	void workerTmdbKeyChanged(QString key);
-	void workerEnqueueFile(qint64 fileId);
-	void workerEnqueueBatch(QList<qint64> fileIds);
 	void workerStop();
 
 private:
 	explicit PosterManager(QObject* parent = nullptr);
+	void startWorkerPool();
+	void stopWorkerPool(bool wait);
 
-	QThread*               m_thread = nullptr;
-	PosterWorker*          m_worker = nullptr;
-	QNetworkAccessManager* m_nam    = nullptr;   // main-thread NAM for fast direct fetches
+	class PosterWorkQueue* m_queue = nullptr;
+	struct WorkerSlot {
+		QThread*      thread = nullptr;
+		PosterWorker* worker = nullptr;
+	};
+	QList<WorkerSlot>      m_workers;
+	int                    m_parallelWorkers = 4;
+	QNetworkAccessManager* m_nam           = nullptr;   // main-thread NAM for fast direct fetches
 	QString                m_tmdbApiKey;
 };
 

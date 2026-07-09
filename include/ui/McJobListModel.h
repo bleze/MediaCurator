@@ -116,6 +116,9 @@ public slots:
 	void updateImdbId(qint64 fileId, const QString& imdbId);
 
 private:
+	[[nodiscard]] bool ensureJobInMasterList(qint64 jobId);
+	[[nodiscard]] JobCardEntry buildCardEntry(const JobDisplayRecord& djr,
+	                                          const QHash<qint64, QList<StreamRecord>>& streamsMap) const;
 	void applyFilter();
 	bool statusMatchesFilter(const QString& status) const;
 	static QList<StreamRecord> streamsFromJson(const QString& json);

@@ -73,6 +73,7 @@ public:
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter
 	int  fileCount() const { return m_entries.size(); }
 	int  totalCount() const { return m_allEntries.size(); }
+	int  sortOrder() const { return m_sortOrder; }
 
 	/** Returns the set of stream indices the user has force-marked for removal. */
 	QSet<int> forcedRemovalsFor(qint64 fileId) const { return m_forcedRemovals.value(fileId); }

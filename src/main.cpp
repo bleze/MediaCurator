@@ -6,6 +6,7 @@
 #include <QMetaType>
 #include "core/Version.h"
 
+#include <QAbstractNativeEventFilter>
 #include <QApplication>
 #include <QIcon>
 #include <QCoreApplication>
@@ -24,6 +25,44 @@
 #include <QDir>
 #include <QMessageBox>
 #include <QStandardPaths>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
+// Qt widgets on Windows erase their native HWND to white before the first
+// QPainter frame. In dark mode that flash is visible across the whole main
+// window (not just the splash handoff) until delegates paint.
+#ifdef Q_OS_WIN
+class McDarkEraseFilter : public QAbstractNativeEventFilter {
+public:
+	bool nativeEventFilter(const QByteArray& eventType, void* message,
+	                       qintptr* result) override
+	{
+		if (eventType != "windows_generic_MSG"
+		    && eventType != "windows_dispatcher_MSG")
+			return false;
+
+		const auto* msg = static_cast<MSG*>(message);
+		if (msg->message != WM_ERASEBKGND)
+			return false;
+
+		const QPalette& pal = qApp->palette();
+		if (pal.color(QPalette::Window).lightness() >= 128)
+			return false;
+
+		const QColor bg = pal.color(QPalette::Window);
+		HBRUSH brush = CreateSolidBrush(RGB(bg.red(), bg.green(), bg.blue()));
+		RECT rect;
+		GetClientRect(msg->hwnd, &rect);
+		FillRect(reinterpret_cast<HDC>(msg->wParam), &rect, brush);
+		DeleteObject(brush);
+		if (result)
+			*result = 1;
+		return true;
+	}
+};
+#endif
 
 // Fusion draws disabled text with an emboss shadow (light color at +1,+1 offset).
 // On dark palettes that shadow is near-white and looks like a "double" rendering.
@@ -242,6 +281,13 @@ int main(int argc, char* argv[])
 	}
 
 	app.setPalette(pal);
+
+#ifdef Q_OS_WIN
+	if (pal.color(QPalette::Window).lightness() < 128) {
+		static McDarkEraseFilter darkEraseFilter;
+		app.installNativeEventFilter(&darkEraseFilter);
+	}
+#endif
 
 	// QListView's viewport uses the native HWND background on Windows until the
 	// first delegate paint — force dark surfaces app-wide when in dark mode.

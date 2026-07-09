@@ -2,7 +2,9 @@
 #include "ui/McCardDelegate.h"
 #include "ui/McLanguageFlags.h"
 #include "core/AppSettings.h"
+#include "core/StorageGroupSettings.h"
 #include "core/UserProfile.h"
+#include "engine/PosterManager.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -20,6 +22,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSettings>
+#include <QSpinBox>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -477,14 +480,86 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subRight->addWidget(subFmtGroup, 1);
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 3 — General
+	// Tab 3 — Performance
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* perfPage   = new QWidget;
+	auto* perfPageLo = new QVBoxLayout(perfPage);
+	perfPageLo->setSpacing(8);
+	perfPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(perfPage, tr("Performance"));
+	tabs->setTabColor(3, QColor(0xc0, 0x20, 0x20));
+
+	auto* perfGroup  = new QGroupBox(tr("Performance"), perfPage);
+	auto* perfLayout = new QVBoxLayout(perfGroup);
+
+	auto* scanGroupsRow   = new QHBoxLayout;
+	auto* scanGroupsLabel = new QLabel(tr("Storage groups shown:"), perfGroup);
+	m_spinScanGroups      = new QSpinBox(perfGroup);
+	m_spinScanGroups->setRange(2, StorageGroupSettings::MaxGroup);
+	m_spinScanGroups->setValue(StorageGroupSettings::uiMaxGroup());
+	m_spinScanGroups->setToolTip(tr(
+		"How many storage groups appear in Manage Folders. Group folders on the same "
+		"drive or NAS together; different groups can scan and remux in parallel."));
+	scanGroupsRow->addWidget(scanGroupsLabel);
+	scanGroupsRow->addWidget(m_spinScanGroups);
+	scanGroupsRow->addStretch();
+	perfLayout->addLayout(scanGroupsRow);
+
+	auto* posterWorkersRow   = new QHBoxLayout;
+	auto* posterWorkersLabel = new QLabel(tr("TMDB poster workers:"), perfGroup);
+	m_spinPosterWorkers      = new QSpinBox(perfGroup);
+	m_spinPosterWorkers->setRange(1, 12);
+	m_spinPosterWorkers->setValue(
+	    AppSettings::instance().value(QStringLiteral("poster/parallelWorkers"), 4).toInt());
+	m_spinPosterWorkers->setToolTip(tr(
+		"Number of parallel background threads for TMDB poster and fanart downloads. "
+		"Higher values speed up large libraries but use more network bandwidth."));
+	posterWorkersRow->addWidget(posterWorkersLabel);
+	posterWorkersRow->addWidget(m_spinPosterWorkers);
+	posterWorkersRow->addStretch();
+	perfLayout->addLayout(posterWorkersRow);
+
+	perfPageLo->addWidget(perfGroup);
+
+	auto* stagingGroup  = new QGroupBox(tr("Local Staging"), perfPage);
+	auto* stagingLayout = new QVBoxLayout(stagingGroup);
+
+	m_chkUseLocalStaging = new QCheckBox(tr("Mux to a local folder, then copy the result back"), stagingGroup);
+	m_chkUseLocalStaging->setToolTip(tr(
+		"When the source file lives on a network share, reading and writing to it at the "
+		"same time can slow both down. Enabling this writes the muxed output to a local "
+		"folder first, then copies the finished file back over the network as a separate "
+		"step. Requires enough free space in the local folder to hold the output file — "
+		"falls back to muxing in place when there isn't enough room."));
+	m_chkUseLocalStaging->setChecked(profile->useLocalStaging());
+	stagingLayout->addWidget(m_chkUseLocalStaging);
+
+	auto* stagingDirRow = new QHBoxLayout();
+	m_editStagingDir = new QLineEdit(profile->localStagingDir(), stagingGroup);
+	m_editStagingDir->setPlaceholderText(tr("Local staging folder…"));
+	m_btnBrowseStagingDir = new QPushButton(tr("Browse…"), stagingGroup);
+	stagingDirRow->addWidget(m_editStagingDir);
+	stagingDirRow->addWidget(m_btnBrowseStagingDir);
+	stagingLayout->addLayout(stagingDirRow);
+
+	m_editStagingDir->setEnabled(m_chkUseLocalStaging->isChecked());
+	m_btnBrowseStagingDir->setEnabled(m_chkUseLocalStaging->isChecked());
+	connect(m_chkUseLocalStaging, &QCheckBox::toggled, m_editStagingDir, &QLineEdit::setEnabled);
+	connect(m_chkUseLocalStaging, &QCheckBox::toggled, m_btnBrowseStagingDir, &QPushButton::setEnabled);
+	connect(m_btnBrowseStagingDir, &QPushButton::clicked, this, &McSettingsDialog::onBrowseStagingDir);
+
+	perfPageLo->addWidget(stagingGroup);
+	perfPageLo->addStretch();
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 4 — Other
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* genPage   = new QWidget;
 	auto* genPageLo = new QVBoxLayout(genPage);
 	genPageLo->setSpacing(8);
 	genPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(genPage, tr("Other"));
-	tabs->setTabColor(3, QColor(0x55, 0x55, 0x65));
+	tabs->setTabColor(4, QColor(0x55, 0x55, 0x65));
 
 	// Understood Languages
 	auto* langGroup  = new QGroupBox(tr("Understood Languages"), genPage);
@@ -573,36 +648,6 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
 	jobLayout->addWidget(m_chkAutoTrack);
 	genPageLo->addWidget(jobGroup);
-
-	// Local Staging
-	auto* stagingGroup  = new QGroupBox(tr("Local Staging"), genPage);
-	auto* stagingLayout = new QVBoxLayout(stagingGroup);
-
-	m_chkUseLocalStaging = new QCheckBox(tr("Mux to a local folder, then copy the result back"), stagingGroup);
-	m_chkUseLocalStaging->setToolTip(tr(
-		"When the source file lives on a network share, reading and writing to it at the "
-		"same time can slow both down. Enabling this writes the muxed output to a local "
-		"folder first, then copies the finished file back over the network as a separate "
-		"step. Requires enough free space in the local folder to hold the output file — "
-		"falls back to muxing in place when there isn't enough room."));
-	m_chkUseLocalStaging->setChecked(profile->useLocalStaging());
-	stagingLayout->addWidget(m_chkUseLocalStaging);
-
-	auto* stagingDirRow = new QHBoxLayout();
-	m_editStagingDir = new QLineEdit(profile->localStagingDir(), stagingGroup);
-	m_editStagingDir->setPlaceholderText(tr("Local staging folder…"));
-	m_btnBrowseStagingDir = new QPushButton(tr("Browse…"), stagingGroup);
-	stagingDirRow->addWidget(m_editStagingDir);
-	stagingDirRow->addWidget(m_btnBrowseStagingDir);
-	stagingLayout->addLayout(stagingDirRow);
-
-	m_editStagingDir->setEnabled(m_chkUseLocalStaging->isChecked());
-	m_btnBrowseStagingDir->setEnabled(m_chkUseLocalStaging->isChecked());
-	connect(m_chkUseLocalStaging, &QCheckBox::toggled, m_editStagingDir, &QLineEdit::setEnabled);
-	connect(m_chkUseLocalStaging, &QCheckBox::toggled, m_btnBrowseStagingDir, &QPushButton::setEnabled);
-	connect(m_btnBrowseStagingDir, &QPushButton::clicked, this, &McSettingsDialog::onBrowseStagingDir);
-
-	genPageLo->addWidget(stagingGroup);
 	genPageLo->addStretch();
 
 	// ── Buttons ───────────────────────────────────────────────────────────────
@@ -744,6 +789,8 @@ void McSettingsDialog::accept()
 	m_profile->save();
 
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());
+	StorageGroupSettings::setUiMaxGroup(m_spinScanGroups->value());
+	PosterManager::instance().setParallelWorkers(m_spinPosterWorkers->value());
 
 	QDialog::accept();
 }

@@ -8,6 +8,7 @@
 
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QScrollBar>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -191,6 +192,108 @@ void McCardDelegate::prefetchFanart(const QString& path, QPixmap raw)
 	s_fanartRawCache.insert(path, std::move(raw));
 }
 
+void McCardDelegate::prefetchVisibleArtwork() const
+{
+	if (!m_view || !m_view->model() || !m_view->viewport())
+		return;
+
+	const QRect visible  = m_view->viewport()->rect();
+	const int   posterW  = posterColumnWidth();
+	const int   rowCount = m_view->model()->rowCount();
+
+	// Anchor the walk at the first visible row via indexAt() instead of scanning
+	// every row in the model — with setUniformItemSizes(false), visualRect() on a
+	// row far from the viewport can force the view to compute layout for every
+	// preceding row to get there, so walking all ~thousands of rows every call (on
+	// every pageReady/metaReady/scroll tick) made that layout cost, not just the
+	// artwork decode, a real contributor to UI-thread stalls.
+	//
+	// The *end* of the range is found by walking forward from that anchor and
+	// checking each row's own visualRect(), not via indexAt(bottomRight): while the
+	// model is actively growing (pages still loading in the background),
+	// indexAt(bottomRight) can answer against stale/incomplete layout and under-
+	// shoot the true last visible row — silently skipping rows that are genuinely
+	// on screen. Walking forward with a small miss-tolerance keeps this bounded
+	// (stops shortly after leaving the viewport) without depending on indexAt()
+	// being right at the far edge.
+	const QModelIndex firstIdx = m_view->indexAt(visible.topLeft());
+	const int firstRow = firstIdx.isValid() ? firstIdx.row() : 0;
+
+	int lastRow = firstRow;
+	int misses  = 0;
+	for (int row = firstRow; row < rowCount; ++row) {
+		const QModelIndex idx = m_view->model()->index(row, 0);
+		if (idx.isValid() && m_view->visualRect(idx).intersects(visible)) {
+			lastRow = row;
+			misses  = 0;
+		} else if (++misses > 2) {
+			break;
+		}
+	}
+
+	// Decodes synchronously here (unlike paint()'s on-demand path), but only across
+	// the handful of rows actually in the viewport — bounded above via indexAt() —
+	// so an already-downloaded poster/fanart pops in on the very first paint instead
+	// of a grey placeholder for one async round-trip. That's cheap for a viewport's
+	// worth of rows; it was only expensive when this used to walk every row in the
+	// model. Callers that can fire in bursts (per-file poster/fanart-ready signals,
+	// per-page load batches) should go through scheduleArtworkPrefetch() instead of
+	// calling this directly, so those bursts coalesce into one pass.
+	bool changed = false;
+	for (int row = firstRow; row <= lastRow; ++row) {
+		const QModelIndex idx = m_view->model()->index(row, 0);
+		if (!idx.isValid() || !m_view->visualRect(idx).intersects(visible))
+			continue;
+
+		const CardData d = fetchData(idx);
+
+		if (!d.fanartPath.isEmpty() && !s_fanartRawCache.contains(d.fanartPath)) {
+			QPixmap raw(d.fanartPath);
+			if (!raw.isNull()) {
+				if (raw.height() > 300) {
+					const int y = (raw.height() - 300) / 2;
+					raw = raw.copy(0, y, raw.width(), 300);
+				}
+				s_fanartRawCache.insert(d.fanartPath, raw);
+				s_fanartVersions[d.fanartPath]++;
+				changed = true;
+			}
+		}
+
+		if (!d.posterPath.isEmpty()) {
+			const QString cacheKey = QStringLiteral("poster:%1:%2")
+			                             .arg(d.posterPath).arg(d.posterVersion);
+			QPixmap pm;
+			if (!QPixmapCache::find(cacheKey, &pm)) {
+				const QPixmap src(d.posterPath);
+				if (!src.isNull()) {
+					pm = src.scaledToWidth(posterW, Qt::SmoothTransformation);
+					QPixmapCache::insert(cacheKey, pm);
+					changed = true;
+				}
+			}
+		}
+	}
+
+	if (changed)
+		m_view->viewport()->update();
+}
+
+void McCardDelegate::scheduleArtworkPrefetch()
+{
+	// Throttle, not debounce: only (re)start the timer if it isn't already pending.
+	// Callers here (per-file poster/fanart-ready signals, per-page load batches) can
+	// fire in tight bursts during startup — calling start() unconditionally on an
+	// already-running singleShot timer restarts its countdown each time, so a
+	// sustained burst could push the first real prefetch off indefinitely, leaving
+	// visible rows without a poster for the whole burst. Firing on the leading edge
+	// and ignoring re-triggers until it's actually run guarantees a prefetch at least
+	// every ~40ms. The scroll-bar path below intentionally keeps true debounce (wait
+	// for scrolling to settle) since it calls start() directly, not through here.
+	if (m_artworkPrefetchTimer && !m_artworkPrefetchTimer->isActive())
+		m_artworkPrefetchTimer->start();
+}
+
 // Pulsing colors used by the running-job size bar. Computed directly from wall-clock
 // time (instead of a QVariantAnimation) so the value never depends on how reliably
 // Qt's animation driver ticks — only on when we choose to read it. Both segments share
@@ -222,6 +325,21 @@ McCardDelegate::McCardDelegate(Mode mode, QObject* parent)
 	if (auto* view = qobject_cast<QAbstractItemView*>(parent)) {
 		m_view = view;
 		view->viewport()->installEventFilter(this);
+
+		if (m_mode == Mode::Library) {
+			m_artworkPrefetchTimer = new QTimer(this);
+			m_artworkPrefetchTimer->setSingleShot(true);
+			m_artworkPrefetchTimer->setInterval(40);
+			connect(m_artworkPrefetchTimer, &QTimer::timeout, this, [this]() {
+				prefetchVisibleArtwork();
+			});
+			if (auto* sb = view->verticalScrollBar()) {
+				connect(sb, &QScrollBar::valueChanged, this, [this]() {
+					if (m_artworkPrefetchTimer)
+						m_artworkPrefetchTimer->start();
+				});
+			}
+		}
 	}
 	if (m_mode == Mode::JobQueue) {
 		// Fixed-cadence repaint heartbeat for the pulse/size-bar animations. Only the

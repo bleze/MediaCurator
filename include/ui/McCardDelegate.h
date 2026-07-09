@@ -84,6 +84,15 @@ public:
 	// Called from model slots after a new fanart arrives so paint() never hits disk.
 	static void prefetchFanart(const QString& path, QPixmap raw);
 
+	// Load poster/fanart from disk for every card currently intersecting the viewport.
+	// Called on library load and scroll so the first paint already has artwork cached.
+	void prefetchVisibleArtwork() const;
+
+	// Coalesces bursts of prefetch requests (per-file poster/fanart-ready signals,
+	// per-page load batches) into a single prefetchVisibleArtwork() call via the
+	// existing debounce timer, instead of each caller invoking it directly.
+	void scheduleArtworkPrefetch();
+
 	// Width actually reserved on-screen for the poster/checkbox column right now —
 	// depends on whether TMDB is configured (see setTmdbConfigured). Callers outside
 	// the delegate that hit-test the poster column (e.g. double-click-to-open-IMDb-
@@ -202,6 +211,7 @@ private:
 	// color and size-bar position are both computed from wall-clock time, so this timer
 	// only needs to trigger a redraw, not advance any state itself.
 	QTimer*               m_animTimer        = nullptr;
+	QTimer*               m_artworkPrefetchTimer = nullptr;
 
 	mutable QHash<qint64, QSize> m_sizeCache;
 	mutable int               m_cacheWidth   = 0;

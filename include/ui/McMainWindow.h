@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <QHash>
 #include <QIcon>
 #include <QLabel>
 #include <QListView>
@@ -48,6 +49,7 @@ protected:
 	void showEvent(QShowEvent* event) override;
 	void paintEvent(QPaintEvent* event) override;
 	void keyPressEvent(QKeyEvent* event) override;
+	bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
 
 private slots:
 	void dismissSplash();
@@ -56,8 +58,7 @@ private slots:
 	void onScanLibrary();
 	void onQuickScan();
 	void onRemoveFolder();
-	void onScanProgress(int current, int total, const QString& currentFile);
-	void onScanFinished(int scanned, int added, int updated, int failed, int skipped, int removed, QStringList newFiles);
+
 	void onRefreshView();
 	void onAnalyzeLibrary();
 	void onAnalyzeProgress(int current, int total, const QString& filename);
@@ -85,11 +86,20 @@ private:
 	void startBackgroundLibraryLoad();
 	void ensureOnScreen();
 	void setNativeWindowBackground();
-	void createScanWorker(const QString& folderPath, bool quickScan = false);
+	void startScanRoots(const QStringList& roots, bool quickScan);
+	void enqueueScanRoot(const QString& root, bool quickScan);
+	void createScanWorkerForGroup(int groupId, const QString& folderPath, bool quickScan);
+	void onScanProgressForGroup(int groupId, int current, int total, const QString& currentFile);
+	void onScanFinishedForGroup(int groupId, int scanned, int added, int updated, int failed,
+	                            int skipped, int removed, QStringList newFiles);
+	void stopAllScanWorkers(bool waitForThreads);
+	void updateScanStatusLabel();
+	[[nodiscard]] bool isScanning() const;
 	void setScanningState(bool scanning);
 	void updateSavedLabel();
 	void updateActionStates();         // enable/disable scan-lib and analyze based on roots + file count
 	void updateJobPanelVisibility(bool forceShow = false);   // show/hide job panel based on whether any jobs exist
+	void updateRemuxStatusBar();
 	void launchInVlc(const QString& rawPath);
 	bool analyzeSingleFile(qint64 fileId);
 	void setSubtitleLanguage(const FileRecord& file, const StreamRecord& stream, const QString& langCode);
@@ -123,15 +133,21 @@ private:
 	QPushButton*     m_btnCancelScan     = nullptr;
 	QPushButton*     m_btnCancelAnalyze  = nullptr;
 	QSplitter*       m_splitter          = nullptr;
-	QStringList      m_pendingRoots;
-	bool             m_quickScanPending = false;   // whether m_pendingRoots is being drained as a quick scan
+	struct ScanGroupState {
+		QThread*    thread       = nullptr;
+		ScanWorker* worker       = nullptr;
+		QStringList pendingRoots;
+		bool        quickScan    = false;
+		int         progressCurrent = 0;
+		QString     currentFile;
+	};
+
+	QHash<int, ScanGroupState> m_scanGroups;
 	QStringList      m_newFilesFound;   // accumulated across chained roots within one scan session
 	int              m_scannedSoFar = 0;   // files scanned in already-finished roots this session
 	QTimer*          m_analyzeRefreshTimer = nullptr;
 	QThread*         m_loadThread      = nullptr;
 	LibraryLoader*   m_loader          = nullptr;
-	QThread*         m_scanThread      = nullptr;
-	ScanWorker*      m_scanWorker      = nullptr;
 	QThread*         m_analyzeThread   = nullptr;
 	AnalyzeWorker*   m_analyzeWorker   = nullptr;
 	QThread*         m_simulateThread  = nullptr;
@@ -147,7 +163,8 @@ private:
 	bool             m_splitterRestored  = false;
 	QSplashScreen*   m_splash            = nullptr;
 	QIcon            m_startupIcon;
-	QString          m_currentJobFilename;
+	QHash<qint64, QString> m_runningJobNames;
+	QHash<qint64, int>     m_runningJobProgress;
 	int              m_queuedAtStart   = 0;
 #ifdef Q_OS_WIN
 	ITaskbarList3*   m_taskbar = nullptr;

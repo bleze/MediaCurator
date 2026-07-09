@@ -5,9 +5,10 @@ namespace Mc {
 static constexpr int kPageSizes[] = { 70, 200, 500 };
 static constexpr int kPageSizeCount = static_cast<int>(sizeof(kPageSizes) / sizeof(kPageSizes[0]));
 
-LibraryLoader::LibraryLoader(int startOffset, QObject* parent)
+LibraryLoader::LibraryLoader(int startOffset, int sortOrder, QObject* parent)
 	: QObject(parent)
 	, m_startOffset(startOffset)
+	, m_sortOrder(sortOrder)
 {}
 
 void LibraryLoader::run()
@@ -29,7 +30,7 @@ void LibraryLoader::run()
 		const int limit = (pageIndex < kPageSizeCount) ? kPageSizes[pageIndex] : 2000;
 		++pageIndex;
 
-		const auto files = db.allFilesPaged(offset, limit);
+		const auto files = db.allFilesPaged(offset, limit, m_sortOrder);
 		if (files.isEmpty()) break;
 
 		QList<qint64> ids;

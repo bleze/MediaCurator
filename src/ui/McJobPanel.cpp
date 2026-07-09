@@ -48,6 +48,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
@@ -317,7 +318,8 @@ void McJobPanel::setupUi()
 	m_btnQueueSelected->setToolTip(tr("Move selected proposed jobs to the processing queue"));
 	m_btnUnqueue->setToolTip(tr("Move selected queued jobs back to proposed state"));
 	m_btnQueueAll->setToolTip(tr("Move all proposed jobs to the processing queue"));
-	m_btnStartPause->setToolTip(tr("Start processing — runs all queued jobs in order"));
+	m_btnStartPause->setToolTip(tr(
+		"Start processing — runs queued jobs in order, up to one active job per storage group"));
 	m_btnCancel->setToolTip(tr("Stop the current job — queued jobs remain and can be restarted"));
 	m_btnRemove->setToolTip(tr("Remove selected jobs from the queue"));
 	m_btnSummary->setToolTip(tr("Show aggregate statistics for all proposed jobs"));
@@ -536,6 +538,30 @@ void McJobPanel::setupUi()
 	m_listView->setResizeMode(QListView::Adjust);
 	m_listView->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_listView->installEventFilter(this);
+
+	// QListView's viewport defaults to a light Base on Windows until its first
+	// delegate paint — same issue McMainWindow::applyDarkBackgrounds() fixes for the
+	// library view. The job panel can become visible (updateJobPanelVisibility())
+	// before that first paint happens, so without this it flashes white against a
+	// dark theme. Filled here directly rather than from McMainWindow so the panel
+	// is correct on its own regardless of when/how it's shown.
+	{
+		const QColor win  = palette().color(QPalette::Window);
+		const QColor base = palette().color(QPalette::Base);
+		const QColor alt  = palette().color(QPalette::AlternateBase);
+		auto fillDark = [](QWidget* w, const QColor& window, const QColor& baseColor,
+		                    const QColor& altColor) {
+			if (!w) return;
+			w->setAutoFillBackground(true);
+			QPalette pal = w->palette();
+			pal.setColor(QPalette::Window, window);
+			pal.setColor(QPalette::Base, baseColor);
+			pal.setColor(QPalette::AlternateBase, altColor);
+			w->setPalette(pal);
+		};
+		fillDark(m_listView, win, base, alt);
+		fillDark(m_listView->viewport(), base, base, alt);
+	}
 
 	connect(jobDelegate, &McJobCardDelegate::playRequested,
 	        this, [this](const QModelIndex& idx) {
@@ -836,7 +862,7 @@ void McJobPanel::setupUi()
 		} else if (status == QLatin1String("queued")) {
 			// Run this specific job immediately, bypassing queue order.
 			auto* runNowAct = menu.addAction(svgIcon(":/icons/play_arrow.svg"), tr("&Start Now"));
-			runNowAct->setEnabled(m_queue && !m_queue->hasActiveJob());
+			runNowAct->setEnabled(m_queue && m_queue->canRunJobImmediately(jobId));
 			connect(runNowAct, &QAction::triggered, this, [this, jobId] {
 				if (m_queue) m_queue->runJob(jobId);
 			});
@@ -1221,8 +1247,13 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 			prevSelected.insert(si.data(McJobListModel::JobIdRole).toLongLong());
 
 		onJobStatusChanged(jobId, "running");
-		m_jobTimer.start();
-		m_etaTimer->start();
+		JobEtaState st;
+		st.startedAtMs = QDateTime::currentMSecsSinceEpoch();
+		m_etaByJob.insert(jobId, st);
+		if (!m_jobTimer.isValid())
+			m_jobTimer.start();
+		if (!m_etaTimer->isActive())
+			m_etaTimer->start();
 
 		const bool followRunning   = AppSettings::instance().value("jobPanel/followRunning", true).toBool();
 		const QString currentFilter = m_statusFilter->currentData().toString();
@@ -1249,37 +1280,53 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 			}
 		}
 
-		// Restore selection for any previously selected items still visible.
+		// Restore selection for any previously selected items still visible — never
+		// auto-select a runner just because processing started.
 		for (int row = 0; row < m_model->rowCount(); ++row) {
 			const QModelIndex idx = m_model->index(row);
 			if (prevSelected.contains(idx.data(McJobListModel::JobIdRole).toLongLong()))
 				m_listView->selectionModel()->select(idx, QItemSelectionModel::Select);
 		}
-
-		// Select + scroll the newly-running job. Defer one tick so layout settles after
-		// any filter switch / model reset triggered above.
-		QTimer::singleShot(0, this, [this, jobId] { focusJob(jobId); });
+	});
+	connect(queue, &JobQueue::jobRequeued, this, [this](qint64 jobId) {
+		m_etaByJob.remove(jobId);
+		m_model->updateJob(jobId, QStringLiteral("queued"));
+		if (DatabaseManager::instance().jobStatusCounts().value(QStringLiteral("running"), 0) == 0) {
+			m_etaTimer->stop();
+			m_jobTimer.invalidate();
+		}
+		updateFooter();
 	});
 	connect(queue, &JobQueue::jobFinished, this,
 	        [this](qint64 jobId, bool ok, qint64 savedBytes) {
-		m_etaTimer->stop();
-		m_jobTimer.invalidate();
-		m_etaSampleJobId  = -1;
-		m_etaLastSampleMs = -1;
-		m_etaLastProgress = -1;
-		m_etaEmaRatePerMs = -1.0;
-		m_model->updateJob(jobId, ok ? "done" : "failed", savedBytes);
+		m_etaByJob.remove(jobId);
+		QString status;
+		if (ok) {
+			status = QStringLiteral("done");
+		} else {
+			const auto jobOpt = DatabaseManager::instance().jobById(jobId);
+			status = (jobOpt && jobOpt->status == QLatin1String("queued"))
+			    ? QStringLiteral("queued") : QStringLiteral("failed");
+		}
+		m_model->updateJob(jobId, status, savedBytes);
+		if (DatabaseManager::instance().jobStatusCounts().value(QStringLiteral("running"), 0) == 0) {
+			m_etaTimer->stop();
+			m_jobTimer.invalidate();
+			m_etaByJob.clear();
+		}
 		updateFooter();
 	});
 	connect(queue, &JobQueue::allFinished, this, [this] {
 		refresh();
 		// When auto-track left the filter on "Running" and there's nothing left
-		// to run, jump to Proposed so the user can queue more without manual steps.
+		// to run, jump to Queued (or Proposed) so the user can restart without manual steps.
 		if (AppSettings::instance().value("jobPanel/followRunning", true).toBool()
 		    && m_statusFilter->currentData().toString() == QLatin1String("running")) {
 			const auto counts = m_model->countsByStatus();
-			const QString target = counts.value("proposed", 0) > 0
-			    ? QStringLiteral("proposed") : QString();
+			const QString target = counts.value(QStringLiteral("queued"), 0) > 0
+			    ? QStringLiteral("queued")
+			    : (counts.value(QStringLiteral("proposed"), 0) > 0
+			        ? QStringLiteral("proposed") : QString());
 			for (int i = 0; i < m_statusFilter->count(); ++i) {
 				if (m_statusFilter->itemData(i).toString() == target) {
 					m_statusFilter->setCurrentIndex(i);
@@ -1572,7 +1619,7 @@ void McJobPanel::onStartPause()
 void McJobPanel::onCancel()
 {
 	if (m_queue) m_queue->cancel();
-	refresh();
+	updateFooter();
 }
 
 void McJobPanel::onStartWithGoal()
@@ -1798,7 +1845,8 @@ void McJobPanel::updateFooter()
 	} else {
 		m_btnStartPause->setIcon(svgIcon(":/icons/play_arrow.svg"));
 		m_btnStartPause->setText(tr("Start"));
-		m_btnStartPause->setToolTip(tr("Start processing — runs all queued jobs in order"));
+		m_btnStartPause->setToolTip(tr(
+		"Start processing — runs queued jobs in order, up to one active job per storage group"));
 		m_btnStartPause->setEnabled(queued > 0);
 	}
 
@@ -1829,129 +1877,129 @@ void McJobPanel::updateFooter()
 		    .arg(formatGoalGB(m_goalBar->currentBytes()), formatGoalGB(m_goalBar->goalBytes()));
 	}
 
-	// ETA — computed from an exponentially-smoothed recent throughput rate rather
-	// than the whole job's elapsed-time average, so a slow patch earlier in a long
-	// job doesn't keep dragging the estimate down after speed recovers.
-	if (running > 0 && m_jobTimer.isValid() && m_model) {
-		const qint64 elapsedMs = m_jobTimer.elapsed();
+	// ETA/speed — per-job EMA; with parallel storage groups the active-batch ETA
+	// is the longest running job and throughput is the sum across all runners.
+	if (running > 0 && m_model) {
+		const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+		double maxActiveEtaSec    = 0.0;
+		double aggregateBytesPerMs = 0.0;
+		bool   anyRateReady       = false;
+
 		for (int row = 0; row < m_model->rowCount(); ++row) {
 			const QModelIndex idx = m_model->index(row, 0);
-			if (idx.data(McJobListModel::StatusRole).toString() != QLatin1String("running")) continue;
+			if (idx.data(McJobListModel::StatusRole).toString() != QLatin1String("running"))
+				continue;
 
-			const qint64 jobId    = idx.data(McJobListModel::JobIdRole).toLongLong();
-			const int    progress = idx.data(McJobListModel::ProgressRole).toInt();
-			const qint64 fileSize = idx.data(McJobListModel::FileSizeRole).toLongLong();
-			const QString phase   = idx.data(McJobListModel::PhaseLabelRole).toString();
+			const qint64  jobId    = idx.data(McJobListModel::JobIdRole).toLongLong();
+			const int     progress = idx.data(McJobListModel::ProgressRole).toInt();
+			const qint64  fileSize = idx.data(McJobListModel::FileSizeRole).toLongLong();
+			const QString phase    = idx.data(McJobListModel::PhaseLabelRole).toString();
 
-			// A phase change (e.g. muxing -> copying to NAS) resets progress to 0
-			// under an unrelated throughput regime — treat it like a new job for
-			// EMA purposes, otherwise the reset reads as a huge negative-rate
-			// sample and produces a bogus ETA spike for one tick.
-			if (jobId != m_etaSampleJobId || phase != m_etaLastPhase) {
-				m_etaSampleJobId  = jobId;
-				m_etaLastPhase    = phase;
-				m_etaLastSampleMs = -1;
-				m_etaLastProgress = -1;
-				m_etaEmaRatePerMs = -1.0;
+			JobEtaState& st = m_etaByJob[jobId];
+			if (st.startedAtMs <= 0)
+				st.startedAtMs = nowMs;
+
+			if (phase != st.lastPhase) {
+				st.lastPhase    = phase;
+				st.lastSampleMs = -1;
+				st.lastProgress = -1;
+				st.emaRatePerMs = -1.0;
 			}
-			// Fold in a new instantaneous rate sample whenever progress has actually
-			// moved. Between mkvmerge progress ticks (which can land irregularly),
-			// the EMA value is simply reused as-is rather than recomputed, so the
-			// display doesn't jitter on ticks with no new information.
-			if (m_etaLastProgress >= 0 && progress != m_etaLastProgress
-			    && elapsedMs > m_etaLastSampleMs) {
-				const double dt          = static_cast<double>(elapsedMs - m_etaLastSampleMs);
-				const double dProgress   = static_cast<double>(progress - m_etaLastProgress);
-				const double instantRate = dProgress / dt;   // % per ms
-				if (m_etaEmaRatePerMs < 0.0) {
-					m_etaEmaRatePerMs = instantRate;
+
+			const qint64 elapsedMs = nowMs - st.startedAtMs;
+
+			if (st.lastProgress >= 0 && progress != st.lastProgress
+			    && st.lastSampleMs >= 0 && nowMs > st.lastSampleMs) {
+				const double dt          = static_cast<double>(nowMs - st.lastSampleMs);
+				const double dProgress   = static_cast<double>(progress - st.lastProgress);
+				const double instantRate = dProgress / dt;
+				if (st.emaRatePerMs < 0.0) {
+					st.emaRatePerMs = instantRate;
 				} else {
 					const double alpha = 1.0 - std::exp(-dt / kEtaSmoothingTauMs);
-					m_etaEmaRatePerMs = alpha * instantRate + (1.0 - alpha) * m_etaEmaRatePerMs;
+					st.emaRatePerMs = alpha * instantRate + (1.0 - alpha) * st.emaRatePerMs;
 				}
 			}
-			if (progress != m_etaLastProgress) {
-				m_etaLastProgress = progress;
-				m_etaLastSampleMs = elapsedMs;
+			if (progress != st.lastProgress) {
+				st.lastProgress = progress;
+				st.lastSampleMs = nowMs;
 			}
 
-			// Low thresholds so ETA/speed appear quickly even on huge files — 5% of a
-			// 60+ GB remux could be tens of seconds away. The elapsed-time floor avoids
-			// extrapolating from mkvmerge's near-instant first tick (header/index
-			// writing) before real data throughput has kicked in.
 			if (progress >= 1 && elapsedMs >= 1500) {
-				// Prefer the smoothed rate once established; otherwise fall back to
-				// the whole-job average (only relevant in the first few seconds,
-				// before a second progress tick has arrived to seed the EMA).
-				const double ratePerMs = m_etaEmaRatePerMs >= 0.0
-				    ? m_etaEmaRatePerMs
+				const double ratePerMs = st.emaRatePerMs >= 0.0
+				    ? st.emaRatePerMs
 				    : static_cast<double>(progress) / static_cast<double>(elapsedMs);
-
-				// Byte rate for the running job, from the same smoothed rate — reused
-				// for both the queued-jobs ETA extension and the displayed MB/s figure.
 				const double bytesPerMs = fileSize > 0 ? fileSize * ratePerMs / 100.0 : 0.0;
 
 				if (ratePerMs > 0.0) {
 					const double fileEtaSec = (100.0 - progress) / ratePerMs / 1000.0;
-					double queueEtaSec = fileEtaSec;
-					const bool goalMode = m_queue && m_queue->isGoalMode() && m_goalBar;
-
-					// Extend with queued jobs using the current byte rate
-					if (bytesPerMs > 0 && queued > 0) {
-						if (goalMode) {
-							// A goal run stops once the target is hit, not once the whole
-							// queue drains — estimate time to reach it instead by walking
-							// still-queued jobs in the same largest-savings-first order the
-							// queue actually consumes them in, stopping as soon as their
-							// cumulative estimated savings would cover the shortfall.
-							const qint64 liveBytes = m_goalBar->currentBytes() - m_goalBar->completedBytes();
-							const qint64 currentFileRemainingSavings =
-							    qMax<qint64>(0, m_queue->currentJobEstimatedSavings() - liveBytes);
-							qint64 remainingGoal = m_goalBar->goalBytes() - m_goalBar->currentBytes()
-							    - currentFileRemainingSavings;
-
-							qint64 neededBytes = 0;
-							if (remainingGoal > 0) {
-								auto& db = DatabaseManager::instance();
-								const auto candidates = db.queuedJobs(JobSortMode::LargestSavingsFirst);
-								for (const JobRecord& job : candidates) {
-									if (remainingGoal <= 0) break;
-									remainingGoal -= job.estimatedSavedBytes;
-									if (const auto fileOpt = db.fileById(job.fileId))
-										neededBytes += fileOpt->sizeBytes;
-								}
-							}
-							queueEtaSec += static_cast<double>(neededBytes) / (bytesPerMs * 1000.0);
-						} else {
-							qint64 queuedBytes = 0;
-							for (int r = 0; r < m_model->rowCount(); ++r) {
-								const QModelIndex qi = m_model->index(r, 0);
-								if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
-									queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
-							}
-							queueEtaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
-						}
-					}
-
-					// With more than one file involved, the whole-queue/goal ETA alone
-					// hides how far along the current file is — show both. With just one
-					// file, they're the same number, so show it once.
-					if (queued > 0) {
-						text += tr(" · ~%1 remaining (this file)").arg(formatEtaDuration(fileEtaSec));
-						text += goalMode
-						    ? tr(" · ~%1 remaining (goal)").arg(formatEtaDuration(queueEtaSec))
-						    : tr(" · ~%1 remaining (queue)").arg(formatEtaDuration(queueEtaSec));
-					} else {
-						text += tr(" · ~%1 remaining").arg(formatEtaDuration(fileEtaSec));
-					}
-
-					if (bytesPerMs > 0) {
-						const double mbPerSec = bytesPerMs * 1000.0 / 1048576.0;
-						text += tr(" · %1 MB/s").arg(mbPerSec, 0, 'f', 1);
-					}
+					maxActiveEtaSec = qMax(maxActiveEtaSec, fileEtaSec);
+					aggregateBytesPerMs += bytesPerMs;
+					anyRateReady = true;
 				}
 			}
-			break;
+		}
+
+		for (auto it = m_etaByJob.begin(); it != m_etaByJob.end(); ) {
+			const auto jobOpt = DatabaseManager::instance().jobById(it.key());
+			if (!jobOpt || jobOpt->status != QLatin1String("running"))
+				it = m_etaByJob.erase(it);
+			else
+				++it;
+		}
+
+		if (anyRateReady && maxActiveEtaSec > 0.0) {
+			double queueEtaSec = maxActiveEtaSec;
+			const bool goalMode = m_queue && m_queue->isGoalMode() && m_goalBar;
+
+			if (aggregateBytesPerMs > 0 && queued > 0) {
+				if (goalMode) {
+					const qint64 liveBytes = m_goalBar->currentBytes() - m_goalBar->completedBytes();
+					const qint64 currentFileRemainingSavings =
+					    qMax<qint64>(0, m_queue->currentJobEstimatedSavings() - liveBytes);
+					qint64 remainingGoal = m_goalBar->goalBytes() - m_goalBar->currentBytes()
+					    - currentFileRemainingSavings;
+
+					qint64 neededBytes = 0;
+					if (remainingGoal > 0) {
+						auto& db = DatabaseManager::instance();
+						const auto candidates = db.queuedJobs(JobSortMode::LargestSavingsFirst);
+						for (const JobRecord& job : candidates) {
+							if (remainingGoal <= 0) break;
+							remainingGoal -= job.estimatedSavedBytes;
+							if (const auto fileOpt = db.fileById(job.fileId))
+								neededBytes += fileOpt->sizeBytes;
+						}
+					}
+					queueEtaSec += static_cast<double>(neededBytes)
+					    / (aggregateBytesPerMs * 1000.0);
+				} else {
+					qint64 queuedBytes = 0;
+					for (int r = 0; r < m_model->rowCount(); ++r) {
+						const QModelIndex qi = m_model->index(r, 0);
+						if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
+							queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
+					}
+					queueEtaSec += static_cast<double>(queuedBytes)
+					    / (aggregateBytesPerMs * 1000.0);
+				}
+			}
+
+			if (queued > 0) {
+				const QString activeLabel = running > 1
+				    ? tr("active jobs") : tr("this file");
+				text += tr(" · ~%1 remaining (%2)").arg(formatEtaDuration(maxActiveEtaSec), activeLabel);
+				text += goalMode
+				    ? tr(" · ~%1 remaining (goal)").arg(formatEtaDuration(queueEtaSec))
+				    : tr(" · ~%1 remaining (queue)").arg(formatEtaDuration(queueEtaSec));
+			} else {
+				text += tr(" · ~%1 remaining").arg(formatEtaDuration(maxActiveEtaSec));
+			}
+
+			if (aggregateBytesPerMs > 0) {
+				const double mbPerSec = aggregateBytesPerMs * 1000.0 / 1048576.0;
+				text += tr(" · %1 MB/s").arg(mbPerSec, 0, 'f', 1);
+			}
 		}
 	}
 

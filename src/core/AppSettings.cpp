@@ -29,6 +29,10 @@ static QJsonValue variantToJson(const QVariant& v)
 		for (const QString& s : v.toStringList()) a.append(s);
 		return a;
 	}
+	case QMetaType::QJsonObject:
+		return QJsonValue(v.toJsonObject());
+	case QMetaType::QJsonArray:
+		return QJsonValue(v.toJsonArray());
 	default:
 		return v.toString();
 	}
@@ -54,6 +58,8 @@ static QVariant jsonToVariant(const QJsonValue& jv, const QVariant& def)
 			list << item.toString();
 		return list;
 	}
+	case QJsonValue::Object:
+		return QVariant(jv.toObject());
 	default:
 		return def;
 	}

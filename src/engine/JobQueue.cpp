@@ -3,6 +3,7 @@
 #include "engine/RemuxJob.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "core/StorageGroupSettings.h"
 #include "core/ExternalTools.h"
 #include "scanner/FfprobeScanner.h"
 #include "scanner/ScanWorker.h"
@@ -13,6 +14,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QSet>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -63,31 +65,58 @@ namespace Mc {
 // shows on screen, instead of drifting apart whenever the formula moves on.
 // Live-recomputed estimate for a single job — shared by the sort below and by
 // startJob() (which needs the current job's estimate for goal-progress tracking).
-static qint64 estimateJobSavingBytes(const JobRecord& job)
+static qint64 estimateJobSavingBytesFromData(const FileRecord& file,
+                                              const QList<StreamRecord>& allStreams,
+                                              const QString& commandArgsJson)
 {
-	auto& db = DatabaseManager::instance();
-	const auto fileOpt = db.fileById(job.fileId);
-	if (!fileOpt) return 0;
-
-	const QList<StreamRecord> allStreams = db.streamsForFile(job.fileId);
 	const QList<StreamRecord> keptStreams =
-		ActionEngine::computeKeptStreams(allStreams, job.commandArgsJson);
+		ActionEngine::computeKeptStreams(allStreams, commandArgsJson);
 	QSet<int> keptIdx;
 	for (const auto& s : keptStreams) keptIdx.insert(s.streamIndex);
 	QSet<int> removed;
 	for (const auto& s : allStreams)
 		if (!keptIdx.contains(s.streamIndex)) removed.insert(s.streamIndex);
 
-	return estimateSavingBytes(allStreams, removed, fileOpt->sizeBytes, fileOpt->durationSec);
+	return estimateSavingBytes(allStreams, removed, file.sizeBytes, file.durationSec);
 }
 
+static qint64 estimateJobSavingBytes(const JobRecord& job)
+{
+	auto& db = DatabaseManager::instance();
+	const auto fileOpt = db.fileById(job.fileId);
+	if (!fileOpt) return 0;
+
+	return estimateJobSavingBytesFromData(*fileOpt, db.streamsForFile(job.fileId), job.commandArgsJson);
+}
+
+// Called on every dispatchJobs() pass while sorting by live savings (or while a
+// byte goal is active) — with a deep queue this used to do two synchronous DB
+// round trips (fileById + streamsForFile) PER QUEUED JOB, on the UI thread, since
+// JobQueue lives on the main thread. With hundreds of queued jobs that's easily
+// 1000+ separate SQL round trips every time a job starts or finishes, which is
+// exactly when jobs are processing back-to-back — freezing card selection for
+// seconds. Batch-fetching all files/streams up front turns that into two queries
+// (chunked internally) regardless of queue depth.
 static void sortQueuedJobsByLiveSavings(QList<JobRecord>& jobs)
 {
 	if (jobs.size() < 2) return;
 
+	QList<qint64> fileIds;
+	fileIds.reserve(jobs.size());
+	for (const auto& j : jobs) fileIds << j.fileId;
+
+	auto& db = DatabaseManager::instance();
+	const QHash<qint64, FileRecord> files          = db.filesByIds(fileIds);
+	const QHash<qint64, QList<StreamRecord>> streamsByFile = db.streamsForFiles(fileIds);
+
 	QList<qint64> saved(jobs.size());
-	for (int i = 0; i < jobs.size(); ++i)
-		saved[i] = estimateJobSavingBytes(jobs[i]);
+	for (int i = 0; i < jobs.size(); ++i) {
+		const auto fileIt = files.constFind(jobs[i].fileId);
+		saved[i] = (fileIt == files.constEnd())
+		    ? 0
+		    : estimateJobSavingBytesFromData(*fileIt, streamsByFile.value(jobs[i].fileId),
+		                                      jobs[i].commandArgsJson);
+	}
 
 	QList<int> perm(jobs.size());
 	for (int i = 0; i < jobs.size(); ++i) perm[i] = i;
@@ -105,14 +134,72 @@ JobQueue::JobQueue(QObject* parent)
 	connect(this, &JobQueue::jobFinished, this, &JobQueue::accumulateGoalProgress);
 }
 
+bool JobQueue::isGroupBusy(int storageGroup) const
+{
+	const auto it = m_runningByGroup.constFind(storageGroup);
+	if (it == m_runningByGroup.cend())
+		return false;
+	return it->remux != nullptr || it->finishBusy;
+}
+
+bool JobQueue::hasActiveJob() const
+{
+	if (m_reviewJobId >= 0)
+		return true;
+	for (auto it = m_runningByGroup.cbegin(); it != m_runningByGroup.cend(); ++it) {
+		if (it->remux || it->finishBusy)
+			return true;
+	}
+	return false;
+}
+
+bool JobQueue::canRunJobImmediately(qint64 jobId) const
+{
+	if (m_reviewJobId >= 0)
+		return false;
+	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
+	if (!jobOpt)
+		return false;
+	return !isGroupBusy(StorageGroupSettings::groupForFileId(jobOpt->fileId));
+}
+
+qint64 JobQueue::currentJobEstimatedSavings() const
+{
+	qint64 total = 0;
+	for (auto it = m_runningByGroup.cbegin(); it != m_runningByGroup.cend(); ++it) {
+		if (it->remux)
+			total += it->estimatedSavings;
+	}
+	return total;
+}
+
+void JobQueue::occupySlot(int storageGroup, qint64 jobId, qint64 fileId, qint64 estimatedSavings)
+{
+	RunningJobSlot& slot    = m_runningByGroup[storageGroup];
+	slot.jobId              = jobId;
+	slot.fileId             = fileId;
+	slot.estimatedSavings   = estimatedSavings;
+}
+
+void JobQueue::releaseSlot(int storageGroup)
+{
+	m_runningByGroup.remove(storageGroup);
+}
+
+JobQueue::RunningJobSlot* JobQueue::slotForJobId(qint64 jobId)
+{
+	for (auto it = m_runningByGroup.begin(); it != m_runningByGroup.end(); ++it) {
+		if (it->jobId == jobId)
+			return &(*it);
+	}
+	return nullptr;
+}
+
 void JobQueue::start()
 {
 	m_paused  = false;
 	m_running = true;
-
-	if (m_currentJob) return; // already running a job
-
-	runNext();
+	dispatchJobs();
 }
 
 void JobQueue::pause()
@@ -123,17 +210,37 @@ void JobQueue::pause()
 
 void JobQueue::cancel()
 {
+	QList<qint64> runningJobIds;
+	runningJobIds.reserve(m_runningByGroup.size());
+	for (auto it = m_runningByGroup.cbegin(); it != m_runningByGroup.cend(); ++it) {
+		if (it->jobId > 0)
+			runningJobIds << it->jobId;
+	}
+
 	m_paused  = false;
 	m_running = false;
 	m_goalBytes         = 0;
 	m_goalSavedBytes    = 0;
 	m_goalJobsCompleted = 0;
 
-	if (m_currentJob) {
-		m_currentJob->cancel();
-		// onJobFinished will fire, clean up the temp file, and mark the job failed.
-		// Remaining queued jobs stay queued — Start resumes from the next one.
+	if (!runningJobIds.isEmpty()) {
+		for (qint64 jobId : runningJobIds)
+			m_cancelledJobIds.insert(jobId);
+		DatabaseManager::instance().requeueRunningJobs(runningJobIds);
+		for (qint64 jobId : runningJobIds)
+			emit jobRequeued(jobId);
 	}
+
+	for (auto it = m_runningByGroup.begin(); it != m_runningByGroup.end(); ++it) {
+		if (it->remux)
+			it->remux->cancel();
+		if (it->propEdit && it->propEdit->state() != QProcess::NotRunning)
+			it->propEdit->kill();
+	}
+	m_runningByGroup.clear();
+
+	if (!runningJobIds.isEmpty())
+		emit allFinished();
 }
 
 void JobQueue::startWithGoal(qint64 goalBytes)
@@ -165,11 +272,12 @@ void JobQueue::accumulateGoalProgress(qint64 /*jobId*/, bool success, qint64 sav
 
 void JobQueue::runJob(qint64 jobId)
 {
-	if (m_currentJob) return; // don't interrupt a running job
-
 	auto& db = DatabaseManager::instance();
 	const auto jobOpt = db.jobById(jobId);
 	if (!jobOpt) return;
+
+	if (!canRunJobImmediately(jobId))
+		return;
 
 	if (jobOpt->status == QLatin1String("proposed"))
 		db.promoteJobsToQueued({jobId});
@@ -178,12 +286,13 @@ void JobQueue::runJob(qint64 jobId)
 
 	m_paused  = false;
 	m_running = true;
-	startJob(*jobOpt);
+	(void)tryStartJob(*jobOpt);
 }
 
-void JobQueue::runNext()
+void JobQueue::dispatchJobs()
 {
 	if (!m_running || m_paused) return;
+	if (m_reviewJobId >= 0) return;
 
 	if (m_goalBytes > 0 && m_goalSavedBytes >= m_goalBytes) {
 		const qint64 elapsedMs = m_goalTimer.isValid() ? m_goalTimer.elapsed() : 0;
@@ -197,25 +306,30 @@ void JobQueue::runNext()
 		return;
 	}
 
-	// Always re-query for a fresh sorted order — new jobs may have been added
-	// while the previous job was running and must be sorted correctly.
 	auto jobs = DatabaseManager::instance().queuedJobs(m_sortMode);
 
 	if (jobs.isEmpty()) {
-		m_running = false;
-		emit allFinished();
+		if (!hasActiveJob()) {
+			m_running = false;
+			emit allFinished();
+		}
 		return;
 	}
 
-	// A goal run always greedily picks the largest remaining savings first,
-	// regardless of the panel's selected sort mode.
 	if (m_sortMode == JobSortMode::LargestSavingsFirst || m_goalBytes > 0)
 		sortQueuedJobsByLiveSavings(jobs);
 
-	startJob(jobs.first());
+	QSet<int> startedThisRound;
+	for (const JobRecord& job : jobs) {
+		const int group = StorageGroupSettings::groupForFileId(job.fileId);
+		if (isGroupBusy(group) || startedThisRound.contains(group))
+			continue;
+		if (tryStartJob(job))
+			startedThisRound.insert(group);
+	}
 }
 
-void JobQueue::startJob(const JobRecord& job)
+bool JobQueue::tryStartJob(const JobRecord& job)
 {
 	auto& db = DatabaseManager::instance();
 
@@ -225,10 +339,12 @@ void JobQueue::startJob(const JobRecord& job)
 	const QString commandArgsJson = job.commandArgsJson;
 	const QString flagChangesJson = job.flagChangesJson;
 	const QString descriptionText = job.descriptionText;
+	const int     storageGroup    = StorageGroupSettings::groupForFileId(fileId);
 
-	// Live estimate for the job about to run — lets the UI show partial progress
-	// toward an active goal while this job is still in flight.
-	m_currentJobEstimatedSavings = estimateJobSavingBytes(job);
+	if (isGroupBusy(storageGroup))
+		return false;
+
+	const qint64 estimatedSavings = estimateJobSavingBytes(job);
 
 	// tag_edit jobs have no commandArgsJson — that's expected; other types must have it.
 	const bool isTagEdit = (jobType == QLatin1String("tag_edit"));
@@ -236,8 +352,8 @@ void JobQueue::startJob(const JobRecord& job)
 		qWarning() << "JobQueue: job" << jobId << "has empty command_args_json — marking failed";
 		db.updateJobStatus(jobId, "failed", -1);
 		emit jobFinished(jobId, false, 0);
-		if (m_running && !m_paused) runNext();
-		return;
+		if (m_running && !m_paused) dispatchJobs();
+		return false;
 	}
 
 	// ── Flag-only edit via mkvpropedit (+ optional sidecar file deletions / renames) ──
@@ -247,13 +363,15 @@ void JobQueue::startJob(const JobRecord& job)
 			db.updateJobStatus(jobId, "done", 0);
 			emit jobStarted(jobId);
 			emit jobFinished(jobId, true, 0);
-			if (m_running && !m_paused) runNext();
-			return;
+			if (m_running && !m_paused) dispatchJobs();
+			return true;
 		}
+
+		occupySlot(storageGroup, jobId, fileId, 0);
+		m_runningByGroup[storageGroup].finishBusy = true;
 
 		db.updateJobStatus(jobId, "running");
 		emit jobStarted(jobId);
-		m_finishBusy = true;
 
 		// Load streams to separate internal (mkvpropedit) vs external (rename) changes.
 		const QList<StreamRecord> allStreams = fileId > 0
@@ -264,27 +382,29 @@ void JobQueue::startJob(const JobRecord& job)
 		// Run mkvpropedit for internal (container) flag changes only, asynchronously —
 		// finishTagEditJob() picks up from here once it (if any) has exited.
 		if (internalFlags.isEmpty()) {
-			finishTagEditJob(jobId, fileId, true, QString(), sidecarDeletionsJson,
+			finishTagEditJob(storageGroup, jobId, fileId, true, QString(), sidecarDeletionsJson,
 			                  flagChangesJson, allStreams);
-			return;
+			return true;
 		}
 
 		const auto fileOpt = db.fileById(fileId);
 		if (!fileOpt) {
 			db.updateJobStatus(jobId, "failed", -1);
-			m_finishBusy = false;
+			releaseSlot(storageGroup);
 			emit jobFinished(jobId, false, 0);
-			if (m_running && !m_paused) runNext();
-			return;
+			if (m_running && !m_paused) dispatchJobs();
+			return true;
 		}
 
 		const QStringList args        = ActionEngine::buildPropEditArgs(fileOpt->path, internalFlags);
 		const QString mkvpropeditPath = ExternalTools::instance().mkvpropeditPath();
 
 		auto* proc = new QProcess(this);
+		m_runningByGroup[storageGroup].propEdit = proc;
 		proc->setProcessChannelMode(QProcess::MergedChannels);
 		connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-		        this, [this, proc, jobId, fileId, sidecarDeletionsJson, flagChangesJson, allStreams]
+		        this, [this, proc, jobId, fileId, storageGroup, sidecarDeletionsJson,
+		               flagChangesJson, allStreams]
 		              (int exitCode, QProcess::ExitStatus status) {
 			const bool ok = (status == QProcess::NormalExit && exitCode == 0);
 			const QByteArray rawLog = proc->readAllStandardOutput();
@@ -293,10 +413,11 @@ void JobQueue::startJob(const JobRecord& job)
 				      : QStringLiteral("mkvpropedit failed (exit %1)").arg(exitCode))
 				: QString::fromLocal8Bit(rawLog);
 			proc->deleteLater();
-			finishTagEditJob(jobId, fileId, ok, log, sidecarDeletionsJson, flagChangesJson, allStreams);
+			finishTagEditJob(storageGroup, jobId, fileId, ok, log, sidecarDeletionsJson,
+			                 flagChangesJson, allStreams);
 		});
 		proc->start(mkvpropeditPath, args);
-		return;
+		return true;
 	}
 
 	// ── Remux job via mkvmerge ───────────────────────────────────────────────
@@ -315,13 +436,11 @@ void JobQueue::startJob(const JobRecord& job)
 				const double needed = fileOpt->sizeBytes / 1073741824.0;
 				const double avail  = storage.bytesAvailable() / 1073741824.0;
 				emit warning(QStringLiteral(
-				    "Not enough disk space for \"%1\" — need %2 GB, have %3 GB free. Queue stopped.")
+				    "Not enough disk space for \"%1\" — need %2 GB, have %3 GB free. Skipping for now.")
 				    .arg(fileOpt->filename)
 				    .arg(needed, 0, 'f', 2)
 				    .arg(avail,  0, 'f', 2));
-				m_running = false;
-				emit allFinished();
-				return;
+				return false;
 			}
 		}
 	}
@@ -416,40 +535,70 @@ void JobQueue::startJob(const JobRecord& job)
 	}
 
 	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
-	m_currentJob    = new RemuxJob(jobId, mkvmergePath, args, sourcePath, descriptionText,
-	                                m_writeJobLog, finalOutputPathOverride, this);
-	m_currentJobId  = jobId;
-	m_currentFileId = fileId;
+	occupySlot(storageGroup, jobId, fileId, estimatedSavings);
+	RunningJobSlot& slot = m_runningByGroup[storageGroup];
+	slot.remux = new RemuxJob(jobId, mkvmergePath, args, sourcePath, descriptionText,
+	                          m_writeJobLog, finalOutputPathOverride, this);
 
-	connect(m_currentJob, &RemuxJob::finished,
-	        this, &JobQueue::onJobFinished);
-	connect(m_currentJob, &RemuxJob::progressChanged,
-	        this, [this](int pct, qint64 outputBytes) {
-		        // Sampled synchronously, right when mkvmerge's percent line is parsed —
-		        // one source, one signal, no separate timer or thread to fall out of sync.
-		        emit progressChanged(m_currentJobId, pct);
-		        emit outputSizeChanged(m_currentJobId, outputBytes);
-	        });
-	connect(m_currentJob, &RemuxJob::phaseChanged,
-	        this, [this](const QString& label) {
-		        emit phaseChanged(m_currentJobId, label);
-	        });
+	connect(slot.remux, &RemuxJob::finished, this,
+	        [this, storageGroup, jobId, fileId](int exitCode, const QString& log, qint64 savedBytes) {
+		onRemuxJobFinished(storageGroup, jobId, fileId, exitCode, log, savedBytes);
+	});
+	connect(slot.remux, &RemuxJob::progressChanged, this,
+	        [this, jobId](int pct, qint64 outputBytes) {
+		emit progressChanged(jobId, pct);
+		emit outputSizeChanged(jobId, outputBytes);
+	});
+	connect(slot.remux, &RemuxJob::phaseChanged, this,
+	        [this, jobId](const QString& label) {
+		emit phaseChanged(jobId, label);
+	});
 
 	db.updateJobStatus(jobId, "running");
 	emit jobStarted(jobId);
 
-	m_currentJob->run();
+	slot.remux->run();
+	return true;
 }
 
-void JobQueue::finishTagEditJob(qint64 jobId, qint64 fileId, bool propEditOk, const QString& log,
-                                 const QString& sidecarDeletionsJson, const QString& flagChangesJson,
+bool JobQueue::consumeAbortedJob(qint64 jobId, int storageGroup)
+{
+	const bool aborted = m_cancelledJobIds.remove(jobId)
+	    || [&] {
+		const auto opt = DatabaseManager::instance().jobById(jobId);
+		// cancel() requeues runners before mkvmerge/mkvpropedit exits — a late
+		// completion handler must not overwrite that back to failed/done.
+		return opt && opt->status == QLatin1String("queued");
+	}();
+	if (!aborted)
+		return false;
+
+	if (auto it = m_runningByGroup.find(storageGroup); it != m_runningByGroup.end()) {
+		if (it->remux)
+			it->remux->deleteLater();
+		if (it->propEdit) {
+			if (it->propEdit->state() != QProcess::NotRunning)
+				it->propEdit->kill();
+			it->propEdit->deleteLater();
+		}
+		releaseSlot(storageGroup);
+	} else if (auto* senderRemux = qobject_cast<RemuxJob*>(sender())) {
+		senderRemux->deleteLater();
+	}
+	return true;
+}
+
+void JobQueue::finishTagEditJob(int storageGroup, qint64 jobId, qint64 fileId, bool propEditOk,
+                                 const QString& log, const QString& sidecarDeletionsJson,
+                                 const QString& flagChangesJson,
                                  const QList<StreamRecord>& allStreams)
 {
 	// Sidecar delete/rename and the DB status update are filesystem/SQL work with no
 	// bearing on this object's own state — run them off the UI thread, same pattern
 	// as the remux-completion path in RemuxJob::onProcessFinished().
 	QThreadPool::globalInstance()->start(
-	    [this, jobId, fileId, propEditOk, log, sidecarDeletionsJson, flagChangesJson, allStreams]() {
+	    [this, storageGroup, jobId, fileId, propEditOk, log, sidecarDeletionsJson,
+	     flagChangesJson, allStreams]() {
 		bool ok = propEditOk;
 
 		// Delete sidecar subtitle files
@@ -483,16 +632,18 @@ void JobQueue::finishTagEditJob(qint64 jobId, qint64 fileId, bool propEditOk, co
 			}
 		}
 
-		DatabaseManager::instance().updateJobStatus(jobId, ok ? "done" : "failed", ok ? 0 : -1, log);
-
-		QMetaObject::invokeMethod(this, [this, jobId, fileId, ok] {
-			m_finishBusy = false;
+		// Status write happens on the UI thread below, after the cancellation check.
+		QMetaObject::invokeMethod(this, [this, storageGroup, jobId, fileId, ok, log] {
+			if (consumeAbortedJob(jobId, storageGroup))
+				return;
+			DatabaseManager::instance().updateJobStatus(jobId, ok ? "done" : "failed", ok ? 0 : -1, log);
+			releaseSlot(storageGroup);
 			emit jobFinished(jobId, ok, 0);
 
 			if (ok && fileId > 0)
 				rescanFile(fileId, {});  // picks up renamed sidecars automatically
 
-			if (m_running && !m_paused) runNext();
+			if (m_running && !m_paused) dispatchJobs();
 		}, Qt::QueuedConnection);
 	});
 }
@@ -536,21 +687,32 @@ void JobQueue::rescanFile(qint64 fileId, const QString& filePath, bool triggerRe
 	});
 }
 
-void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes)
+void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
+                                  int exitCode, const QString& log, qint64 savedBytes)
 {
-	const qint64 jobId  = m_currentJobId;
-	const qint64 fileId = m_currentFileId;
+	if (consumeAbortedJob(jobId, storageGroup))
+		return;
+
+	RunningJobSlot* slot = m_runningByGroup.contains(storageGroup)
+	    ? &m_runningByGroup[storageGroup] : nullptr;
+	RemuxJob* remux = slot ? slot->remux : nullptr;
+	if (!remux) {
+		if (auto* senderRemux = qobject_cast<RemuxJob*>(sender()))
+			remux = senderRemux;
+	}
+	if (!remux)
+		return;
+
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
-	const bool   ok        = (exitCode == 0 || exitCode == 1);
-	const bool   mismatch  = m_currentJob->hasTrackMismatch();
+	const bool ok       = (exitCode == 0 || exitCode == 1);
+	const bool mismatch = remux->hasTrackMismatch();
 
 	auto& db = DatabaseManager::instance();
 
 	if (ok && mismatch) {
-		// .tmp is still on disk — probe it and ask user to verify
-		const QString tmpPath    = m_currentJob->tmpOutputPath();
-		const QString finalPath  = m_currentJob->finalOutputPath();
-		const QString srcPath    = m_currentJob->inputFilePath();
+		const QString tmpPath    = remux->tmpOutputPath();
+		const QString finalPath  = remux->finalOutputPath();
+		const QString srcPath    = remux->inputFilePath();
 
 		const auto jobOpt  = db.jobById(jobId);
 		const auto fileOpt = db.fileById(fileId);
@@ -564,15 +726,13 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 		m_reviewSrcPath  = srcPath;
 		m_reviewOrigSize = fileOpt ? fileOpt->sizeBytes : 0;
 		m_reviewExitCode = exitCode;
-		m_reviewWasStaged = m_currentJob->wasStaged();
+		m_reviewWasStaged = remux->wasStaged();
 
 		db.updateJobStatus(jobId, "needs_review", exitCode, log);
 
-		m_currentJob->deleteLater();
-		m_currentJob    = nullptr;
-		m_currentJobId  = -1;
-		m_currentFileId = -1;
-		m_running       = false; // pause queue until user decides
+		remux->deleteLater();
+		releaseSlot(storageGroup);
+		m_running = false; // pause queue until user decides
 
 		emit jobFinished(jobId, false, 0);
 
@@ -618,17 +778,11 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 		settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
 	}
 
-	// Capture paths before deleteLater invalidates the job object
-	const QString finalOutput   = m_currentJob->finalOutputPath();
-	const QString originalInput = m_currentJob->inputFilePath();
+	const QString finalOutput   = remux->finalOutputPath();
+	const QString originalInput = remux->inputFilePath();
 
-	// Clear the current-job pointer BEFORE emitting jobFinished so that
-	// hasActiveJob() returns false inside any synchronous signal handler
-	// (e.g. the close-after-pause path in McMainWindow::closeEvent).
-	m_currentJob->deleteLater();
-	m_currentJob    = nullptr;
-	m_currentJobId  = -1;
-	m_currentFileId = -1;
+	remux->deleteLater();
+	releaseSlot(storageGroup);
 
 	emit jobFinished(jobId, ok, savedBytes);
 
@@ -648,12 +802,9 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	}
 
 	if (m_running && !m_paused) {
-		runNext();
+		dispatchJobs();
 	} else if (m_paused) {
-		// The running job finished but the queue is paused, so we won't start
-		// the next one. If the queue is also exhausted, transition to idle so
-		// the UI doesn't stay stuck in "processing" with m_running=true forever.
-		if (DatabaseManager::instance().queuedJobCount() == 0) {
+		if (DatabaseManager::instance().queuedJobCount() == 0 && !hasActiveJob()) {
 			m_running = false;
 			emit allFinished();
 		}
@@ -719,13 +870,15 @@ void JobQueue::commitReview(qint64 jobId)
 	m_reviewOrigSize = 0;
 	m_reviewWasStaged = false;
 
-	m_finishBusy = true;
+	const int storageGroup = StorageGroupSettings::groupForFileId(fileId);
+	occupySlot(storageGroup, jobId, fileId, 0);
+	m_runningByGroup[storageGroup].finishBusy = true;
 
 	// Rename/delete + the DB status update are filesystem/SQL work with no bearing
 	// on this object's own state — run them off the UI thread, same pattern as the
 	// remux-completion path in RemuxJob::onProcessFinished().
 	QThreadPool::globalInstance()->start(
-	    [this, jobId, fileId, tmpPath, finalPath, srcPath, origSize, exitCode, wasStaged]() {
+	    [this, jobId, fileId, tmpPath, finalPath, srcPath, origSize, exitCode, wasStaged, storageGroup]() {
 		auto& db = DatabaseManager::instance();
 
 		const bool isInPlace = (finalPath == srcPath);
@@ -796,8 +949,8 @@ void JobQueue::commitReview(qint64 jobId)
 		}
 
 		if (renameFailed) {
-			QMetaObject::invokeMethod(this, [this, jobId] {
-				m_finishBusy = false;
+			QMetaObject::invokeMethod(this, [this, storageGroup, jobId] {
+				releaseSlot(storageGroup);
 				emit jobFinished(jobId, false, 0);
 			}, Qt::QueuedConnection);
 			return;
@@ -809,11 +962,9 @@ void JobQueue::commitReview(qint64 jobId)
 			db.updateCalibrationFromJob(jobId);
 		}
 
-		QMetaObject::invokeMethod(this, [this, jobId, fileId, finalPath, isInPlace, savedBytes] {
-			m_finishBusy = false;
+		QMetaObject::invokeMethod(this, [this, storageGroup, jobId, fileId, finalPath, isInPlace, savedBytes] {
+			releaseSlot(storageGroup);
 
-			// AppSettings is a plain in-memory store with no locking — only ever
-			// touch it from the UI thread.
 			if (savedBytes > 0) {
 				auto& settings = AppSettings::instance();
 				const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
@@ -832,7 +983,7 @@ void JobQueue::commitReview(qint64 jobId)
 			}
 
 			if (m_running)
-				runNext();
+				dispatchJobs();
 		}, Qt::QueuedConnection);
 	});
 }
@@ -865,7 +1016,7 @@ void JobQueue::rejectReview(qint64 jobId, bool reanalyze)
 	emit jobFinished(jobId, false, 0);
 
 	if (m_running)
-		runNext();
+		dispatchJobs();
 }
 
 #ifdef QT_DEBUG

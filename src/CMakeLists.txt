@@ -3,6 +3,7 @@ set(MC_SOURCES
 
     # Core
     core/AppSettings.cpp
+    core/StorageGroupSettings.cpp
     core/DatabaseManager.cpp
     core/ExternalTools.cpp
     core/LibraryLoader.cpp

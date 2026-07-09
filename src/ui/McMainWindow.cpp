@@ -33,6 +33,7 @@
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
 #include "core/LibraryLoader.h"
+#include "core/StorageGroupSettings.h"
 #include "core/UpdateChecker.h"
 #include "core/UserProfile.h"
 
@@ -114,6 +115,22 @@ static QString smartSuggestedTitle(const Mc::FileRecord& file)
 			return file.containerTitle;
 	}
 	return Mc::NfoParser::titleFromFilename(file.filename);
+}
+
+// Short card-style label for the status bar while a job is running.
+static QString jobStatusLabel(const Mc::JobDisplayRecord& rec)
+{
+	if (!rec.displayTitle.isEmpty()) {
+		return rec.displayYear > 0
+		    ? QStringLiteral("%1 (%2)").arg(rec.displayTitle).arg(rec.displayYear)
+		    : rec.displayTitle;
+	}
+	const QString stemmed = QFileInfo(rec.filePath).completeBaseName();
+	if (!rec.containerTitle.isEmpty()
+	    && rec.containerTitle.compare(stemmed, Qt::CaseInsensitive) != 0)
+		return rec.containerTitle;
+	const QString folder = QFileInfo(rec.filePath).dir().dirName();
+	return folder.isEmpty() ? rec.filename : folder;
 }
 
 // Streams that will actually remain on disk once already-decided removals are applied —
@@ -253,6 +270,21 @@ private:
 	bool     m_checked = false;
 };
 
+// Repaint the full widget tree synchronously so the first visible frame is
+// already drawn — QListView delegates and other children don't paint until
+// explicitly repainted while the top-level window is still invisible.
+static void flushWidgetRepaints(QWidget* root)
+{
+	if (!root)
+		return;
+	root->ensurePolished();
+	root->repaint();
+	for (QObject* child : root->children()) {
+		if (auto* w = qobject_cast<QWidget*>(child))
+			flushWidgetRepaints(w);
+	}
+}
+
 } // anonymous namespace
 
 namespace Mc {
@@ -260,6 +292,12 @@ namespace Mc {
 McMainWindow::McMainWindow(QWidget* parent)
 	: QMainWindow(parent)
 {
+	// Keep the native HWND off-screen until dismissSplash() has painted the
+	// backing store — otherwise Windows shows a white client area at restored
+	// geometry while the constructor blocks on library load.
+	setAttribute(Qt::WA_DontShowOnScreen, true);
+	setAttribute(Qt::WA_OpaquePaintEvent, true);
+
 	setWindowTitle("MediaCurator");
 	setMinimumSize(900, 600);
 
@@ -268,7 +306,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	if (!firstLaunch) {
 		restoreGeometry(s.value("mainWindow/geometry").toByteArray());
 		restoreState(s.value("mainWindow/state").toByteArray());
-		// Never start hidden/minimized — splash.finish() skips show() when isVisible().
+		// Never start hidden/minimized — dismissSplash() must be able to showNormal().
 		setWindowState(windowState() & ~Qt::WindowMinimized);
 	}
 	// Splitter state is restored after setupUi() creates m_splitter
@@ -360,59 +398,52 @@ McMainWindow::McMainWindow(QWidget* parent)
 	});
 
 	connect(m_jobQueue, &JobQueue::jobStarted, this, [this](qint64 jobId) {
-		for (const auto& j : DatabaseManager::instance().allJobsForPanel()) {
-			if (j.jobId == jobId) { m_currentJobFilename = j.filename; break; }
-		}
+		const auto rec = DatabaseManager::instance().jobDisplayRecordById(jobId);
+		if (rec)
+			m_runningJobNames.insert(jobId, jobStatusLabel(*rec));
+		m_runningJobProgress.insert(jobId, 0);
 		m_queuedAtStart = DatabaseManager::instance().queuedJobCount();
-		m_progressBar->setRange(0, 100);
-		m_progressBar->setValue(0);
-		m_progressBar->setVisible(true);
-		m_statusLabel->setText(tr("Processing '%1'").arg(m_currentJobFilename));
+		updateRemuxStatusBar();
 	});
 
-	connect(m_jobQueue, &JobQueue::progressChanged, this, [this](qint64, int pct) {
-		if (pct >= 100) {
-			// mkvmerge has finished encoding but is still flushing/closing the
-			// output file before the process exits. Switch to an indeterminate
-			// animation so the UI doesn't look frozen at 100%.
-			m_progressBar->setRange(0, 0);
-			m_statusLabel->setText(tr("Finishing '%1'").arg(m_currentJobFilename));
-#ifdef Q_OS_WIN
-			if (m_taskbar)
-				m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_INDETERMINATE);
-#endif
-		} else {
-			m_progressBar->setRange(0, 100);
-			m_progressBar->setValue(pct);
-#ifdef Q_OS_WIN
-			setTaskbarProgress(pct);
-#endif
-		}
+	connect(m_jobQueue, &JobQueue::progressChanged, this, [this](qint64 jobId, int pct) {
+		m_runningJobProgress.insert(jobId, pct);
+		updateRemuxStatusBar();
 	});
 
-	connect(m_jobQueue, &JobQueue::jobFinished, this, [this](qint64, bool success, qint64) {
+	connect(m_jobQueue, &JobQueue::jobFinished, this, [this](qint64 jobId, bool success, qint64) {
 		updateSavedLabel();
-		m_progressBar->setRange(0, 100);
-		m_progressBar->setVisible(false);
-		m_progressBar->setValue(0);
+		const QString failedName = m_runningJobNames.value(jobId);
+		m_runningJobNames.remove(jobId);
+		m_runningJobProgress.remove(jobId);
+
 		if (!success) {
-			m_statusLabel->setText(tr("Job failed for '%1'").arg(m_currentJobFilename));
+			m_progressBar->setRange(0, 100);
+			m_progressBar->setVisible(false);
+			m_progressBar->setValue(0);
+			m_statusLabel->setText(tr("Job failed for '%1'").arg(failedName));
 #ifdef Q_OS_WIN
 			if (m_taskbar) {
 				m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_ERROR);
 			}
 #endif
 		} else if (m_jobQueue->isPaused()) {
+			m_progressBar->setRange(0, 100);
+			m_progressBar->setVisible(false);
+			m_progressBar->setValue(0);
 			// More jobs are waiting but the queue is paused; allFinished won't
 			// fire until the user resumes and the last job completes.
 			m_statusLabel->setText(tr("Paused — click Start to resume"));
 #ifdef Q_OS_WIN
 			clearTaskbarProgress();
 #endif
+		} else if (!m_runningJobNames.isEmpty()) {
+			updateRemuxStatusBar();
+		} else {
+			m_progressBar->setRange(0, 100);
+			m_progressBar->setVisible(false);
+			m_progressBar->setValue(0);
 		}
-		// Non-paused success: runNext() fires synchronously from onJobFinished,
-		// so either jobStarted (next job) or allFinished (queue empty) will
-		// update the status immediately after this handler returns.
 	});
 
 	connect(m_jobQueue, &JobQueue::reviewRequested, this,
@@ -436,14 +467,20 @@ McMainWindow::McMainWindow(QWidget* parent)
 	connect(m_jobQueue, &JobQueue::allFinished, this, [this] {
 		m_progressBar->setVisible(false);
 		m_progressBar->setValue(0);
-		m_currentJobFilename.clear();
+		m_runningJobNames.clear();
+		m_runningJobProgress.clear();
 		updateSavedLabel();
-		const int total    = m_listModel->totalCount();
-		const int proposed = DatabaseManager::instance().totalJobCount();
-		QString msg = tr("All jobs finished — %1 files in library").arg(total);
-		if (proposed > 0)
-			msg += tr(", %1 proposed").arg(proposed);
-		m_statusLabel->setText(msg);
+		const int queued = DatabaseManager::instance().queuedJobCount();
+		if (queued > 0) {
+			m_statusLabel->setText(tr("Stopped — %1 job(s) queued").arg(queued));
+		} else {
+			const int total    = m_listModel->totalCount();
+			const int proposed = DatabaseManager::instance().totalJobCount();
+			QString msg = tr("All jobs finished — %1 files in library").arg(total);
+			if (proposed > 0)
+				msg += tr(", %1 proposed").arg(proposed);
+			m_statusLabel->setText(msg);
+		}
 #ifdef Q_OS_WIN
 		clearTaskbarProgress();
 #endif
@@ -459,6 +496,14 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onPosterReady);
 	connect(&pm, &PosterManager::fanartReady,
 	        m_listModel, &McFileListModel::onFanartReady);
+	connect(&pm, &PosterManager::posterReady, this, [this](qint64, const QString&) {
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->scheduleArtworkPrefetch();
+	});
+	connect(&pm, &PosterManager::fanartReady, this, [this](qint64, const QString&, const QImage&) {
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->scheduleArtworkPrefetch();
+	});
 	connect(&pm, &PosterManager::imdbIdSaved,
 	        m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
@@ -1250,6 +1295,12 @@ void McMainWindow::applyDarkBackgrounds()
 	if (m_listView && m_listView->viewport())
 		fill(m_listView->viewport(), base, base, alt);
 	fill(m_jobPanel, win, base, alt);
+	if (auto* mb = menuBar())
+		fill(mb, win, base, alt);
+	if (auto* sb = statusBar())
+		fill(sb, win, base, alt);
+	for (auto* tb : findChildren<QToolBar*>())
+		fill(tb, win, base, alt);
 }
 
 void McMainWindow::attachSplash(QSplashScreen* splash, const QIcon& appIcon)
@@ -1269,13 +1320,27 @@ void McMainWindow::dismissSplash()
 	if (windowState() & Qt::WindowMinimized)
 		setWindowState(windowState() & ~Qt::WindowMinimized);
 
+	// Paint the full UI while still off-screen so the first visible frame is
+	// already the dark themed surface, not the Win32 default white client area.
+	if (!internalWinId())
+		winId();
+	setNativeWindowBackground();
+	flushWidgetRepaints(this);
+	QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+#ifdef Q_OS_WIN
+	RedrawWindow(reinterpret_cast<HWND>(winId()), nullptr, nullptr,
+	             RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+#endif
+
+	setAttribute(Qt::WA_DontShowOnScreen, false);
+	showNormal();
+	ensureOnScreen();
+
 	if (m_splash) {
-		m_splash->finish(this);
+		m_splash->hide();
 		m_splash = nullptr;
 	}
 
-	showNormal();
-	ensureOnScreen();
 	raise();
 	activateWindow();
 
@@ -1283,7 +1348,6 @@ void McMainWindow::dismissSplash()
 		setWindowIcon(m_startupIcon);
 	if (QWindow* wh = windowHandle())
 		wh->setIcon(m_startupIcon);
-	setNativeWindowBackground();
 
 	QMetaObject::invokeMethod(this, &McMainWindow::completeStartup, Qt::QueuedConnection);
 }
@@ -1320,6 +1384,29 @@ void McMainWindow::paintEvent(QPaintEvent* event)
 	QPainter p(this);
 	p.fillRect(event->rect(), palette().color(QPalette::Window));
 	QMainWindow::paintEvent(event);
+}
+
+bool McMainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
+{
+#ifdef Q_OS_WIN
+	if (eventType == "windows_generic_MSG" || eventType == "windows_dispatcher_MSG") {
+		const auto* msg = static_cast<MSG*>(message);
+		if (msg->message == WM_ERASEBKGND) {
+			const QColor bg = palette().color(QPalette::Window);
+			if (bg.lightness() < 128) {
+				HBRUSH brush = CreateSolidBrush(RGB(bg.red(), bg.green(), bg.blue()));
+				RECT rect;
+				GetClientRect(msg->hwnd, &rect);
+				FillRect(reinterpret_cast<HDC>(msg->wParam), &rect, brush);
+				DeleteObject(brush);
+				if (result)
+					*result = 1;
+				return true;
+			}
+		}
+	}
+#endif
+	return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 void McMainWindow::setNativeWindowBackground()
@@ -1590,8 +1677,12 @@ void McMainWindow::setupStatusBar()
 	m_btnCancelScan = new QPushButton(tr("Cancel Scan"), this);
 	m_btnCancelScan->setVisible(false);
 	connect(m_btnCancelScan, &QPushButton::clicked, this, [this] {
-		m_pendingRoots.clear();  // don't start the next folder after this one finishes
-		if (m_scanWorker) m_scanWorker->cancel();
+		for (auto& g : m_scanGroups)
+			g.pendingRoots.clear();
+		for (auto it = m_scanGroups.begin(); it != m_scanGroups.end(); ++it) {
+			if (it->worker)
+				it->worker->cancel();
+		}
 		m_btnCancelScan->setEnabled(false);
 		m_btnCancelScan->setText(tr("Cancelling…"));
 	});
@@ -1667,17 +1758,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		delete m_loadThread; m_loadThread = nullptr;
 	}
 
-	// Stop the scan worker before destroying the window.
-	// cancel() sets an atomic flag; the worker checks it between files.
-	// We wait up to 8 s for the current FFprobe call to finish naturally;
-	// only then terminate to avoid leaking a child process.
-	if (m_scanThread && m_scanThread->isRunning()) {
-		if (m_scanWorker) m_scanWorker->cancel();
-		if (!m_scanThread->wait(8000)) {
-			m_scanThread->terminate();
-			m_scanThread->wait(1000);
-		}
-	}
+	stopAllScanWorkers(/*waitForThreads=*/true);
 
 	PosterManager::instance().stop();
 	SubtitleManager::instance().stop();
@@ -1712,12 +1793,6 @@ void McMainWindow::showEvent(QShowEvent* event)
 
 void McMainWindow::onScanFolder()
 {
-	if (m_scanThread && m_scanThread->isRunning()) {
-		QMessageBox::information(this, tr("Scan in progress"),
-			tr("A scan is already running. Please wait for it to finish."));
-		return;
-	}
-
 	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 	const QString hint = roots.isEmpty() ? QString() : roots.last();
 
@@ -1726,20 +1801,22 @@ void McMainWindow::onScanFolder()
 		QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
 	);
 	if (raw.isEmpty()) return;
-	const QString folder = QDir::fromNativeSeparators(raw);
+	const QString folder = StorageGroupSettings::normalizedRoot(raw);
 
 	if (!roots.contains(folder))
 		roots << folder;
 	AppSettings::instance().setValue("scan/roots", roots);
 
-	m_newFilesFound.clear();
-	m_scannedSoFar = 0;
-	createScanWorker(folder);
+	if (!isScanning()) {
+		m_newFilesFound.clear();
+		m_scannedSoFar = 0;
+	}
+	enqueueScanRoot(folder, /*quickScan=*/false);
 }
 
 void McMainWindow::onScanLibrary()
 {
-	if (m_scanThread && m_scanThread->isRunning()) {
+	if (isScanning()) {
 		QMessageBox::information(this, tr("Scan in progress"),
 			tr("A scan is already running. Please wait for it to finish."));
 		return;
@@ -1748,21 +1825,16 @@ void McMainWindow::onScanLibrary()
 	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 
 	if (roots.isEmpty()) {
-		// No folders configured yet — redirect to Add Folder
 		onScanFolder();
 		return;
 	}
 
-	m_pendingRoots = roots;
-	m_quickScanPending = false;
-	m_newFilesFound.clear();
-	m_scannedSoFar = 0;
-	createScanWorker(m_pendingRoots.takeFirst());
+	startScanRoots(roots, /*quickScan=*/false);
 }
 
 void McMainWindow::onQuickScan()
 {
-	if (m_scanThread && m_scanThread->isRunning()) {
+	if (isScanning()) {
 		QMessageBox::information(this, tr("Scan in progress"),
 			tr("A scan is already running. Please wait for it to finish."));
 		return;
@@ -1775,11 +1847,7 @@ void McMainWindow::onQuickScan()
 		return;
 	}
 
-	m_pendingRoots = roots;
-	m_quickScanPending = true;
-	m_newFilesFound.clear();
-	m_scannedSoFar = 0;
-	createScanWorker(m_pendingRoots.takeFirst(), /*quickScan=*/true);
+	startScanRoots(roots, /*quickScan=*/true);
 }
 
 void McMainWindow::onRemoveFolder()
@@ -1789,13 +1857,11 @@ void McMainWindow::onRemoveFolder()
 	// Route Add Folder through the existing scan infrastructure — the dialog
 	// is just a view and emits a signal rather than owning its own worker.
 	connect(&dlg, &McManageFoldersDialog::folderAdded, this, [this](const QString& path) {
-		if (m_scanThread && m_scanThread->isRunning()) {
-			m_pendingRoots << path;
-		} else {
+		if (!isScanning()) {
 			m_newFilesFound.clear();
 			m_scannedSoFar = 0;
-			createScanWorker(path);
 		}
+		enqueueScanRoot(path, /*quickScan=*/false);
 	});
 
 	dlg.exec();
@@ -1804,7 +1870,58 @@ void McMainWindow::onRemoveFolder()
 		onRefreshView();
 }
 
-void McMainWindow::createScanWorker(const QString& folderPath, bool quickScan)
+bool McMainWindow::isScanning() const
+{
+	for (auto it = m_scanGroups.cbegin(); it != m_scanGroups.cend(); ++it) {
+		if (it->thread && it->thread->isRunning())
+			return true;
+	}
+	return false;
+}
+
+void McMainWindow::startScanRoots(const QStringList& roots, bool quickScan)
+{
+	m_scanGroups.clear();
+	m_newFilesFound.clear();
+	m_scannedSoFar = 0;
+
+	const QHash<int, QStringList> byGroup = StorageGroupSettings::partitionRootsByGroup(roots);
+	for (auto it = byGroup.cbegin(); it != byGroup.cend(); ++it) {
+		if (it.value().isEmpty())
+			continue;
+		ScanGroupState state;
+		state.quickScan = quickScan;
+		state.pendingRoots = it.value();
+		const QString first = state.pendingRoots.takeFirst();
+		m_scanGroups.insert(it.key(), state);
+		createScanWorkerForGroup(it.key(), first, quickScan);
+	}
+}
+
+void McMainWindow::enqueueScanRoot(const QString& root, bool quickScan)
+{
+	const QString norm  = StorageGroupSettings::normalizedRoot(root);
+	const int     group = StorageGroupSettings::groupForRoot(norm);
+
+	auto it = m_scanGroups.find(group);
+	if (it == m_scanGroups.end()) {
+		ScanGroupState state;
+		state.quickScan = quickScan;
+		m_scanGroups.insert(group, state);
+		createScanWorkerForGroup(group, norm, quickScan);
+		return;
+	}
+
+	if (it->thread && it->thread->isRunning()) {
+		it->pendingRoots << norm;
+		updateScanStatusLabel();
+		return;
+	}
+
+	createScanWorkerForGroup(group, norm, quickScan);
+}
+
+void McMainWindow::createScanWorkerForGroup(int groupId, const QString& folderPath, bool quickScan)
 {
 	const QString exeDir = QCoreApplication::applicationDirPath();
 #ifdef Q_OS_WIN
@@ -1815,58 +1932,127 @@ void McMainWindow::createScanWorker(const QString& folderPath, bool quickScan)
 	const QString ffprobePath = exeDir + "/tools/linux/ffprobe";
 #endif
 
-	m_scanThread = new QThread(this);
-	m_scanWorker = new ScanWorker(ffprobePath);
-	m_scanWorker->setRootPath(folderPath);
-	m_scanWorker->setQuickScan(quickScan);
-	m_scanWorker->moveToThread(m_scanThread);
+	ScanGroupState& state = m_scanGroups[groupId];
+	state.quickScan = quickScan;
 
-	connect(m_scanThread, &QThread::started,   m_scanWorker, &ScanWorker::run);
-	connect(m_scanWorker, &ScanWorker::finished, m_scanThread, &QThread::quit);
-	connect(m_scanWorker, &ScanWorker::finished, m_scanWorker, &QObject::deleteLater);
-	connect(m_scanThread, &QThread::finished,  m_scanThread,  &QObject::deleteLater);
+	auto* thread = new QThread(this);
+	auto* worker = new ScanWorker(ffprobePath);
+	worker->setRootPath(folderPath);
+	worker->setQuickScan(quickScan);
+	worker->moveToThread(thread);
 
-	connect(m_scanWorker, &ScanWorker::progress,       this,        &McMainWindow::onScanProgress);
-	connect(m_scanWorker, &ScanWorker::finished,       this,        &McMainWindow::onScanFinished);
-	connect(m_scanWorker, &ScanWorker::fileProcessed,  m_listModel, &McFileListModel::applyFileUpdate);
-	connect(m_scanWorker, &ScanWorker::imdbIdFound,    m_listModel, &McFileListModel::onImdbIdSaved);
-	connect(m_scanWorker, &ScanWorker::fileRemoved,    m_listModel, &McFileListModel::removeEntry);
-	connect(m_scanWorker, &ScanWorker::posterEnqueueRequested, this,
+	state.thread = thread;
+	state.worker = worker;
+	state.progressCurrent = 0;
+	state.currentFile.clear();
+
+	connect(thread, &QThread::started, worker, &ScanWorker::run);
+	connect(worker, &ScanWorker::finished, thread, &QThread::quit);
+	connect(worker, &ScanWorker::finished, worker, &QObject::deleteLater);
+	connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+
+	connect(worker, &ScanWorker::progress, this,
+	        [this, groupId](int current, int total, const QString& file) {
+		onScanProgressForGroup(groupId, current, total, file);
+	});
+	connect(worker, &ScanWorker::finished, this,
+	        [this, groupId](int scanned, int added, int updated, int failed, int skipped, int removed,
+	                        QStringList newFiles) {
+		onScanFinishedForGroup(groupId, scanned, added, updated, failed, skipped, removed,
+		                       std::move(newFiles));
+	});
+	connect(worker, &ScanWorker::fileProcessed,  m_listModel, &McFileListModel::applyFileUpdate);
+	connect(worker, &ScanWorker::imdbIdFound,    m_listModel, &McFileListModel::onImdbIdSaved);
+	connect(worker, &ScanWorker::fileRemoved,    m_listModel, &McFileListModel::removeEntry);
+	connect(worker, &ScanWorker::posterEnqueueRequested, this,
 	        [](qint64 id) { PosterManager::instance().enqueue(id); }, Qt::QueuedConnection);
-	connect(m_scanWorker, &ScanWorker::subtitleEnqueueRequested, this,
+	connect(worker, &ScanWorker::subtitleEnqueueRequested, this,
 	        [](qint64 id) { SubtitleManager::instance().enqueue(id); }, Qt::QueuedConnection);
-	connect(m_scanWorker, &ScanWorker::posterEnqueueBatchRequested, this,
+	connect(worker, &ScanWorker::posterEnqueueBatchRequested, this,
 	        [](const Mc::FileIdList& ids) { PosterManager::instance().enqueueBatch(ids); },
 	        Qt::QueuedConnection);
-	connect(m_scanWorker, &ScanWorker::subtitleEnqueueBatchRequested, this,
+	connect(worker, &ScanWorker::subtitleEnqueueBatchRequested, this,
 	        [](const Mc::FileIdList& ids) { SubtitleManager::instance().enqueueBatch(ids); },
 	        Qt::QueuedConnection);
 
 	setScanningState(true);
-	m_scanThread->start();
+	thread->start();
+	updateScanStatusLabel();
 }
 
-void McMainWindow::onScanProgress(int current, int total, const QString& currentFile)
+void McMainWindow::onScanProgressForGroup(int groupId, int current, int total,
+                                          const QString& currentFile)
 {
+	auto it = m_scanGroups.find(groupId);
+	if (it == m_scanGroups.end())
+		return;
+
+	it->progressCurrent = current;
+	it->currentFile     = currentFile;
+
 	const int sessionCurrent = m_scannedSoFar + current;
-	m_progressBar->setMaximum(total);   // 0 → indeterminate animated bar
+	m_progressBar->setMaximum(total);
 	m_progressBar->setValue(current);
-	if (total > 0)
-		m_statusLabel->setText(tr("Scanning %1/%2: %3").arg(sessionCurrent).arg(total).arg(currentFile));
-	else
-		m_statusLabel->setText(tr("Scanning (%1 found): %2").arg(sessionCurrent).arg(currentFile));
+
+	if (m_scanGroups.size() == 1) {
+		if (total > 0)
+			m_statusLabel->setText(tr("Scanning %1/%2: %3")
+			                           .arg(sessionCurrent).arg(total).arg(currentFile));
+		else
+			m_statusLabel->setText(tr("Scanning (%1 found): %2")
+			                           .arg(sessionCurrent).arg(currentFile));
+	} else {
+		updateScanStatusLabel();
+	}
 }
 
-void McMainWindow::onScanFinished(int scanned, int /*added*/, int /*updated*/, int /*failed*/, int /*skipped*/, int /*removed*/, QStringList newFiles)
+void McMainWindow::updateScanStatusLabel()
 {
-	m_scanThread = nullptr;
-	m_scanWorker = nullptr;
+	int activeGroups = 0;
+	QStringList parts;
+	for (auto it = m_scanGroups.cbegin(); it != m_scanGroups.cend(); ++it) {
+		if (!it->thread || !it->thread->isRunning())
+			continue;
+		++activeGroups;
+		const QString file = it->currentFile.isEmpty() ? tr("starting…") : it->currentFile;
+		parts << tr("Storage %1: %2").arg(it.key()).arg(file);
+	}
+
+	if (activeGroups == 0) {
+		m_statusLabel->setText(tr("Scanning…"));
+		return;
+	}
+	if (activeGroups == 1 && !parts.isEmpty())
+		m_statusLabel->setText(tr("Scanning — %1").arg(parts.first()));
+	else
+		m_statusLabel->setText(tr("Scanning %1 storage groups — %2")
+		                           .arg(activeGroups).arg(parts.join(QStringLiteral("; "))));
+}
+
+void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*/, int /*updated*/,
+                                          int /*failed*/, int /*skipped*/, int /*removed*/,
+                                          QStringList newFiles)
+{
+	auto it = m_scanGroups.find(groupId);
+	if (it == m_scanGroups.end())
+		return;
+
+	it->thread = nullptr;
+	it->worker = nullptr;
 	m_newFilesFound << newFiles;
 	m_scannedSoFar += scanned;
 
-	if (!m_pendingRoots.isEmpty()) {
-		m_statusLabel->setText(tr("Folder scan done — %1 more to go…").arg(m_pendingRoots.size()));
-		createScanWorker(m_pendingRoots.takeFirst(), m_quickScanPending);
+	if (!it->pendingRoots.isEmpty()) {
+		const QString next = it->pendingRoots.takeFirst();
+		updateScanStatusLabel();
+		createScanWorkerForGroup(groupId, next, it->quickScan);
+		return;
+	}
+
+	m_scanGroups.erase(it);
+
+	if (!m_scanGroups.isEmpty()) {
+		updateScanStatusLabel();
 		return;
 	}
 
@@ -1881,7 +2067,6 @@ void McMainWindow::onScanFinished(int scanned, int /*added*/, int /*updated*/, i
 		box.exec();
 	}
 
-	// Model was updated incrementally via fileProcessed/fileRemoved signals — no full reload needed.
 	m_jobPanel->refresh();
 	updateSavedLabel();
 
@@ -1896,6 +2081,27 @@ void McMainWindow::onScanFinished(int scanned, int /*added*/, int /*updated*/, i
 	if (jobCount > 0)
 		text += tr(", %1 in queue").arg(jobCount);
 	m_statusLabel->setText(text);
+}
+
+void McMainWindow::stopAllScanWorkers(bool waitForThreads)
+{
+	for (auto it = m_scanGroups.begin(); it != m_scanGroups.end(); ++it) {
+		it->pendingRoots.clear();
+		if (it->worker)
+			it->worker->cancel();
+	}
+
+	if (!waitForThreads)
+		return;
+
+	for (auto it = m_scanGroups.begin(); it != m_scanGroups.end(); ++it) {
+		if (!it->thread || !it->thread->isRunning())
+			continue;
+		if (!it->thread->wait(8000))
+			it->thread->terminate();
+		it->thread->wait(1000);
+	}
+	m_scanGroups.clear();
 }
 
 void McMainWindow::onRefreshView()
@@ -1927,9 +2133,20 @@ void McMainWindow::startLibraryLoader()
 	// so the model shows them correctly and the user can retry them.
 	db.recoverRunningJobs();
 
+	// Poster/fanart paths must be in the model before the first cards paint —
+	// otherwise every card flashes a grey placeholder until LibraryLoader's
+	// metaReady arrives on a background thread.
+	m_listModel->initMeta(db.allDonePosterPaths(),
+	                      db.allKnownImdbIds(),
+	                      db.proposedJobFileIds(),
+	                      db.allRatings(),
+	                      db.allDoneFanartPaths());
+
 	// ── First page: library + queue (synchronous, splash still visible) ───────
-	// Keep this block as lean as possible — only the two paged queries.
-	const auto firstFiles = db.allFilesPaged(0, kFirstPageSize);
+	// Must use the same sort order the model itself sorts by (persisted setting,
+	// already applied above) — otherwise the "first page" is alphabetically-first,
+	// not viewport-first, and doesn't match what the model actually shows on top.
+	const auto firstFiles = db.allFilesPaged(0, kFirstPageSize, m_listModel->sortOrder());
 	{
 		if (!firstFiles.isEmpty()) {
 			QList<qint64> ids;
@@ -1945,6 +2162,9 @@ void McMainWindow::startLibraryLoader()
 		}
 		m_jobPanel->refreshPaged(kFirstPageSize);   // uses batch streams — fast
 	}
+
+	if (auto* cardDelegate = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+		cardDelegate->prefetchVisibleArtwork();
 
 	// Promote visible first-page items to the front of the poster/fanart queue.
 	// Job queue first, then library — library ends up at the very front since each prepend wins.
@@ -1988,7 +2208,7 @@ void McMainWindow::startLibraryLoader()
 	// not kFirstPageSize — so LibraryLoader's total count is correct when the
 	// DB has fewer files than one full page (e.g. empty DB → offset 0, total 0).
 	m_loadThread = new QThread;   // no parent — we control lifetime explicitly
-	m_loader     = new LibraryLoader(qMin(kFirstPageSize, dbTotal));
+	m_loader     = new LibraryLoader(qMin(kFirstPageSize, dbTotal), m_listModel->sortOrder());
 	m_loader->moveToThread(m_loadThread);
 
 	// Normal-completion cleanup: loader emits finished → thread quits → both
@@ -2011,6 +2231,8 @@ void McMainWindow::startLibraryLoader()
 	               const QHash<qint64, double>& ratings,
 	               const QHash<qint64, QString>& fanartPaths) {
 		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths);
+		if (auto* cardDelegate = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			cardDelegate->prefetchVisibleArtwork();
 	});
 
 	connect(loader, &LibraryLoader::pageReady, this,
@@ -2022,7 +2244,10 @@ void McMainWindow::startLibraryLoader()
 			m_listModel->applyFileUpdate(f, streams.value(f.id));
 		if (m_listView) {
 			m_listView->setUpdatesEnabled(true);
-			m_listView->viewport()->update();
+			if (auto* cardDelegate = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+				cardDelegate->scheduleArtworkPrefetch();
+			else
+				m_listView->viewport()->update();
 		}
 	});
 
@@ -2435,6 +2660,72 @@ void McMainWindow::updateSavedLabel()
 	}
 	m_savedLabel->setText(text);
 	m_savedLabel->setVisible(true);
+}
+
+void McMainWindow::updateRemuxStatusBar()
+{
+	const int n = m_runningJobNames.size();
+	if (n == 0) {
+		m_progressBar->setVisible(false);
+		return;
+	}
+
+	m_progressBar->setVisible(true);
+
+	int finishing = 0;
+	int progressSum = 0;
+	int progressCount = 0;
+	for (auto it = m_runningJobNames.cbegin(); it != m_runningJobNames.cend(); ++it) {
+		const int pct = m_runningJobProgress.value(it.key(), 0);
+		if (pct >= 100)
+			++finishing;
+		else {
+			progressSum += pct;
+			++progressCount;
+		}
+	}
+
+	if (n == 1) {
+		const auto it = m_runningJobNames.cbegin();
+		const qint64 jobId = it.key();
+		const QString name = it.value();
+		const int pct = m_runningJobProgress.value(jobId, 0);
+		if (pct >= 100) {
+			m_progressBar->setRange(0, 0);
+			m_statusLabel->setText(tr("Finishing '%1'").arg(name));
+#ifdef Q_OS_WIN
+			if (m_taskbar)
+				m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_INDETERMINATE);
+#endif
+		} else {
+			m_progressBar->setRange(0, 100);
+			m_progressBar->setValue(pct);
+			m_statusLabel->setText(tr("Processing '%1'").arg(name));
+#ifdef Q_OS_WIN
+			setTaskbarProgress(pct);
+#endif
+		}
+		return;
+	}
+
+	if (finishing == n) {
+		m_progressBar->setRange(0, 0);
+		m_statusLabel->setText(tr("Finishing %1 jobs").arg(n));
+#ifdef Q_OS_WIN
+		if (m_taskbar)
+			m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_INDETERMINATE);
+#endif
+		return;
+	}
+
+	const int avgPct = progressCount > 0 ? progressSum / progressCount : 0;
+	m_progressBar->setRange(0, 100);
+	m_progressBar->setValue(avgPct);
+#ifdef Q_OS_WIN
+	setTaskbarProgress(avgPct);
+#endif
+
+	m_statusLabel->setText(tr("Processing %1 jobs").arg(n));
 }
 
 void McMainWindow::updateActionStates()

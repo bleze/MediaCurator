@@ -283,6 +283,10 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 		beginInsertRows({}, insertPos, insertPos);
 		m_entries.insert(insertPos, entry);
 		endInsertRows();
+		const QModelIndex idx = index(insertPos);
+		if (m_posterPaths.contains(fileId) || m_fanartPaths.contains(fileId)) {
+			emit dataChanged(idx, idx, {PosterRole, PosterVersionRole, FanartRole});
+		}
 	}
 }
 

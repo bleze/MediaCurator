@@ -1,4 +1,5 @@
 ﻿#include "engine/PosterManager.h"
+#include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "scanner/NfoParser.h"
 
@@ -18,11 +19,106 @@
 #include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QMutex>
 #include <QThread>
-#include <QTimer>
 #include <QDebug>
 
+#include <optional>
+
 namespace Mc {
+
+// Verify cached poster/fanart files still exist; reset DB rows for missing files.
+static void resetMissingPosterMediaInDb()
+{
+	{
+		const QHash<qint64, QString> paths = DatabaseManager::instance().allDonePosterPaths();
+		QSet<QString> checked;
+		for (const QString& path : paths) {
+			if (path.isEmpty() || checked.contains(path)) continue;
+			checked.insert(path);
+			if (!QFile::exists(path))
+				DatabaseManager::instance().clearPosterPath(path);
+		}
+	}
+	{
+		const QHash<qint64, QString> paths = DatabaseManager::instance().allDoneFanartPaths();
+		QSet<QString> checked;
+		for (const QString& path : paths) {
+			if (path.isEmpty() || checked.contains(path)) continue;
+			checked.insert(path);
+			if (!QFile::exists(path))
+				DatabaseManager::instance().clearFanartPath(path);
+		}
+	}
+}
+
+// ── Shared work queue (all poster workers pull from this) ───────────────────────
+
+class PosterWorkQueue : public QObject
+{
+	Q_OBJECT
+public:
+	explicit PosterWorkQueue(QObject* parent = nullptr) : QObject(parent) {}
+
+	void enqueueFile(qint64 fileId)
+	{
+		if (fileId == -1) {
+			loadPendingFromDb();
+			emit workAvailable();
+			return;
+		}
+		if (fileId <= 0) return;
+		{
+			QMutexLocker lock(&m_mutex);
+			m_queue.removeOne(fileId);
+			m_queue.prepend(fileId);
+		}
+		emit workAvailable();
+	}
+
+	void enqueueBatch(const QList<qint64>& fileIds)
+	{
+		if (fileIds.isEmpty()) return;
+		{
+			QMutexLocker lock(&m_mutex);
+			for (qint64 id : fileIds) {
+				if (id > 0 && !m_queue.contains(id))
+					m_queue.append(id);
+			}
+		}
+		emit workAvailable();
+	}
+
+	void loadPendingFromDb()
+	{
+		QMutexLocker lock(&m_mutex);
+		for (qint64 id : DatabaseManager::instance().fileIdsNeedingPosters()) {
+			if (!m_queue.contains(id))
+				m_queue.append(id);
+		}
+	}
+
+	[[nodiscard]] std::optional<qint64> takeNext()
+	{
+		QMutexLocker lock(&m_mutex);
+		if (m_queue.isEmpty())
+			return std::nullopt;
+		return m_queue.takeFirst();
+	}
+
+	[[nodiscard]] bool isEmpty() const
+	{
+		QMutexLocker lock(&m_mutex);
+		return m_queue.isEmpty();
+	}
+
+signals:
+	void workAvailable();
+
+private:
+	mutable QMutex m_mutex;
+	QList<qint64>  m_queue;
+};
 
 // ── PosterWorker ──────────────────────────────────────────────────────────────
 
@@ -30,8 +126,9 @@ class PosterWorker : public QObject
 {
 	Q_OBJECT
 public:
-	explicit PosterWorker(const QString& tmdbApiKey, QObject* parent = nullptr)
+	explicit PosterWorker(PosterWorkQueue* queue, const QString& tmdbApiKey, QObject* parent = nullptr)
 	    : QObject(parent)
+	    , m_queue(queue)
 	    , m_tmdbApiKey(tmdbApiKey)
 	{
 		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -44,49 +141,15 @@ public:
 public slots:
 	void startProcessing()
 	{
-		m_nam   = new QNetworkAccessManager(this);
-		m_timer = new QTimer(this);
-		m_timer->setSingleShot(false);
-		m_timer->setInterval(0);
-		connect(m_timer, &QTimer::timeout, this, &PosterWorker::processNext);
-
-		if (!m_tmdbApiKey.isEmpty()) {
-			resetMissingMediaInDb();
-			loadPending();
-			if (!m_queue.isEmpty()) m_timer->start();
-		}
-	}
-
-	// For every DB row that records an image_path or fanart_path, verify the file exists.
-	// If not, reset the record so fileIdsNeedingPosters() re-queues the file for download.
-	void resetMissingMediaInDb()
-	{
-		{
-			const QHash<qint64, QString> paths = DatabaseManager::instance().allDonePosterPaths();
-			QSet<QString> checked;
-			for (const QString& path : paths) {
-				if (path.isEmpty() || checked.contains(path)) continue;
-				checked.insert(path);
-				if (!QFile::exists(path))
-					DatabaseManager::instance().clearPosterPath(path);
-			}
-		}
-		{
-			const QHash<qint64, QString> paths = DatabaseManager::instance().allDoneFanartPaths();
-			QSet<QString> checked;
-			for (const QString& path : paths) {
-				if (path.isEmpty() || checked.contains(path)) continue;
-				checked.insert(path);
-				if (!QFile::exists(path))
-					DatabaseManager::instance().clearFanartPath(path);
-			}
-		}
+		m_nam = new QNetworkAccessManager(this);
+		connect(m_queue, &PosterWorkQueue::workAvailable,
+		        this, &PosterWorker::tryProcessNext, Qt::QueuedConnection);
+		tryProcessNext();
 	}
 
 	void stop()
 	{
 		m_stopping = true;
-		if (m_timer) m_timer->stop();
 		if (m_currentReply) {
 			m_currentReply->abort();
 			m_currentReply = nullptr;
@@ -95,32 +158,6 @@ public slots:
 
 	void setTmdbApiKey(const QString& key) { m_tmdbApiKey = key; }
 
-	void enqueueFile(qint64 fileId)
-	{
-		if (m_stopping) return;
-		if (fileId == -1) {
-			// Triggered when the TMDB key is set for the first time — load every
-			// file that is still pending or was previously marked "no_poster".
-			loadPending();
-		} else if (fileId > 0) {
-			m_queue.removeOne(fileId);
-			m_queue.prepend(fileId);
-		}
-		if (m_timer && !m_timer->isActive() && !m_queue.isEmpty())
-			m_timer->start();
-	}
-
-	void enqueueBatch(const QList<qint64>& fileIds)
-	{
-		if (m_stopping || fileIds.isEmpty()) return;
-		for (qint64 id : fileIds) {
-			if (id > 0 && !m_queue.contains(id))
-				m_queue.append(id);
-		}
-		if (m_timer && !m_timer->isActive() && !m_queue.isEmpty())
-			m_timer->start();
-	}
-
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
 	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
@@ -128,39 +165,24 @@ signals:
 	void imdbIdSaved(qint64 fileId, QString imdbId);
 
 private slots:
-	void processNext()
+	void tryProcessNext()
 	{
-		if (m_stopping) { m_timer->stop(); return; }
-		// Guard against re-entry: the 0ms timer fires again while QEventLoop::exec()
-		// inside fetchHttp is blocking, which would start processing the next file
-		// concurrently on the same thread — causing multiple simultaneous HTTP calls
-		// and recursive event processing. The extra timer fires are harmless no-ops;
-		// the next real iteration is scheduled when this one returns.
-		if (m_processing) return;
+		if (m_stopping || m_processing)
+			return;
 
-		if (m_queue.isEmpty()) {
-			loadPending();
-			if (m_queue.isEmpty()) { m_timer->stop(); return; }
-		}
+		const auto fileId = m_queue->takeNext();
+		if (!fileId)
+			return;
 
-		// Stop the timer for the duration of processFile so the 0-ms interval
-		// doesn't queue thousands of no-op timeout events during QEventLoop::exec().
 		m_processing = true;
-		m_timer->stop();
-		const qint64 fileId = m_queue.takeFirst();
-		processFile(fileId);
+		processFile(*fileId);
 		m_processing = false;
+
 		if (!m_stopping)
-			m_timer->start();
+			QMetaObject::invokeMethod(this, &PosterWorker::tryProcessNext, Qt::QueuedConnection);
 	}
 
 private:
-	void loadPending()
-	{
-		for (qint64 id : DatabaseManager::instance().fileIdsNeedingPosters())
-			if (!m_queue.contains(id)) m_queue.append(id);
-	}
-
 	void processFile(qint64 fileId)
 	{
 		const auto fileOpt = DatabaseManager::instance().fileById(fileId);
@@ -569,10 +591,9 @@ private:
 		return true;
 	}
 
+	PosterWorkQueue*       m_queue        = nullptr;
 	QNetworkAccessManager* m_nam          = nullptr;
-	QTimer*                m_timer        = nullptr;
 	QNetworkReply*         m_currentReply = nullptr;
-	QList<qint64>          m_queue;
 	QString                m_tmdbApiKey;
 	QString                m_cacheDir;
 	QString                m_fanartDir;
@@ -594,9 +615,16 @@ PosterManager::PosterManager(QObject* parent)
 
 void PosterManager::start(const QString& tmdbApiKey)
 {
-	if (m_thread) return;
+	if (!m_workers.isEmpty()) return;
 
 	m_tmdbApiKey = tmdbApiKey;
+	m_parallelWorkers = qBound(1,
+	    AppSettings::instance().value(QStringLiteral("poster/parallelWorkers"), 4).toInt(),
+	    12);
+
+	resetMissingPosterMediaInDb();
+
+	m_queue = new PosterWorkQueue(this);
 
 	// Persistent main-thread NAM used for fast direct poster fetches in refresh().
 	// connectToHostEncrypted pre-warms the TLS session with image.tmdb.org so the
@@ -605,46 +633,93 @@ void PosterManager::start(const QString& tmdbApiKey)
 	if (!tmdbApiKey.isEmpty())
 		m_nam->connectToHostEncrypted(QStringLiteral("image.tmdb.org"));
 
-	m_worker     = new PosterWorker(tmdbApiKey);
-	m_thread     = new QThread(this);
-	m_worker->moveToThread(m_thread);
+	startWorkerPool();
 
-	connect(m_thread, &QThread::started,  m_worker, &PosterWorker::startProcessing);
-	connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
+	if (!tmdbApiKey.isEmpty())
+		m_queue->enqueueFile(-1);
+}
 
-	connect(m_worker, &PosterWorker::posterReady,
-	        this,     &PosterManager::posterReady);
-	connect(m_worker, &PosterWorker::fanartReady,
-	        this,     &PosterManager::fanartReady);
-	connect(m_worker, &PosterWorker::tmdbDataReady,
-	        this,     &PosterManager::tmdbDataReady);
-	connect(m_worker, &PosterWorker::imdbIdSaved,
-	        this,     &PosterManager::imdbIdSaved);
+void PosterManager::startWorkerPool()
+{
+	while (m_workers.size() < m_parallelWorkers) {
+		auto* thread = new QThread(this);
+		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey);
+		worker->moveToThread(thread);
 
-	connect(this, &PosterManager::workerTmdbKeyChanged,
-	        m_worker, &PosterWorker::setTmdbApiKey,
-	        Qt::QueuedConnection);
-	connect(this, &PosterManager::workerEnqueueFile,
-	        m_worker, &PosterWorker::enqueueFile,
-	        Qt::QueuedConnection);
-	connect(this, &PosterManager::workerEnqueueBatch,
-	        m_worker, &PosterWorker::enqueueBatch,
-	        Qt::QueuedConnection);
-	connect(this, &PosterManager::workerStop,
-	        m_worker, &PosterWorker::stop,
-	        Qt::QueuedConnection);
+		connect(thread, &QThread::started,  worker, &PosterWorker::startProcessing);
+		connect(thread, &QThread::finished, worker, &QObject::deleteLater);
 
-	m_thread->start();
+		connect(worker, &PosterWorker::posterReady,
+		        this,     &PosterManager::posterReady);
+		connect(worker, &PosterWorker::fanartReady,
+		        this,     &PosterManager::fanartReady);
+		connect(worker, &PosterWorker::tmdbDataReady,
+		        this,     &PosterManager::tmdbDataReady);
+		connect(worker, &PosterWorker::imdbIdSaved,
+		        this,     &PosterManager::imdbIdSaved);
+
+		connect(this, &PosterManager::workerTmdbKeyChanged,
+		        worker, &PosterWorker::setTmdbApiKey,
+		        Qt::QueuedConnection);
+		connect(this, &PosterManager::workerStop,
+		        worker, &PosterWorker::stop,
+		        Qt::QueuedConnection);
+
+		m_workers.append({thread, worker});
+		thread->start();
+	}
+}
+
+void PosterManager::stopWorkerPool(bool wait)
+{
+	if (m_workers.isEmpty()) return;
+
+	emit workerStop();
+	for (WorkerSlot& slot : m_workers) {
+		if (!slot.thread) continue;
+		slot.thread->quit();
+		if (wait && !slot.thread->wait(5000)) {
+			slot.thread->terminate();
+			slot.thread->wait(1000);
+		}
+		slot.thread = nullptr;
+		slot.worker = nullptr;
+	}
+	m_workers.clear();
 }
 
 void PosterManager::stop()
 {
-	if (!m_thread || !m_thread->isRunning()) return;
-	emit workerStop();
-	m_thread->quit();
-	if (!m_thread->wait(5000)) {
-		m_thread->terminate();
-		m_thread->wait(1000);
+	stopWorkerPool(true);
+}
+
+void PosterManager::setParallelWorkers(int count)
+{
+	count = qBound(1, count, 12);
+	if (count == m_parallelWorkers) {
+		if (m_workers.isEmpty())
+			AppSettings::instance().setValue(QStringLiteral("poster/parallelWorkers"), count);
+		return;
+	}
+
+	m_parallelWorkers = count;
+	AppSettings::instance().setValue(QStringLiteral("poster/parallelWorkers"), count);
+
+	if (m_workers.isEmpty()) return;
+
+	startWorkerPool();
+
+	while (m_workers.size() > m_parallelWorkers) {
+		WorkerSlot slot = m_workers.takeLast();
+		if (slot.worker)
+			QMetaObject::invokeMethod(slot.worker, "stop", Qt::QueuedConnection);
+		if (slot.thread) {
+			slot.thread->quit();
+			if (!slot.thread->wait(5000)) {
+				slot.thread->terminate();
+				slot.thread->wait(1000);
+			}
+		}
 	}
 }
 
@@ -658,19 +733,20 @@ void PosterManager::setTmdbApiKey(const QString& key)
 		DatabaseManager::instance().resetNoPosterRecords();
 
 	emit workerTmdbKeyChanged(key);
-	if (!key.isEmpty() && m_worker)
-		emit workerEnqueueFile(-1);
+	if (!key.isEmpty() && m_queue)
+		m_queue->enqueueFile(-1);
 }
 
 void PosterManager::enqueue(qint64 fileId)
 {
-	emit workerEnqueueFile(fileId);
+	if (m_queue)
+		m_queue->enqueueFile(fileId);
 }
 
 void PosterManager::enqueueBatch(const QList<qint64>& fileIds)
 {
-	if (fileIds.isEmpty()) return;
-	emit workerEnqueueBatch(fileIds);
+	if (m_queue)
+		m_queue->enqueueBatch(fileIds);
 }
 
 void PosterManager::refresh(qint64 fileId, const QString& posterPath,
@@ -757,8 +833,8 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 		pr.voteCount    = voteCount;
 		DatabaseManager::instance().upsertPosterRecord(pr);
 		emit posterReady(fileId, outPath);
-		if (fanartTmdbPath.isEmpty())
-			emit workerEnqueueFile(fileId);
+		if (fanartTmdbPath.isEmpty() && m_queue)
+			m_queue->enqueueFile(fileId);
 		return true;
 	};
 
@@ -804,10 +880,12 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 						pr.voteCount   = voteCount;
 						DatabaseManager::instance().upsertPosterRecord(pr);
 						emit posterReady(fileId, outPath);
-						if (fanartTmdbPath.isEmpty())
-							emit workerEnqueueFile(fileId);
-						else
+						if (fanartTmdbPath.isEmpty()) {
+							if (m_queue)
+								m_queue->enqueueFile(fileId);
+						} else {
 							schedFanart();
+						}
 					}
 				}
 			} else {
@@ -818,10 +896,11 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 		return;
 	}
 
-	// Path 3 — no poster_path known: hand off to the worker for a full TMDB lookup.
+	// Path 3 — no poster_path known: hand off to the worker pool for a full TMDB lookup.
 	// Covers "Refresh Poster" from the context menu when no .nfo exists yet.
 	DatabaseManager::instance().resetPosterForFile(fileId);
-	emit workerEnqueueFile(fileId);
+	if (m_queue)
+		m_queue->enqueueFile(fileId);
 }
 
 } // namespace Mc

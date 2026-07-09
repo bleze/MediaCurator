@@ -6,6 +6,7 @@ class QComboBox;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QSpinBox;
 
 namespace Mc {
 
@@ -61,6 +62,8 @@ private:
 	QLineEdit*   m_editOsPassword;
 	QCheckBox*   m_chkAutoDownloadSubs;
 	QCheckBox*   m_chkAutoTrack;
+	QSpinBox*    m_spinScanGroups;
+	QSpinBox*    m_spinPosterWorkers;
 };
 
 } // namespace Mc

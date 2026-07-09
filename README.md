@@ -27,6 +27,7 @@ After setting rules to retain only english and danish audio and subtitle tracks 
 ## Features
 
 - **Library scanning** — Point MediaCurator at a folder and it catalogues every video file with full stream information (codec, language, channels, resolution, HDR format). Incremental rescans skip unchanged files.
+- **Storage groups** — Assign each watched folder to a **Storage Group** in **Manage Folders**. Group folders that share the same drive or NAS volume together; different groups can scan and remux in parallel, while folders in the same group are processed one at a time. Configure how many groups (2–4) appear in **Settings → Performance**. Before starting a remux, MediaCurator checks that the target folder (and local staging folder, if enabled) has enough free space.
 - **Smart rule engine** — Configurable rules decide which tracks to keep. Examples: keep any English audio, keep the highest-quality track regardless of language, never remove the only audio track, always keep forced subtitles.
 - **File card view** — Each file is shown as a card with colour-coded badges for video, audio, and subtitle streams. Streams proposed for removal are shown with a strikethrough. Right-click any badge to manually override the rule decision.
 - **Stream flag editing** — Toggle Default, Forced, SDH, Commentary, and Original flags on any track directly from the card. Changes are applied losslessly via mkvpropedit (tag edit) or embedded into the next remux — no re-encode needed.
@@ -34,11 +35,11 @@ After setting rules to retain only english and danish audio and subtitle tracks 
 - **Sidecar subtitle support** — External `.srt`/`.ass`/`.sup` files alongside a video are detected automatically, shown as subtitle badges on the card, and absorbed into the output `.mkv` when a remux job runs.
 - **ISO and non-MKV support** — Blu-ray ISO, DVD ISO, MP4, AVI, and other container formats are fully supported. The output is always a clean `.mkv`; the original file is replaced on success.
 - **Cover-art removal** — Embedded cover-art video streams (MJPEG or PNG, common in rips) are detected and can be stripped to save a few MB per file.
-- **Job queue** — Proposed removals are queued as jobs. Review them before running. Right-click any queued job to start it immediately, retry failed jobs, or remove it. Cancel individual jobs or the whole queue.
+- **Job queue** — Proposed removals are queued as jobs. Review them before running. Jobs in different storage groups can run in parallel (one active job per group). Right-click any queued job to start it immediately when its group is idle, retry failed jobs, or remove it. Cancel individual jobs or the whole queue.
 - **Advanced filtering & sorting** — Quick-filter pills for 4K, Dolby Vision, HDR, Atmos, TrueHD, DTS-HD, and DTS:X. Text search covers filenames, folder names, and stream metadata. Sort by name, newest, oldest, or largest. Status filter shows all files, only those with pending proposals, or only those missing a poster.
 - **"What If" simulation** — Run the rule engine across your entire library without creating any jobs. Preview the number of affected files, tracks to be removed, and estimated GB saved before committing to anything.
 - **Ignore files** — Right-click any card to hide a file from the library (useful for extras and bonus content). Ignored files can be revealed again with a toggle.
-- **Poster art** — Posters are fetched from TMDB automatically when an NFO/IMDb ID is available, or you can double-click the poster column to search and link a movie. Posters are cached locally.
+- **Poster art** — Posters are fetched from TMDB automatically when an NFO/IMDb ID is available, or you can double-click the poster column to search and link a movie. Posters are cached locally. Multiple TMDB downloads run in parallel (configurable 1–12 workers in **Settings → Performance**).
 - **Backdrop art** — Pick a backdrop for any matched movie from a TMDB thumbnail grid; it's cached locally and shown as a dimmed background behind the file card.
 - **IMDb / TMDB integration** — Search TMDB by title, browse results with poster thumbnails, and save the IMDb ID to a Kodi-compatible NFO file alongside the video.
 - **VLC integration** — Play any file directly from the library view.
@@ -121,4 +122,4 @@ If MediaCurator saves you money on storage or just makes managing your media lib
 
 - **Fanart export to disk** — save the selected backdrop as `fanart.jpg` (Kodi) / `<title>-fanart.jpg` (Plex) next to the movie file, so external media centers pick it up (in-app backdrop selection and card display are already supported)
 - **Job history** — persistent log of all completed jobs, viewable in a separate History tab
-- **Parallel jobs** — configurable worker count (2–4) for faster processing on NAS/RAID setups
+- **Per-group job concurrency tuning** — optional cap on how many storage groups may remux at once (today: all configured groups may run in parallel)
