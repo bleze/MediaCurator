@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QSet>
 #include <QString>
 
@@ -41,13 +42,18 @@ QStringList ActionEngine::buildCommand(const FileDecision& decision, const QStri
 	QStringList keepAudio, keepSub, keepVideo;
 	bool hasAudio = false, hasSub = false;
 	bool anyVideoRemoved = false;
+	bool coverArtRemoved = false;
 
 	for (const TrackDecision& td : decision.tracks) {
 		if (td.stream.isExternal) continue;  // sidecar file — not in container, handled separately
 		if (td.stream.codecType == "audio")    hasAudio = true;
 		if (td.stream.codecType == "subtitle") hasSub   = true;
-		if (td.stream.codecType == "video" && td.decision == Decision::Remove)
+		if (td.stream.codecType == "video" && td.decision == Decision::Remove) {
 			anyVideoRemoved = true;
+			const QString cn = td.stream.codecName.toLower();
+			if (cn == QLatin1String("mjpeg") || cn == QLatin1String("png"))
+				coverArtRemoved = true;
+		}
 		if (td.decision == Decision::Remove) continue;
 		if (td.stream.codecType == "audio")    keepAudio << QString::number(td.stream.streamIndex);
 		if (td.stream.codecType == "subtitle") keepSub   << QString::number(td.stream.streamIndex);
@@ -87,8 +93,51 @@ QStringList ActionEngine::buildCommand(const FileDecision& decision, const QStri
 	else if (cont == QLatin1String("iso-dvd"))
 		mkvInput = QStringLiteral("dvd://") + decision.file.path;
 
+	// A Matroska "cover.jpg"-style embedded image is stored as a container
+	// ATTACHMENT, not a track — ffprobe synthesizes a fake attached_pic video
+	// stream for it (which is what coverArtRemoved above just matched and is
+	// what --video-tracks/--no-video was built from), but mkvmerge's attachment
+	// handling is completely separate from track selection. Without an explicit
+	// --attachments/--no-attachments flag here, mkvmerge's default of copying
+	// every attachment silently carries the "removed" cover art straight through.
+	// Only image-typed attachments are stripped — fonts attached for styled
+	// (ASS/SSA) subtitles must survive, or subtitle rendering breaks.
+	if (coverArtRemoved && cont != QLatin1String("iso-bluray") && cont != QLatin1String("iso-dvd")) {
+		const QJsonArray attachments = identifyAttachments(mkvInput);
+		QStringList keepAttachmentIds;
+		bool anyImageAttachment = false;
+		for (const QJsonValue& v : attachments) {
+			const QJsonObject a = v.toObject();
+			if (a.value("content_type").toString().startsWith(QLatin1String("image/")))
+				anyImageAttachment = true;
+			else
+				keepAttachmentIds << QString::number(a.value("id").toInt());
+		}
+		if (anyImageAttachment) {
+			if (keepAttachmentIds.isEmpty())
+				args << "--no-attachments";
+			else
+				args << "--attachments" << keepAttachmentIds.join(',');
+		}
+	}
+
 	args << mkvInput;
 	return args;
+}
+
+QJsonArray ActionEngine::identifyAttachments(const QString& filePath) const
+{
+	QProcess proc;
+	proc.start(m_mkvmergePath, {"-J", filePath});
+	if (!proc.waitForFinished(10000)) {
+		proc.kill();
+		return {};
+	}
+	if (proc.exitCode() > 1) // mkvmerge: 0=ok, 1=warnings (still valid), 2=error
+		return {};
+
+	const QJsonDocument doc = QJsonDocument::fromJson(proc.readAllStandardOutput());
+	return doc.object().value(QLatin1String("attachments")).toArray();
 }
 
 QStringList ActionEngine::buildFlagArgsForRemux(const QString& flagChangesJson)

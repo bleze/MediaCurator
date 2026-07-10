@@ -767,21 +767,46 @@ int DatabaseManager::fileCountUnderPath(const QString& rootPath) const
 
 int DatabaseManager::removeFilesUnderPath(const QString& rootPath)
 {
-	QSqlQuery q(connection());
 	const QString norm   = QDir::fromNativeSeparators(rootPath);
 	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
+
+	// jobs.file_id has no ON DELETE CASCADE, so any file that's ever had a job
+	// (proposed/queued/done/etc.) would otherwise abort the whole DELETE FROM files
+	// below under foreign_keys=ON — SQLite rolls back the entire statement on the
+	// first constraint violation, not just the offending row.
+	QSqlQuery delJobs(connection());
+	delJobs.prepare("DELETE FROM jobs WHERE file_id IN (SELECT id FROM files WHERE path LIKE ?)");
+	delJobs.addBindValue(prefix);
+	if (!delJobs.exec())
+		qWarning() << "removeFilesUnderPath: failed to delete jobs:" << delJobs.lastError().text();
+
+	QSqlQuery q(connection());
 	q.prepare("DELETE FROM files WHERE path LIKE ?");
 	q.addBindValue(prefix);
-	if (!q.exec()) return 0;
+	if (!q.exec()) {
+		qWarning() << "removeFilesUnderPath: failed to delete files:" << q.lastError().text();
+		return 0;
+	}
 	return q.numRowsAffected();
 }
 
 bool DatabaseManager::deleteFile(qint64 fileId)
 {
+	// Same FK hazard as removeFilesUnderPath() above, for the single-file case.
+	// Never touch a job that's actively running — deleting out from under it would
+	// let its completion handler reference a file row that's already gone.
+	QSqlQuery delJobs(connection());
+	delJobs.prepare("DELETE FROM jobs WHERE file_id=? AND status != 'running'");
+	delJobs.addBindValue(fileId);
+	if (!delJobs.exec())
+		qWarning() << "deleteFile: failed to delete jobs for file" << fileId << ":" << delJobs.lastError().text();
+
 	QSqlQuery q(connection());
 	q.prepare("DELETE FROM files WHERE id=?");
 	q.addBindValue(fileId);
 	const bool ok = q.exec();
+	if (!ok)
+		qWarning() << "deleteFile: failed to delete file" << fileId << ":" << q.lastError().text();
 	if (ok)
 		emit fileDeleted(fileId);
 	return ok;

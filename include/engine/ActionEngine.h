@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "engine/TrackDecision.h"
+#include <QJsonArray>
 #include <QObject>
 #include <QStringList>
 
@@ -67,6 +68,14 @@ public:
 	                                               const QString& commandArgsJson);
 
 private:
+	// Runs "mkvmerge -J <filePath>" and returns its "attachments" array (each entry
+	// has "id" and "content_type"). Attachment IDs are assigned by mkvmerge itself
+	// and do NOT correspond to ffprobe stream indices, so they can only be obtained
+	// this way. Returns an empty array on any failure (missing tool, timeout,
+	// unreadable file) — callers must treat that as "nothing known to strip" and
+	// fall back to mkvmerge's default of keeping every attachment.
+	QJsonArray identifyAttachments(const QString& filePath) const;
+
 	QString m_mkvmergePath;
 };
 

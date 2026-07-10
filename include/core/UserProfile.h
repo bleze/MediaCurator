@@ -62,7 +62,11 @@ public:
 	bool mergeSidecarSubtitles() const { return m_mergeSidecarSubtitles; }
 	void setMergeSidecarSubtitles(bool v);
 
-	// Remove MJPEG video streams (embedded cover-art/thumbnail) from output
+	// Remove embedded cover-art/thumbnail images from output — both an MJPEG/PNG
+	// "video" stream (common in MP4-style containers) and, for Matroska sources,
+	// the corresponding image-typed container attachment (see
+	// ActionEngine::buildCommand). Non-image attachments (e.g. subtitle fonts)
+	// are never touched.
 	bool removeMjpegCoverArt() const { return m_removeMjpegCoverArt; }
 	void setRemoveMjpegCoverArt(bool v);
 
