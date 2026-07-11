@@ -33,6 +33,9 @@ public:
 	// Forwarded to the card delegate — see McCardDelegate::setTmdbConfigured.
 	void setTmdbConfigured(bool configured);
 
+	// Forwarded to the card delegate — see McCardDelegate::setFanartOpacity.
+	void setFanartOpacity(double opacity);
+
 	QComboBox* statusCombo() const { return m_statusFilter; }
 	QComboBox* sortCombo()   const { return m_sortCombo;    }
 

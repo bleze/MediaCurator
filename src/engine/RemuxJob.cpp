@@ -1,5 +1,7 @@
 ﻿#include "engine/RemuxJob.h"
 #include "core/ExternalTools.h"
+#include "engine/ActionEngine.h"
+#include "scanner/FfprobeScanner.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -51,6 +53,8 @@ RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
 				   const QString& descriptionText,
 				   bool writeLog,
 				   const QString& finalOutputPathOverride,
+				   const QList<StreamRecord>& expectedStreams,
+				   const QString& ffprobePath,
 				   QObject* parent)
 	: QObject(parent)
 	, m_jobId(jobId)
@@ -58,6 +62,8 @@ RemuxJob::RemuxJob(qint64 jobId, const QString& mkvmergePath,
 	, m_args(args)
 	, m_descriptionText(descriptionText)
 	, m_writeLog(writeLog)
+	, m_ffprobePath(ffprobePath)
+	, m_expectedStreams(expectedStreams)
 {
 	// Extract temp output path (args[1] when args[0] == "-o")
 	if (args.size() >= 2 && args.first() == QLatin1String("-o"))
@@ -193,26 +199,24 @@ void RemuxJob::onProcessFinished(int exitCode)
 	}
 
 	// Detect the dangerous warning: a requested track ID was not found in the file.
-	// This can mean the track layout has shifted since the job was created, which
-	// risks removing the wrong tracks. We keep the .tmp and let the user review.
+	// This can mean the track layout has shifted since the job was created. It's a
+	// cheap early signal — the streams-level verification below (run inside the
+	// background task, before the source is touched) is the real, universal gate,
+	// and catches mismatches even when mkvmerge doesn't emit this exact warning.
 	static const QRegularExpression mismatchRe(
 		R"(track with the ID \d+ was requested but not found)",
 		QRegularExpression::CaseInsensitiveOption);
-	m_hasTrackMismatch = mismatchRe.match(m_log).hasMatch();
+	const bool regexMismatch = mismatchRe.match(m_log).hasMatch();
 
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
 	if ((exitCode == 0 || exitCode == 1) && !m_outputPath.isEmpty() && !m_inputPath.isEmpty()) {
-		if (m_hasTrackMismatch) {
-			// Leave .tmp on disk — JobQueue will probe it and ask the user to verify
-			// before committing or discarding.
-			emit finished(exitCode, m_log, 0);
-			return;
-		}
-
 		// Renaming/deleting the file and writing the log are pure filesystem work —
 		// can be slow on network shares — so run them off the UI thread and marshal
 		// the result back via a queued invocation, keeping `finished` emitted from
 		// this object's own (UI) thread same as a synchronous call site would expect.
+		// Verification also happens here, before the rename/delete-source block below —
+		// on a mismatch we skip finalizing entirely and leave both files on disk for
+		// JobQueue's existing review flow (McJobReviewDialog / commitReview / rejectReview).
 		const QString     outputPath      = m_outputPath;
 		const QString     finalOutputPath = m_finalOutputPath;
 		const QString     inputPath       = m_inputPath;
@@ -223,11 +227,61 @@ void RemuxJob::onProcessFinished(int exitCode)
 		const QString     mkvmergePath    = m_mkvmergePath;
 		const QStringList args            = m_args;
 		const QString     descriptionText = m_descriptionText;
+		const QString     ffprobePath     = m_ffprobePath;
+		const QList<StreamRecord> expectedStreams = m_expectedStreams;
 
 		QThreadPool::globalInstance()->start(
 		    [this, outputPath, finalOutputPath, inputPath, originalSize, log,
-		     writeLog, stagedLocally, mkvmergePath, args, descriptionText, exitCode]() mutable {
-			QString finishLog  = log;
+		     writeLog, stagedLocally, mkvmergePath, args, descriptionText, exitCode,
+		     regexMismatch, ffprobePath, expectedStreams]() mutable {
+
+			// ── Verify before touching the source ──────────────────────────────
+			QList<StreamRecord> tmpStreams;
+			const bool verifiable = !expectedStreams.isEmpty() && !ffprobePath.isEmpty();
+			bool scanOk = false;
+			if (verifiable) {
+				FfprobeScanner scanner(ffprobePath);
+				const auto scanResult = scanner.scanFile(outputPath);
+				scanOk = scanResult.success;
+				if (scanOk) tmpStreams = scanResult.streams;
+			}
+			const ActionEngine::StreamDiff diff = (verifiable && scanOk)
+			    ? ActionEngine::diffStreams(expectedStreams, tmpStreams)
+			    : ActionEngine::StreamDiff{};
+			const bool diffMismatch = verifiable && scanOk && !diff.isEmpty();
+
+			QString verificationNote;
+			if (diffMismatch) {
+				verificationNote = QStringLiteral(
+				    "Verification: output does not match what this job expected to keep "
+				    "(%1 missing, %2 unexpected track(s)). Left for review.")
+				    .arg(diff.missing.size()).arg(diff.unexpected.size());
+			} else if (regexMismatch) {
+				verificationNote = QStringLiteral(
+				    "Verification: mkvmerge reported a track-not-found warning. Left for review.");
+			} else if (verifiable && !scanOk) {
+				verificationNote = QStringLiteral(
+				    "Verification: could not re-scan the output to confirm track layout — proceeding.");
+			} else if (verifiable) {
+				verificationNote = QStringLiteral("Verification: output streams match what this job expected.");
+			}
+
+			QString finishLog = log;
+			if (!verificationNote.isEmpty())
+				finishLog += QLatin1Char('\n') + verificationNote;
+
+			if (regexMismatch || diffMismatch) {
+				// Leave .tmp and the source on disk — JobQueue will show the
+				// mismatch and let the user accept, re-analyze, or discard.
+				QMetaObject::invokeMethod(this, [this, exitCode, finishLog, tmpStreams, diff] {
+					m_tmpStreams       = tmpStreams;
+					m_streamDiff       = diff;
+					m_hasTrackMismatch = true;
+					emit finished(exitCode, finishLog, 0);
+				}, Qt::QueuedConnection);
+				return;
+			}
+
 			qint64  savedBytes = 0;
 
 			const qint64 outputSize = QFileInfo(outputPath).size();
@@ -349,6 +403,11 @@ void RemuxJob::onProcessFinished(int exitCode)
 						ts << "--------------\n";
 						ts << descriptionText << "\n\n";
 					}
+					if (!verificationNote.isEmpty()) {
+						ts << "Verification\n";
+						ts << "------------\n";
+						ts << verificationNote << "\n\n";
+					}
 					ts << "Command\n";
 					ts << "-------\n";
 					ts << mkvmergePath;
@@ -359,7 +418,8 @@ void RemuxJob::onProcessFinished(int exitCode)
 				}
 			}
 
-			QMetaObject::invokeMethod(this, [this, exitCode, finishLog, savedBytes] {
+			QMetaObject::invokeMethod(this, [this, exitCode, finishLog, savedBytes, tmpStreams] {
+				m_tmpStreams = tmpStreams;
 				emit finished(exitCode, finishLog, savedBytes);
 			}, Qt::QueuedConnection);
 		});

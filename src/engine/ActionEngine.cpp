@@ -426,6 +426,37 @@ QList<StreamRecord> ActionEngine::computeKeptStreams(
 	return kept;
 }
 
+ActionEngine::StreamDiff ActionEngine::diffStreams(const QList<StreamRecord>& expected,
+                                                    const QList<StreamRecord>& actual)
+{
+	// Identity key deliberately excludes streamIndex (mkvmerge renumbers tracks),
+	// isExternal/externalPath (an absorbed sidecar becomes a plain internal track),
+	// title (mkvmerge can normalize/drop it), and isDefault (legitimately changed
+	// by flag_changes_json overrides applied as part of the same job).
+	auto key = [](const StreamRecord& s) {
+		return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9")
+		    .arg(s.codecType, s.codecName.toLower(), s.language.toLower())
+		    .arg(s.channels).arg(s.width).arg(s.height)
+		    .arg(s.isForced).arg(s.isCommentary).arg(s.isHearingImpaired);
+	};
+
+	QList<StreamRecord> remainingActual = actual;
+	StreamDiff diff;
+	for (const StreamRecord& want : expected) {
+		const QString wantKey = key(want);
+		int matchAt = -1;
+		for (int i = 0; i < remainingActual.size(); ++i) {
+			if (key(remainingActual[i]) == wantKey) { matchAt = i; break; }
+		}
+		if (matchAt >= 0)
+			remainingActual.removeAt(matchAt);
+		else
+			diff.missing << want;
+	}
+	diff.unexpected = remainingActual;
+	return diff;
+}
+
 QString ActionEngine::insertLanguageIntoSidecarPath(const QString& currentPath,
                                                      const QString& videoBaseName,
                                                      const QString& langCode)

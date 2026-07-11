@@ -67,6 +67,22 @@ public:
 	static QList<StreamRecord> computeKeptStreams(const QList<StreamRecord>& all,
 	                                               const QString& commandArgsJson);
 
+	// Result of comparing the streams a remux was expected to produce against what
+	// actually came out of mkvmerge.
+	struct StreamDiff {
+		QList<StreamRecord> missing;    // expected to survive but absent from the output
+		QList<StreamRecord> unexpected; // present in the output but not expected
+		bool isEmpty() const { return missing.isEmpty() && unexpected.isEmpty(); }
+	};
+
+	// Compares `expected` (e.g. computeKeptStreams() run against the pre-remux
+	// snapshot) against `actual` (a fresh ffprobe scan of the remuxed output).
+	// Matching is attribute-based (codec/language/channels/resolution/disposition
+	// flags) rather than by streamIndex or isExternal, since mkvmerge renumbers
+	// tracks and folds absorbed sidecar subtitles into regular internal tracks.
+	static StreamDiff diffStreams(const QList<StreamRecord>& expected,
+	                               const QList<StreamRecord>& actual);
+
 private:
 	// Runs "mkvmerge -J <filePath>" and returns its "attachments" array (each entry
 	// has "id" and "content_type"). Attachment IDs are assigned by mkvmerge itself

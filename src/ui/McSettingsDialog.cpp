@@ -22,6 +22,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSettings>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTabBar>
 #include <QTabWidget>
@@ -648,6 +649,32 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
 	jobLayout->addWidget(m_chkAutoTrack);
 	genPageLo->addWidget(jobGroup);
+
+	// Library Cards
+	auto* cardsGroup  = new QGroupBox(tr("Library Cards"), genPage);
+	auto* cardsLayout = new QVBoxLayout(cardsGroup);
+
+	auto* fanartRow   = new QHBoxLayout;
+	auto* fanartLabel = new QLabel(tr("Fanart background opacity:"), cardsGroup);
+	m_sliderFanartOpacity = new QSlider(Qt::Horizontal, cardsGroup);
+	m_sliderFanartOpacity->setRange(0, 100);
+	const int initialFanartPct = AppSettings::instance().value("library/fanartOpacity", 5).toInt();
+	m_sliderFanartOpacity->setValue(initialFanartPct);
+	m_sliderFanartOpacity->setToolTip(tr(
+		"How visible the movie's fanart backdrop is behind each library card. "
+		"0% hides it entirely; higher values make it more prominent."));
+	m_lblFanartOpacity = new QLabel(tr("%1%").arg(initialFanartPct), cardsGroup);
+	m_lblFanartOpacity->setMinimumWidth(36);
+	connect(m_sliderFanartOpacity, &QSlider::valueChanged, this, [this](int v) {
+		m_lblFanartOpacity->setText(tr("%1%").arg(v));
+		emit fanartOpacityChanged(v / 100.0);
+	});
+	fanartRow->addWidget(fanartLabel);
+	fanartRow->addWidget(m_sliderFanartOpacity, 1);
+	fanartRow->addWidget(m_lblFanartOpacity);
+	cardsLayout->addLayout(fanartRow);
+	genPageLo->addWidget(cardsGroup);
+
 	genPageLo->addStretch();
 
 	// ── Buttons ───────────────────────────────────────────────────────────────
@@ -791,6 +818,7 @@ void McSettingsDialog::accept()
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());
 	StorageGroupSettings::setUiMaxGroup(m_spinScanGroups->value());
 	PosterManager::instance().setParallelWorkers(m_spinPosterWorkers->value());
+	AppSettings::instance().setValue("library/fanartOpacity", m_sliderFanartOpacity->value());
 
 	QDialog::accept();
 }

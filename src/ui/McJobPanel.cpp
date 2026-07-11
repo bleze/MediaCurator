@@ -1413,6 +1413,12 @@ void McJobPanel::setTmdbConfigured(bool configured)
 		d->setTmdbConfigured(configured);
 }
 
+void McJobPanel::setFanartOpacity(double opacity)
+{
+	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))
+		d->setFanartOpacity(opacity);
+}
+
 void McJobPanel::refresh()
 {
 	m_model->reload();

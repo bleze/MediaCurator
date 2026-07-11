@@ -110,6 +110,10 @@ public slots:
 	// cards stay aligned with the rest of the list.
 	void setTmdbConfigured(bool configured);
 
+	// Opacity (0.0-1.0) of the fanart backdrop drawn behind each card. Settings-
+	// dialog-tunable; see AppSettings key "library/fanartOpacity".
+	void setFanartOpacity(double opacity);
+
 signals:
 	void playRequested(const QModelIndex& index);
 	void imdbPageRequested(const QModelIndex& index);
@@ -205,6 +209,7 @@ private:
 
 	Mode                  m_mode;
 	bool                  m_tmdbConfigured   = true;
+	double                m_fanartOpacity    = 0.05;
 	QAbstractItemView*    m_view             = nullptr;
 	QPersistentModelIndex m_lastHoveredIndex;
 	mutable QPoint        m_lastMousePos     {-1, -1};

@@ -485,6 +485,11 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	// Capture the source path before sidecar args are appended — each sidecar block
 	// ends with its file path, which would otherwise corrupt args.last().
 	QString sourcePath;
+	// What RemuxJob should find left over in the output once mkvmerge is done —
+	// computed from the same "before" snapshot and commandArgsJson used to build
+	// the command itself, so it verifies against the same expectation the queue
+	// is acting on. Attribute-based (see ActionEngine::diffStreams), not index-based.
+	QList<StreamRecord> expectedStreams;
 	if (!args.isEmpty()) {
 		const QList<StreamRecord> streams = db.streamsForFile(fileId);
 
@@ -493,6 +498,8 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 		// the on-disk track/sidecar layout to change, so a snapshot frozen at
 		// proposal time would go stale. This is what the "done" card renders from.
 		db.updateJobOriginalStreams(jobId, ActionEngine::serializeStreamSnapshot(streams));
+
+		expectedStreams = ActionEngine::computeKeptStreams(streams, commandArgsJson);
 
 		// Internal (container) track flag changes: inject before the input path.
 		if (!flagChangesJson.isEmpty()) {
@@ -567,10 +574,12 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	}
 
 	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
+	const QString ffprobePath  = ExternalTools::instance().ffprobePath();
 	occupySlot(storageGroup, jobId, fileId, estimatedSavings);
 	RunningJobSlot& slot = m_runningByGroup[storageGroup];
 	slot.remux = new RemuxJob(jobId, mkvmergePath, args, sourcePath, descriptionText,
-	                          m_writeJobLog, finalOutputPathOverride, this);
+	                          m_writeJobLog, finalOutputPathOverride,
+	                          expectedStreams, ffprobePath, this);
 
 	connect(slot.remux, &RemuxJob::finished, this,
 	        [this, storageGroup, jobId, fileId](int exitCode, const QString& log, qint64 savedBytes) {
@@ -742,6 +751,9 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 		return;
 
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
+	// hasTrackMismatch() covers both triggers RemuxJob checks before finalizing: the
+	// mkvmerge "track not found" warning, and the streams-level diff against what
+	// the job was expected to keep (see RemuxJob::onProcessFinished).
 	const bool ok       = (exitCode == 0 || exitCode == 1);
 	const bool mismatch = remux->hasTrackMismatch();
 
@@ -782,9 +794,22 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 		auto it = warnRe.globalMatch(log);
 		while (it.hasNext())
 			warnLines << it.next().captured().trimmed();
-		const QString warningText = warnLines.isEmpty()
-			? tr("A requested track was not found in the source file.")
-			: warnLines.join('\n');
+
+		QString warningText;
+		if (!warnLines.isEmpty()) {
+			warningText = warnLines.join('\n');
+		} else {
+			// No mkvmerge warning text — this was caught by the streams-level diff
+			// instead (see RemuxJob::onProcessFinished). Describe it from that.
+			const ActionEngine::StreamDiff diff = remux->streamDiff();
+			if (!diff.missing.isEmpty() || !diff.unexpected.isEmpty()) {
+				warningText = tr("The output doesn't match what this job expected to keep "
+				                 "(%1 missing, %2 unexpected track(s)).")
+				    .arg(diff.missing.size()).arg(diff.unexpected.size());
+			} else {
+				warningText = tr("A requested track was not found in the source file.");
+			}
+		}
 
 		// Source streams: use the snapshot stored at job-creation time so the source
 		// card is always correct even when the file was modified by an earlier job run.
@@ -792,7 +817,15 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 			? ActionEngine::deserializeStreamSnapshot(jobOpt->originalStreamsJson)
 			: QList<StreamRecord>{};
 
-		// Probe only the .tmp output file on a background thread, then open the dialog
+		// RemuxJob already scanned the .tmp output as part of its own verification
+		// gate — reuse that instead of probing it again. Only fall back to a fresh
+		// scan if that didn't happen (e.g. no expectedStreams to verify against).
+		const QList<StreamRecord> cachedTmpStreams = remux->tmpStreams();
+		if (!cachedTmpStreams.isEmpty()) {
+			emit reviewRequested(jobId, filename, warningText, cmdArgs, srcStreams, cachedTmpStreams);
+			return;
+		}
+
 		const QString ffprobePath = ExternalTools::instance().ffprobePath();
 		QThreadPool::globalInstance()->start(
 		    [this, jobId, filename, warningText, cmdArgs, tmpPath, srcStreams, ffprobePath]() {

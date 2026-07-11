@@ -198,6 +198,18 @@ private:
 		if (imdbId.isEmpty() && existing && !existing->imdbId.isEmpty())
 			imdbId = existing->imdbId;
 
+		// A "<basename>-poster.<ext>" / "<basename>-fanart.<ext>" file next to the
+		// video takes priority over TMDB — seed the cache from it before the
+		// disk-cache-reuse checks below run, so they pick it up and skip the network
+		// entirely. Fanart caching needs a known imdbId (same requirement the rest
+		// of this class already has for fanart, e.g. the lazy re-check just below).
+		const LocalArt localArt = findLocalArt(filePath);
+		cacheLocalImage(localArt.posterPath,
+		                imdbId.isEmpty() ? (m_cacheDir + "/" + baseStem + ".jpg")
+		                                 : (m_cacheDir + "/" + imdbId + ".jpg"));
+		if (!imdbId.isEmpty())
+			cacheLocalImage(localArt.fanartPath, m_fanartDir + "/" + imdbId + ".jpg");
+
 		// Helper: persist TMDB data from a TmdbInfo result, writing .nfo for durability.
 		// Also emits tmdbDataReady so the UI updates immediately without a DB round-trip.
 		auto applyTmdbInfo = [&](const TmdbInfo& info, const QString& resolvedImdbId) {
@@ -421,6 +433,50 @@ private:
 			if (match.hasMatch()) return match.captured(0);
 		}
 		return {};
+	}
+
+	// ── Local poster/fanart sidecar images ───────────────────────────────────
+
+	struct LocalArt {
+		QString posterPath;  // "<video-basename>-poster.<ext>", if present
+		QString fanartPath;  // "<video-basename>-fanart.<ext>", if present
+	};
+
+	// Mirrors ScanWorker::scanSidecarSubtitles' one-shot directory enumeration —
+	// list image files in the video's folder once, then match by base filename.
+	// Limited to jpg/png (the image formats Qt's bundled plugins can always
+	// decode) rather than also accepting webp, which isn't bundled.
+	static LocalArt findLocalArt(const QString& videoPath)
+	{
+		const QFileInfo videoFi(videoPath);
+		const QString   baseName = videoFi.completeBaseName();
+		const QDir      dir(videoFi.absolutePath());
+
+		static const QStringList imageFilters = {"*.jpg", "*.jpeg", "*.png"};
+
+		LocalArt result;
+		for (const QFileInfo& fi : dir.entryInfoList(imageFilters, QDir::Files)) {
+			const QString stem = fi.completeBaseName();
+			if (result.posterPath.isEmpty()
+			    && stem.compare(baseName + QLatin1String("-poster"), Qt::CaseInsensitive) == 0)
+				result.posterPath = fi.absoluteFilePath();
+			else if (result.fanartPath.isEmpty()
+			    && stem.compare(baseName + QLatin1String("-fanart"), Qt::CaseInsensitive) == 0)
+				result.fanartPath = fi.absoluteFilePath();
+		}
+		return result;
+	}
+
+	// Copies a local sidecar image into the poster/fanart cache dir, keyed the same
+	// way the rest of this class looks images up, so the existing disk-cache-reuse
+	// checks below pick it up transparently and skip TMDB entirely. A no-op if the
+	// cache already has a file at that path (nothing to refresh from disk).
+	static void cacheLocalImage(const QString& sourcePath, const QString& destPath)
+	{
+		if (sourcePath.isEmpty() || destPath.isEmpty() || QFile::exists(destPath))
+			return;
+		if (!QFile::copy(sourcePath, destPath))
+			qWarning() << "PosterWorker: failed to cache local art" << sourcePath << "->" << destPath;
 	}
 
 	// ── TMDB lookup ───────────────────────────────────────────────────────────

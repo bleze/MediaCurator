@@ -604,6 +604,8 @@ void McMainWindow::setupUi()
 
 	m_listView->setItemDelegate(fileDelegate);
 	fileDelegate->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
+	fileDelegate->setFanartOpacity(
+	    AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
 
 	// When stream layout changes, the delegate's size cache may hold stale heights.
 	// Only clear it for roles that actually affect card height (streams / overrides).
@@ -1068,6 +1070,8 @@ void McMainWindow::setupUi()
 	m_jobPanel = new McJobPanel(this);
 	m_jobPanel->setJobQueue(m_jobQueue);
 	m_jobPanel->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
+	m_jobPanel->setFanartOpacity(
+	    AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
 	m_jobPanel->setMinimumHeight(120);
 	splitter->addWidget(m_jobPanel);
 
@@ -2821,7 +2825,24 @@ void McMainWindow::launchInVlc(const QString& rawPath)
 void McMainWindow::onSettings()
 {
 	McSettingsDialog dlg(m_profile, this);
+
+	// Applies to both the library cards and the job queue cards (separate
+	// delegate instance) — used both for the live drag preview below and to
+	// restore/commit the value once the dialog closes.
+	auto applyFanartOpacity = [this](double opacity) {
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->setFanartOpacity(opacity);
+		m_jobPanel->setFanartOpacity(opacity);
+	};
+	connect(&dlg, &McSettingsDialog::fanartOpacityChanged, this, applyFanartOpacity);
+
 	dlg.exec();
+
+	// Not part of UserProfile — re-read regardless of Accepted/Rejected since
+	// AppSettings has no change signal to drive this automatically. On Accept
+	// this matches what was just live-previewed; on Cancel it reverts the
+	// preview back to whatever was saved before the dialog opened.
+	applyFanartOpacity(AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
 }
 
 void McMainWindow::onAbout()

@@ -3,9 +3,11 @@
 
 class QCheckBox;
 class QComboBox;
+class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QSlider;
 class QSpinBox;
 
 namespace Mc {
@@ -17,6 +19,13 @@ class McSettingsDialog : public QDialog
 	Q_OBJECT
 public:
 	explicit McSettingsDialog(UserProfile* profile, QWidget* parent = nullptr);
+
+signals:
+	// Emitted live as the slider is dragged (0.0-1.0) so the caller can preview
+	// the effect on the actual cards behind the dialog. AppSettings itself isn't
+	// touched until Save (see accept()) — on Cancel the caller must re-apply the
+	// previously-saved value itself to undo the preview.
+	void fanartOpacityChanged(double opacity);
 
 protected:
 	void done(int result) override;
@@ -64,6 +73,8 @@ private:
 	QCheckBox*   m_chkAutoTrack;
 	QSpinBox*    m_spinScanGroups;
 	QSpinBox*    m_spinPosterWorkers;
+	QSlider*     m_sliderFanartOpacity;
+	QLabel*      m_lblFanartOpacity;
 };
 
 } // namespace Mc

@@ -1,4 +1,6 @@
 ﻿#pragma once
+#include "core/DatabaseManager.h"
+#include "engine/ActionEngine.h"
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -23,6 +25,13 @@ public:
 	                  // `args` is a local staging path rather than sitting next to
 	                  // the real destination. Empty means "derive from -o as before".
 	                  const QString& finalOutputPathOverride = {},
+	                  // Streams this job is expected to leave behind (e.g.
+	                  // ActionEngine::computeKeptStreams() run against the pre-remux
+	                  // snapshot) and the ffprobe binary to verify with. Empty
+	                  // expectedStreams skips the streams-level verification gate
+	                  // (falls back to the mkvmerge-warning regex check only).
+	                  const QList<StreamRecord>& expectedStreams = {},
+	                  const QString& ffprobePath = {},
 	                  QObject* parent = nullptr);
 	~RemuxJob() override;
 
@@ -35,6 +44,11 @@ public:
 	QString inputFilePath()      const { return m_inputPath; }
 	bool    hasTrackMismatch()   const { return m_hasTrackMismatch; }
 	bool    wasStaged()          const { return m_stagedLocally; }
+	// Valid once `finished` has been emitted with an ok exit code — the .tmp
+	// output as freshly scanned by the verification gate, and the diff (if any)
+	// against expectedStreams. Lets JobQueue reuse this instead of re-scanning.
+	QList<StreamRecord>     tmpStreams()  const { return m_tmpStreams; }
+	ActionEngine::StreamDiff streamDiff() const { return m_streamDiff; }
 
 	// Chunked copy with progress callback and cooperative cancellation, shared by
 	// the staged-finish path here and by JobQueue::commitReview's staged path.
@@ -76,6 +90,11 @@ private:
 	bool        m_stagedLocally     = false;
 	std::atomic<bool> m_cancelRequested{false};
 	QProcess*   m_process           = nullptr;
+
+	QString                 m_ffprobePath;
+	QList<StreamRecord>     m_expectedStreams;
+	QList<StreamRecord>     m_tmpStreams;
+	ActionEngine::StreamDiff m_streamDiff;
 };
 
 } // namespace Mc

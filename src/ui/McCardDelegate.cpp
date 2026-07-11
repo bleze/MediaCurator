@@ -1276,6 +1276,14 @@ void McCardDelegate::setTmdbConfigured(bool configured)
 	m_view->viewport()->update();
 }
 
+void McCardDelegate::setFanartOpacity(double opacity)
+{
+	opacity = qBound(0.0, opacity, 1.0);
+	if (qFuzzyCompare(m_fanartOpacity + 1.0, opacity + 1.0)) return;
+	m_fanartOpacity = opacity;
+	if (m_view) m_view->viewport()->update();
+}
+
 // ── paint ─────────────────────────────────────────────────────────────────────
 
 void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
@@ -1318,7 +1326,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		if (!fanart.isNull()) {
 			painter->save();
 			painter->setClipRect(option.rect);
-			painter->setOpacity(0.05);
+			painter->setOpacity(m_fanartOpacity);
 			const int ox = (fanart.width()  - option.rect.width())  / 2;
 			const int oy = (fanart.height() - option.rect.height()) / 2;
 			painter->drawPixmap(option.rect.left() - ox, option.rect.top() - oy, fanart);
