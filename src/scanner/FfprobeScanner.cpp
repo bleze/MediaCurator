@@ -264,6 +264,27 @@ StreamRecord FfprobeScanner::parseStreamObject(const QJsonObject& obj)
 			if (prof.startsWith("dvhe") || prof.startsWith("dvav") || prof.contains("dolby vision"))
 				s.hdrFormat = "DolbyVision";
 		}
+
+		// Parse detailed HDR metadata (MaxCLL, MaxFALL, Mastering Display)
+		for (const QJsonValue& sdv : sideDataList) {
+			const QJsonObject sd = sdv.toObject();
+			const QString sdType = sd.value("side_data_type").toString().toLower();
+			if (sdType.contains("content light level")) {
+				s.maxCll = sd.value("max_content").toInt();
+				s.maxFall = sd.value("max_average").toInt();
+			} else if (sdType.contains("mastering display")) {
+				auto f = [&](const char* k) -> QString {
+					const QString v = sd.value(k).toString();
+					return v.isEmpty() ? "?" : v;
+				};
+				s.masteringDisplay = QString("R(%1,%2) G(%3,%4) B(%5,%6) WP(%7,%8) L(%9,%10)")
+					.arg(f("red_x"), f("red_y"))
+					.arg(f("green_x"), f("green_y"))
+					.arg(f("blue_x"), f("blue_y"))
+					.arg(f("white_point_x"), f("white_point_y"))
+					.arg(f("max_luminance"), f("min_luminance"));
+			}
+		}
 	}
 
 	// Store full tags as extra_json for future use

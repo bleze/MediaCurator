@@ -162,6 +162,9 @@ bool DatabaseManager::initSchema()
 			width               INTEGER DEFAULT 0,
 			height              INTEGER DEFAULT 0,
 			hdr_format          TEXT,
+			max_cll             INTEGER DEFAULT 0,
+			max_fall            INTEGER DEFAULT 0,
+			mastering_display   TEXT,
 			is_default          INTEGER DEFAULT 0,
 			is_forced           INTEGER DEFAULT 0,
 			is_hearing_impaired INTEGER DEFAULT 0,
@@ -344,6 +347,14 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE streams ADD COLUMN is_external INTEGER DEFAULT 0");
 		m.exec("ALTER TABLE streams ADD COLUMN external_path TEXT DEFAULT ''");
 		m.exec("ALTER TABLE jobs ADD COLUMN sidecar_deletions_json TEXT DEFAULT ''");
+	}
+
+	// Migration: detailed HDR metadata
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE streams ADD COLUMN max_cll INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE streams ADD COLUMN max_fall INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE streams ADD COLUMN mastering_display TEXT");
 	}
 
 	// Migration: add per-track estimate breakdown for calibration
@@ -691,6 +702,9 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 		s.width             = q.value("width").toInt();
 		s.height            = q.value("height").toInt();
 		s.hdrFormat         = q.value("hdr_format").toString();
+		s.maxCll            = q.value("max_cll").toInt();
+		s.maxFall           = q.value("max_fall").toInt();
+		s.masteringDisplay  = q.value("mastering_display").toString();
 		s.isDefault         = q.value("is_default").toInt() != 0;
 		s.isForced          = q.value("is_forced").toInt() != 0;
 		s.isOriginal        = q.value("is_original").toInt() != 0;
@@ -847,11 +861,12 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 	ins.prepare(R"(
 		INSERT INTO streams(file_id, stream_index, codec_type, codec_name, language, title,
 			track_type, type_confidence, channels, sample_rate, bit_rate, width, height,
-			hdr_format, is_default, is_forced, is_original, is_commentary,
+			hdr_format, max_cll, max_fall, mastering_display,
+			is_default, is_forced, is_original, is_commentary,
 			is_hearing_impaired, is_visual_impaired,
 			pixel_format, frame_rate, codec_level, codec_profile, extra_json,
 			is_external, external_path)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 
 	if (!db.transaction())
@@ -878,6 +893,9 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 		ins.addBindValue(s.width);
 		ins.addBindValue(s.height);
 		ins.addBindValue(s.hdrFormat);
+		ins.addBindValue(s.maxCll);
+		ins.addBindValue(s.maxFall);
+		ins.addBindValue(s.masteringDisplay);
 		ins.addBindValue(s.isDefault ? 1 : 0);
 		ins.addBindValue(s.isForced ? 1 : 0);
 		ins.addBindValue(s.isOriginal ? 1 : 0);
@@ -945,6 +963,9 @@ QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 		s.width             = q.value("width").toInt();
 		s.height            = q.value("height").toInt();
 		s.hdrFormat         = q.value("hdr_format").toString();
+		s.maxCll            = q.value("max_cll").toInt();
+		s.maxFall           = q.value("max_fall").toInt();
+		s.masteringDisplay  = q.value("mastering_display").toString();
 		s.isDefault         = q.value("is_default").toInt() != 0;
 		s.isForced          = q.value("is_forced").toInt() != 0;
 		s.isOriginal        = q.value("is_original").toInt() != 0;
@@ -985,6 +1006,9 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
 		s.width             = q.value("width").toInt();
 		s.height            = q.value("height").toInt();
 		s.hdrFormat         = q.value("hdr_format").toString();
+		s.maxCll            = q.value("max_cll").toInt();
+		s.maxFall           = q.value("max_fall").toInt();
+		s.masteringDisplay  = q.value("mastering_display").toString();
 		s.isDefault         = q.value("is_default").toInt() != 0;
 		s.isForced          = q.value("is_forced").toInt() != 0;
 		s.isOriginal        = q.value("is_original").toInt() != 0;

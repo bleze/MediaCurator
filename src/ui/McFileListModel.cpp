@@ -52,6 +52,9 @@ void McFileListModel::computeDerived(FileEntry& e)
 		s += st.codecProfile;
 		s += QChar(' ');
 		s += st.hdrFormat;
+		if (st.maxCll > 0) { s += QString::number(st.maxCll); s += QChar(' '); }
+		if (st.maxFall > 0) { s += QString::number(st.maxFall); s += QChar(' '); }
+		s += st.masteringDisplay;
 		s += QChar(' ');
 		s += st.title;
 		s += QChar(' ');

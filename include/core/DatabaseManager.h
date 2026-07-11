@@ -51,6 +51,9 @@ struct StreamRecord {
 	int         width = 0;
 	int         height = 0;
 	QString     hdrFormat;
+	int         maxCll = 0;      // Max Content Light Level (nits)
+	int         maxFall = 0;     // Max Frame-Average Light Level (nits)
+	QString     masteringDisplay; // e.g. "R(0.68,0.32) G(0.265,0.69) B(0.15,0.06) WP(0.3127,0.329) L(1000,0.0005)"
 	bool        isDefault = false;
 	bool        isForced = false;
 	bool        isOriginal = false;

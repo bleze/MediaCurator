@@ -319,6 +319,9 @@ QString ActionEngine::serializeStreamSnapshot(const QList<StreamRecord>& streams
 		o["w"]          = s.width;
 		o["h"]          = s.height;
 		o["hdr"]        = s.hdrFormat;
+		if (s.maxCll > 0) o["max_cll"] = s.maxCll;
+		if (s.maxFall > 0) o["max_fall"] = s.maxFall;
+		if (!s.masteringDisplay.isEmpty()) o["mastering"] = s.masteringDisplay;
 		o["default"]    = s.isDefault;
 		o["forced"]     = s.isForced;
 		o["original"]   = s.isOriginal;
@@ -348,6 +351,9 @@ QList<StreamRecord> ActionEngine::deserializeStreamSnapshot(const QString& json)
 		s.width             = o["w"].toInt();
 		s.height            = o["h"].toInt();
 		s.hdrFormat         = o["hdr"].toString();
+		s.maxCll            = o["max_cll"].toInt();
+		s.maxFall           = o["max_fall"].toInt();
+		s.masteringDisplay  = o["mastering"].toString();
 		s.isDefault         = o["default"].toBool();
 		s.isForced          = o["forced"].toBool();
 		s.isOriginal        = o["original"].toBool();

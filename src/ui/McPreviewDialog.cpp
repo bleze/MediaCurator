@@ -357,8 +357,14 @@ void McPreviewDialog::setupUi(const FileDecision& decision, const QString& flagC
 			QString info;
 			if (s.codecType == QStringLiteral("audio"))
 				info = QStringLiteral("%1 %2ch").arg(s.codecName).arg(s.channels);
-			else if (s.codecType == QStringLiteral("video"))
+			else if (s.codecType == QStringLiteral("video")) {
 				info = QStringLiteral("%1 %2×%3").arg(s.codecName).arg(s.width).arg(s.height);
+				if (!s.hdrFormat.isEmpty()) {
+					info += " " + s.hdrFormat;
+					if (s.maxCll > 0 || s.maxFall > 0)
+						info += QString(" (%1/%2)").arg(s.maxCll).arg(s.maxFall);
+				}
+			}
 			else
 				info = s.codecName;
 

@@ -523,8 +523,11 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 	if (s.codecType == "video") {
 		if (s.width > 0)
 			t += QStringLiteral("  %1\xC3\x97%2").arg(s.width).arg(s.height);
-		if (!s.hdrFormat.isEmpty())
+		if (!s.hdrFormat.isEmpty()) {
 			t += "  " + s.hdrFormat;
+			if (s.maxCll > 0 || s.maxFall > 0)
+				t += QString(" (%1/%2)").arg(s.maxCll).arg(s.maxFall);
+		}
 	} else if (s.codecType == "audio") {
 		const QString ch = channelStr(s.channels);
 		if (!ch.isEmpty()) t += "  " + ch;
@@ -1121,6 +1124,14 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					else if (isOrig)         lines << tr("\xE2\x97\x8E  Original audio language");
 					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary");
 					if (streamIsSDH(s)) lines << tr("SDH / Hearing impaired");
+					if (s.codecType == QLatin1String("video") && !s.hdrFormat.isEmpty()) {
+						QString hdr = s.hdrFormat;
+						if (s.maxCll > 0 || s.maxFall > 0)
+							hdr += QString("  MaxCLL %1 / MaxFALL %2 nits").arg(s.maxCll).arg(s.maxFall);
+						lines << tr("HDR: %1").arg(hdr);
+						if (!s.masteringDisplay.isEmpty())
+							lines << tr("Mastering display: %1").arg(s.masteringDisplay);
+					}
 					if (cls.type != TrackType::Main) {
 						QString typeName;
 						switch (cls.type) {
