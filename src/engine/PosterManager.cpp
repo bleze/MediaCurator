@@ -2,6 +2,7 @@
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "scanner/NfoParser.h"
+#include "scanner/ScanWorker.h"
 
 #include <QDateTime>
 #include <QUrl>
@@ -438,24 +439,41 @@ private:
 	// ── Local poster/fanart sidecar images ───────────────────────────────────
 
 	struct LocalArt {
-		QString posterPath;  // "<video-basename>-poster.<ext>", if present
-		QString fanartPath;  // "<video-basename>-fanart.<ext>", if present
+		QString posterPath;  // e.g. "<video-basename>-poster.<ext>" or "folder.<ext>"
+		QString fanartPath;  // e.g. "<video-basename>-fanart.<ext>" or "backdrop.<ext>"
 	};
 
-	// Mirrors ScanWorker::scanSidecarSubtitles' one-shot directory enumeration —
-	// list image files in the video's folder once, then match by base filename.
-	// Limited to jpg/png (the image formats Qt's bundled plugins can always
-	// decode) rather than also accepting webp, which isn't bundled.
+	// Kodi/Plex both recognize the same two local-artwork conventions (Plex's docs
+	// explicitly borrow Kodi's): a "<video-basename>-poster.<ext>" / "-fanart.<ext>"
+	// form that stays unambiguous even when a folder holds several movies, and a
+	// bare generic form ("folder.jpg", "cover.jpg", "backdrop.jpg", ...) meant for
+	// a movie that owns its folder outright (single-file/optical-media layout).
+	// See https://kodi.wiki/view/Artwork_types and
+	// https://support.plex.tv/articles/200220677-local-media-assets-movies/
+	//
+	// Extensions and generic names are a small fixed vocabulary defined by those
+	// two apps, not an open pattern, so plain case-insensitive name comparisons
+	// are used rather than a regex.
 	static LocalArt findLocalArt(const QString& videoPath)
 	{
 		const QFileInfo videoFi(videoPath);
 		const QString   baseName = videoFi.completeBaseName();
 		const QDir      dir(videoFi.absolutePath());
 
-		static const QStringList imageFilters = {"*.jpg", "*.jpeg", "*.png"};
+		// jpg/jpeg/png are the formats Qt's bundled plugins can always decode;
+		// .tbn is Kodi's legacy thumbnail extension — always a jpg/png underneath,
+		// so no separate decoding path is needed, just recognizing the extension.
+		static const QStringList imageFilters = {"*.jpg", "*.jpeg", "*.png", "*.tbn"};
+		static const QStringList posterNames  = {"poster", "folder", "cover", "movie", "default"};
+		static const QStringList fanartNames  = {"fanart", "backdrop", "background", "art"};
+
+		const QFileInfoList entries = dir.entryInfoList(imageFilters, QDir::Files);
 
 		LocalArt result;
-		for (const QFileInfo& fi : dir.entryInfoList(imageFilters, QDir::Files)) {
+
+		// Pass 1: "<video-basename>-poster/-fanart.<ext>" — safe no matter how many
+		// other video files share this folder.
+		for (const QFileInfo& fi : entries) {
 			const QString stem = fi.completeBaseName();
 			if (result.posterPath.isEmpty()
 			    && stem.compare(baseName + QLatin1String("-poster"), Qt::CaseInsensitive) == 0)
@@ -463,6 +481,27 @@ private:
 			else if (result.fanartPath.isEmpty()
 			    && stem.compare(baseName + QLatin1String("-fanart"), Qt::CaseInsensitive) == 0)
 				result.fanartPath = fi.absoluteFilePath();
+		}
+		if (!result.posterPath.isEmpty() && !result.fanartPath.isEmpty())
+			return result;
+
+		// Pass 2: bare generic names. Only trustworthy when this video is the only
+		// one in the folder — otherwise "folder.jpg" would be claimed by whichever
+		// movie happens to be scanned first.
+		static const QStringList videoFilters = [] {
+			QStringList f;
+			for (const QString& ext : ScanWorker::videoExtensions())
+				f << (QLatin1String("*.") + ext);
+			return f;
+		}();
+		if (dir.entryList(videoFilters, QDir::Files).size() == 1) {
+			for (const QFileInfo& fi : entries) {
+				const QString stem = fi.completeBaseName().toLower();
+				if (result.posterPath.isEmpty() && posterNames.contains(stem))
+					result.posterPath = fi.absoluteFilePath();
+				else if (result.fanartPath.isEmpty() && fanartNames.contains(stem))
+					result.fanartPath = fi.absoluteFilePath();
+			}
 		}
 		return result;
 	}
