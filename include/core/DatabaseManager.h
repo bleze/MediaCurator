@@ -266,6 +266,14 @@ public:
 	QHash<qint64, QString>      allDoneFanartPaths() const;
 	QHash<qint64, QString>      allKnownImdbIds() const;
 	QHash<qint64, double>       allRatings() const;
+
+	// Batch load for library startup (poster + fanart + IMDb + ratings).
+	// Fills the hashes from a single pass over poster_cache to reduce query overhead.
+	void loadPosterMeta(QHash<qint64, QString>& posterPaths,
+	                    QHash<qint64, QString>& imdbIds,
+	                    QHash<qint64, double>& ratings,
+	                    QHash<qint64, QString>& fanartPaths) const;
+
 	void                        resetPosterForFile(qint64 fileId);
 	void                        clearPosterPath(const QString& imagePath);
 	void                        clearFanartPath(const QString& fanartPath);

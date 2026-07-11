@@ -266,7 +266,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/tools"
             "$<TARGET_FILE_DIR:MediaCurator>/tools"
-        COMMENT "Copying bundled tools to output directory (ffprobe + mkvmerge)"
+        COMMENT "Copying bundled tools to output directory (ffprobe + mkvmerge + mkvpropedit)"
     )
 endif()
 

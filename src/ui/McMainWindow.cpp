@@ -2148,7 +2148,7 @@ void McMainWindow::onRefreshView()
 
 void McMainWindow::startLibraryLoader()
 {
-	static constexpr int kFirstPageSize = 25;
+	static constexpr int kFirstPageSize = 50;  // larger initial sync page for snappier perceived library load
 
 	auto& db = DatabaseManager::instance();
 
@@ -2159,11 +2159,10 @@ void McMainWindow::startLibraryLoader()
 	// Poster/fanart paths must be in the model before the first cards paint —
 	// otherwise every card flashes a grey placeholder until LibraryLoader's
 	// metaReady arrives on a background thread.
-	m_listModel->initMeta(db.allDonePosterPaths(),
-	                      db.allKnownImdbIds(),
-	                      db.proposedJobFileIds(),
-	                      db.allRatings(),
-	                      db.allDoneFanartPaths());
+	QHash<qint64, QString> posters, imdbs, fanarts;
+	QHash<qint64, double> ratings;
+	db.loadPosterMeta(posters, imdbs, ratings, fanarts);
+	m_listModel->initMeta(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts);
 
 	// ── First page: library + queue (synchronous, splash still visible) ───────
 	// Must use the same sort order the model itself sorts by (persisted setting,
@@ -3015,7 +3014,7 @@ void McMainWindow::onAbout()
 	makeRow(tr("Author:"),        tr("Jacob Pedersen — Bleze Software"));
 	makeRow(tr("License:"),       tr("Apache 2.0 — open source, free to use and modify"));
 	makeRow(tr("Built with:"),    QString("Qt %1  ·  SQLite  ·  nlohmann/json").arg(qVersion()));
-	makeRow(tr("Bundled tools:"), tr("ffprobe (LGPL)  ·  MKVToolNix (GPL)"));
+	makeRow(tr("Bundled tools:"), tr("ffprobe (LGPL)  ·  mkvmerge, mkvpropedit (GPL, MKVToolNix)"));
 
 	mainLayout->addLayout(infoLayout);
 

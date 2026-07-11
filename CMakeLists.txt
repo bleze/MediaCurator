@@ -37,7 +37,7 @@ endif()
 
 # ── Find Qt6 ──────────────────────────────────────────────────────────────────
 # Set Qt6_DIR in your CMake config or via:
-#   cmake -DQt6_DIR="C:/Qt/6.7.2/msvc2022_64/lib/cmake/Qt6" ...
+#   cmake -DQt6_DIR="D:/Development/Environment/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6" ...
 find_package(Qt6 REQUIRED COMPONENTS
     Core
     Gui

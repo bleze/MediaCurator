@@ -142,6 +142,9 @@ private:
 		QString             originalLanguage;       // ISO 639-2 original audio language (both modes)
 		QString             fanartPath;             // w780 backdrop; empty if not yet fetched
 		QList<StreamRecord> allStreams;
+		QList<StreamRecord> videoStreams;
+		QList<StreamRecord> audioStreams;
+		QList<StreamRecord> subtitleStreams;
 		QSet<int>           removedIndices; // stream indices shown struck-through
 		QString             flagChangesJson; // job queue only; empty in library mode
 		// job queue only

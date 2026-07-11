@@ -30,30 +30,84 @@ McFileListModel::McFileListModel(QObject* parent)
 	});
 }
 
+void McFileListModel::computeDerived(FileEntry& e)
+{
+	QFileInfo fi(e.file.path);
+	e.dirName = fi.dir().dirName();
+	e.parentPath = fi.absolutePath();
+
+	QString s;
+	s.reserve(128 + e.streams.size() * 32);
+	s += e.file.filename;
+	s += QChar(' ');
+	s += e.dirName;
+	s += QChar(' ');
+	s += e.file.container;
+	s += QChar(' ');
+	s += e.file.originalLanguage;
+	s += QChar(' ');
+	for (const StreamRecord& st : e.streams) {
+		s += st.codecName;
+		s += QChar(' ');
+		s += st.codecProfile;
+		s += QChar(' ');
+		s += st.hdrFormat;
+		s += QChar(' ');
+		s += st.title;
+		s += QChar(' ');
+		s += st.language;
+		s += QChar(' ');
+	}
+	e.searchText = s.toLower();
+
+	// Precompute quick-filter flags by scanning streams once + populate grouped lists
+	e.has4K = e.hasDV = e.hasHDR = e.hasAtmos = e.hasTrueHD = e.hasDtsHD = e.hasDtsX = false;
+	e.videoStreams.clear();
+	e.audioStreams.clear();
+	e.subtitleStreams.clear();
+	for (const StreamRecord& st : e.streams) {
+		if (st.codecType == QLatin1String("video")) {
+			e.videoStreams.append(st);
+			if (st.width >= 3840 || st.height >= 2160)
+				e.has4K = true;
+			if (st.hdrFormat == QLatin1String("DolbyVision") ||
+			    st.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive) ||
+			    st.codecProfile.startsWith(QLatin1String("dvav"), Qt::CaseInsensitive))
+				e.hasDV = true;
+			if (!st.hdrFormat.isEmpty() && st.hdrFormat != QLatin1String("DolbyVision"))
+				e.hasHDR = true;
+		} else if (st.codecType == QLatin1String("audio")) {
+			e.audioStreams.append(st);
+			const QString n = st.codecName.toLower();
+			const QString p = st.codecProfile.toLower();
+			const QString t = st.title.toLower();
+			if ((n == QLatin1String("truehd") || n == QLatin1String("eac3")) &&
+			    (p.contains(QLatin1String("atmos")) || t.contains(QLatin1String("atmos"))))
+				e.hasAtmos = true;
+			if (n == QLatin1String("truehd"))
+				e.hasTrueHD = true;
+			if (n == QLatin1String("dts") &&
+			    (p.contains(QLatin1String("ma")) || t.contains(QLatin1String("dts-hd")) ||
+			     p.contains(QLatin1String("dts:x")) || t.contains(QLatin1String("dts:x"))))
+				e.hasDtsHD = true;
+			if (n == QLatin1String("dts") &&
+			    (p.contains(QLatin1String("dts:x")) || p.contains(QLatin1String("dts-x")) ||
+			     t.contains(QLatin1String("dts:x"))))
+				e.hasDtsX = true;
+		} else if (st.codecType == QLatin1String("subtitle")) {
+			e.subtitleStreams.append(st);
+		}
+	}
+}
+
 // ── Filter helpers ────────────────────────────────────────────────────────────
 
 bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 {
 	// ── Text search: filename, parent folder, stream metadata, container ──────
 	if (!m_filterText.isEmpty()) {
-		bool found = e.file.filename.contains(m_filterText, Qt::CaseInsensitive);
-		if (!found) {
-			const QString folder = QFileInfo(e.file.path).dir().dirName();
-			found = folder.contains(m_filterText, Qt::CaseInsensitive);
-		}
-		if (!found) {
-			for (const StreamRecord& s : e.streams) {
-				if (s.codecName.contains(m_filterText, Qt::CaseInsensitive)    ||
-				    s.codecProfile.contains(m_filterText, Qt::CaseInsensitive)  ||
-				    s.hdrFormat.contains(m_filterText, Qt::CaseInsensitive)     ||
-				    s.title.contains(m_filterText, Qt::CaseInsensitive)) {
-					found = true;
-					break;
-				}
-			}
-		}
-		if (!found) found = e.file.container.contains(m_filterText, Qt::CaseInsensitive);
-		if (!found) return false;
+		if (!e.searchText.contains(m_filterText, Qt::CaseInsensitive))
+			return false;
 	}
 
 	// ── Ignored filter ────────────────────────────────────────────────────────
@@ -71,74 +125,18 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 
 	// ── Quick-filter pills ────────────────────────────────────────────────────
 	if (m_quickFilters != QF_None) {
-		// 4K: use width, not height — rips are often vertically cropped
-		if (m_quickFilters & QF_4K) {
-			bool has4K = false;
-			for (const StreamRecord& s : e.streams)
-				if (s.codecType == QLatin1String("video") && (s.width >= 3840 || s.height >= 2160))
-					{ has4K = true; break; }
-			if (!has4K) return false;
-		}
+		if ((m_quickFilters & QF_4K) && !e.has4K) return false;
+		if ((m_quickFilters & QF_DV) && !e.hasDV) return false;
+		if ((m_quickFilters & QF_HDR) && !e.hasHDR) return false;
 
-		// Dolby Vision: hdrFormat stores "DolbyVision", or codec profile is dvhe/dvav
-		if (m_quickFilters & QF_DV) {
-			bool hasDV = false;
-			for (const StreamRecord& s : e.streams) {
-				if (s.codecType != QLatin1String("video")) continue;
-				if (s.hdrFormat == QLatin1String("DolbyVision") ||
-				    s.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive) ||
-				    s.codecProfile.startsWith(QLatin1String("dvav"), Qt::CaseInsensitive))
-					{ hasDV = true; break; }
-			}
-			if (!hasDV) return false;
-		}
-
-		// HDR (non-DV): any non-empty hdrFormat that isn't Dolby Vision
-		if (m_quickFilters & QF_HDR) {
-			bool hasHDR = false;
-			for (const StreamRecord& s : e.streams) {
-				if (s.codecType != QLatin1String("video")) continue;
-				if (!s.hdrFormat.isEmpty() && s.hdrFormat != QLatin1String("DolbyVision"))
-					{ hasHDR = true; break; }
-			}
-			if (!hasHDR) return false;
-		}
-
-		// Audio group: OR within — a file passes if it has ANY of the active audio flags
 		const quint32 audioMask = QF_Atmos | QF_TrueHD | QF_DtsHD | QF_DtsX;
 		if (m_quickFilters & audioMask) {
-			bool hasMatch = false;
-			for (const StreamRecord& s : e.streams) {
-				if (s.codecType != QLatin1String("audio")) continue;
-				const QString n = s.codecName.toLower();
-				const QString p = s.codecProfile.toLower();
-				const QString t = s.title.toLower();
-
-				// Atmos: TrueHD+Atmos or EAC3+Atmos
-				if (!hasMatch && (m_quickFilters & QF_Atmos) &&
-				    (n == QLatin1String("truehd") || n == QLatin1String("eac3")) &&
-				    (p.contains(QLatin1String("atmos")) || t.contains(QLatin1String("atmos"))))
-					hasMatch = true;
-
-				// TrueHD: any TrueHD track (includes Atmos TrueHD)
-				if (!hasMatch && (m_quickFilters & QF_TrueHD) && n == QLatin1String("truehd"))
-					hasMatch = true;
-
-				// DTS-HD MA: DTS with MA profile, including DTS:X (which is DTS-HD + object layer)
-				if (!hasMatch && (m_quickFilters & QF_DtsHD) && n == QLatin1String("dts") &&
-				    (p.contains(QLatin1String("ma")) || t.contains(QLatin1String("dts-hd")) ||
-				     p.contains(QLatin1String("dts:x")) || t.contains(QLatin1String("dts:x"))))
-					hasMatch = true;
-
-				// DTS:X: object-based DTS audio specifically
-				if (!hasMatch && (m_quickFilters & QF_DtsX) && n == QLatin1String("dts") &&
-				    (p.contains(QLatin1String("dts:x")) || p.contains(QLatin1String("dts-x")) ||
-				     t.contains(QLatin1String("dts:x"))))
-					hasMatch = true;
-
-				if (hasMatch) break;
-			}
-			if (!hasMatch) return false;
+			bool hasAudioMatch = false;
+			if ((m_quickFilters & QF_Atmos) && e.hasAtmos) hasAudioMatch = true;
+			if ((m_quickFilters & QF_TrueHD) && e.hasTrueHD) hasAudioMatch = true;
+			if ((m_quickFilters & QF_DtsHD) && e.hasDtsHD) hasAudioMatch = true;
+			if ((m_quickFilters & QF_DtsX) && e.hasDtsX) hasAudioMatch = true;
+			if (!hasAudioMatch) return false;
 		}
 	}
 
@@ -170,11 +168,13 @@ void McFileListModel::applyFilter()
 {
 	beginResetModel();
 	m_entries.clear();
+	m_entries.reserve(m_allEntries.size());
 	for (const auto& e : m_allEntries)
 		if (entryPassesFilter(e)) m_entries.append(e);
 
 	std::sort(m_entries.begin(), m_entries.end(),
 	          [this](const FileEntry& a, const FileEntry& b) { return entryLessThan(a, b); });
+	m_entries.shrink_to_fit(); // release over-reserve after filter
 	endResetModel();
 }
 
@@ -191,13 +191,13 @@ void McFileListModel::reload()
 	const QHash<qint64, QList<StreamRecord>> streams = db.allStreamsGrouped();
 	m_allEntries.clear();
 	m_allEntries.reserve(files.size());
-	for (const FileRecord& f : files)
-		m_allEntries.append({ f, streams.value(f.id) });
+	for (const FileRecord& f : files) {
+		FileEntry e{ f, streams.value(f.id) };
+		computeDerived(e);
+		m_allEntries.append(e);
+	}
 
-	m_posterPaths    = db.allDonePosterPaths();
-	m_fanartPaths    = db.allDoneFanartPaths();
-	m_imdbIds        = db.allKnownImdbIds();
-	m_ratings        = db.allRatings();
+	db.loadPosterMeta(m_posterPaths, m_imdbIds, m_ratings, m_fanartPaths);
 	m_forcedRemovals = db.allStreamForcedRemovals();
 
 	recomputeFolderCounts();
@@ -210,12 +210,12 @@ void McFileListModel::recomputeFolderCounts()
 {
 	QHash<QString, int> dirCounts;
 	for (const FileEntry& e : m_allEntries)
-		dirCounts[QFileInfo(e.file.path).absolutePath()]++;
+		dirCounts[e.parentPath]++;
 
 	m_folderCounts.clear();
 	m_folderCounts.reserve(m_allEntries.size());
 	for (const FileEntry& e : m_allEntries)
-		m_folderCounts[e.file.id] = dirCounts.value(QFileInfo(e.file.path).absolutePath(), 1);
+		m_folderCounts[e.file.id] = dirCounts.value(e.parentPath, 1);
 }
 
 void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
@@ -227,7 +227,10 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 	m_posterPaths    = posterPaths;
 	m_imdbIds        = imdbIds;
 	m_filesWithJobs  = filesWithJobs;
-	m_forcedRemovals = DatabaseManager::instance().allStreamForcedRemovals();
+	if (m_forcedRemovals.isEmpty()) {
+		// Only query on first population to avoid repeated small queries during background meta delivery.
+		m_forcedRemovals = DatabaseManager::instance().allStreamForcedRemovals();
+	}
 	if (!ratings.isEmpty())     m_ratings     = ratings;
 	if (!fanartPaths.isEmpty()) m_fanartPaths = fanartPaths;
 	if (!m_entries.isEmpty()) {
@@ -251,21 +254,24 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 {
 	const qint64 fileId = entry.file.id;
 
+	FileEntry e = entry;
+	computeDerived(e);  // always recompute (cheap); ensures searchText + quick flags are fresh after rescan/update
+
 	bool foundInAll = false;
 	for (int i = 0; i < m_allEntries.size(); ++i) {
 		if (m_allEntries[i].file.id == fileId) {
-			m_allEntries[i] = entry;
+			m_allEntries[i] = e;
 			foundInAll = true;
 			break;
 		}
 	}
-	if (!foundInAll) m_allEntries.append(entry);
+	if (!foundInAll) m_allEntries.append(e);
 
-	const bool passes = entryPassesFilter(entry);
+	const bool passes = entryPassesFilter(e);
 	for (int i = 0; i < m_entries.size(); ++i) {
 		if (m_entries[i].file.id == fileId) {
 			if (passes) {
-				m_entries[i] = entry;
+				m_entries[i] = e;
 				const QModelIndex idx = index(i);
 				emit dataChanged(idx, idx, { FileRole, StreamsRole });
 			} else {
@@ -277,11 +283,11 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 		}
 	}
 	if (passes) {
-		auto it = std::lower_bound(m_entries.begin(), m_entries.end(), entry,
+		auto it = std::lower_bound(m_entries.begin(), m_entries.end(), e,
 		                           [this](const FileEntry& a, const FileEntry& b) { return entryLessThan(a, b); });
 		const int insertPos = static_cast<int>(std::distance(m_entries.begin(), it));
 		beginInsertRows({}, insertPos, insertPos);
-		m_entries.insert(insertPos, entry);
+		m_entries.insert(insertPos, e);
 		endInsertRows();
 		const QModelIndex idx = index(insertPos);
 		if (m_posterPaths.contains(fileId) || m_fanartPaths.contains(fileId)) {
@@ -497,6 +503,10 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case FolderCountRole:
 		return m_folderCounts.value(e.file.id, 1);
 	case OverridesRole:   return QVariant::fromValue(m_forcedRemovals.value(e.file.id));
+	case VideoStreamsRole:   return QVariant::fromValue(e.videoStreams);
+	case AudioStreamsRole:   return QVariant::fromValue(e.audioStreams);
+	case SubtitleStreamsRole:return QVariant::fromValue(e.subtitleStreams);
+	case FileIdRole:         return e.file.id;
 	default:              return {};
 	}
 }

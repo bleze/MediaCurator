@@ -386,6 +386,9 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.originalLanguage  = file.originalLanguage;
 		d.fanartPath        = index.data(McFileListModel::FanartRole).toString();
 		d.allStreams         = index.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
+		d.videoStreams       = index.data(McFileListModel::VideoStreamsRole).value<QList<StreamRecord>>();
+		d.audioStreams       = index.data(McFileListModel::AudioStreamsRole).value<QList<StreamRecord>>();
+		d.subtitleStreams    = index.data(McFileListModel::SubtitleStreamsRole).value<QList<StreamRecord>>();
 		d.removedIndices    = index.data(McFileListModel::OverridesRole).value<QSet<int>>();
 	} else {
 		d.jobId            = index.data(McJobListModel::JobIdRole).toLongLong();
@@ -1044,13 +1047,16 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 
 	for (const QString& type : {QStringLiteral("video"), QStringLiteral("audio"), QStringLiteral("subtitle")}) {
-		QList<StreamRecord> group;
-		for (const auto& s : d.allStreams)
-			if (s.codecType == type) group << s;
-		if (group.isEmpty()) continue;
+		const QList<StreamRecord>& group = (type=="video" ? d.videoStreams : type=="audio" ? d.audioStreams : d.subtitleStreams);
+		const auto& g = group.isEmpty() ? [&]() -> const QList<StreamRecord>& {
+			static thread_local QList<StreamRecord> fb; fb.clear();
+			for (const auto& s : d.allStreams) if (s.codecType == type) fb << s;
+			return fb;
+		}() : group;
+		if (g.isEmpty()) continue;
 
 		int numRows = 1, rx = 0;
-		for (const auto& s : group) {
+		for (const auto& s : g) {
 			const bool isOrig = s.codecType == QLatin1String("audio")
 			                 && !d.originalLanguage.isEmpty()
 			                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
@@ -1063,7 +1069,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 
 		if (typeRect.contains(event->pos())) {
 			int x = content.left(), row = 0;
-			for (const auto& s : group) {
+			for (const auto& s : g) {
 				const bool    isOrig = s.codecType == QLatin1String("audio")
 				                   && !d.originalLanguage.isEmpty()
 				                   && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
@@ -1155,7 +1161,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 		m_cacheWidth = w;
 	}
 	const qint64 itemId = (m_mode == Mode::Library)
-	    ? index.data(McFileListModel::FileRole).value<FileRecord>().id
+	    ? index.data(McFileListModel::FileIdRole).toLongLong()
 	    : index.data(McJobListModel::JobIdRole).toLongLong();
 	const auto cached = m_sizeCache.constFind(itemId);
 	if (cached != m_sizeCache.constEnd())
@@ -1178,22 +1184,44 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	const int badgeAreaW    = totalContentW - rightReserve;
 
 	int totalRows = 0;
-	for (const QString& type : {QStringLiteral("video"), QStringLiteral("audio"), QStringLiteral("subtitle")}) {
-		QList<StreamRecord> group;
-		for (const auto& s : d.allStreams)
-			if (s.codecType == type) group << s;
-		if (group.isEmpty()) continue;
-
-		int rows = 1, x = 0;
-		for (const auto& s : group) {
-			const bool isOrig = s.codecType == QLatin1String("audio")
-			                 && !d.originalLanguage.isEmpty()
-			                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-			const int bW = badgeWidthFor(s, isOrig, fm);
-			if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
-			x += bW + kBadgeGap;
+	auto groups = { &d.videoStreams, &d.audioStreams, &d.subtitleStreams };
+	bool usedPreGroups = false;
+	for (const auto* groupPtr : groups) {
+		if (!groupPtr->isEmpty()) usedPreGroups = true;
+	}
+	if (!usedPreGroups && !d.allStreams.isEmpty()) {
+		// Fallback for job queue or legacy entries: build from allStreams
+		for (const QString& type : {QStringLiteral("video"), QStringLiteral("audio"), QStringLiteral("subtitle")}) {
+			QList<StreamRecord> group;
+			for (const auto& s : d.allStreams)
+				if (s.codecType == type) group << s;
+			if (group.isEmpty()) continue;
+			int rows = 1, x = 0;
+			for (const auto& s : group) {
+				const bool isOrig = s.codecType == QLatin1String("audio")
+				                 && !d.originalLanguage.isEmpty()
+				                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
+				const int bW = badgeWidthFor(s, isOrig, fm);
+				if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
+				x += bW + kBadgeGap;
+			}
+			totalRows += rows;
 		}
-		totalRows += rows;
+	} else {
+		for (const auto* groupPtr : groups) {
+			const auto& group = *groupPtr;
+			if (group.isEmpty()) continue;
+			int rows = 1, x = 0;
+			for (const auto& s : group) {
+				const bool isOrig = s.codecType == QLatin1String("audio")
+				                 && !d.originalLanguage.isEmpty()
+				                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
+				const int bW = badgeWidthFor(s, isOrig, fm);
+				if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
+				x += bW + kBadgeGap;
+			}
+			totalRows += rows;
+		}
 	}
 
 	// Each group advances y by rows*(kBadgeH+kRowGap), including a trailing kRowGap.
@@ -1545,10 +1573,17 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	badgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
 	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 
-	const auto drawGroup = [&](const QString& type) {
-		QList<StreamRecord> group;
-		for (const auto& s : d.allStreams)
-			if (s.codecType == type) group << s;
+	const auto drawGroup = [&](const QString& type, const QList<StreamRecord>& preGroup) {
+		const auto& group = preGroup.isEmpty() ? [&]() -> const QList<StreamRecord>& {
+			static QList<StreamRecord> empty;
+			// fallback build if pre-group not populated (e.g. job queue)
+			if (d.allStreams.isEmpty()) return empty;
+			// simple fallback (rare)
+			static thread_local QList<StreamRecord> fb;
+			fb.clear();
+			for (const auto& s : d.allStreams) if (s.codecType == type) fb << s;
+			return fb;
+		}() : preGroup;
 		if (group.isEmpty()) return;
 		const int rows = drawBadgeRow(painter,
 		                              QRect(content.left(), y, badgeAreaW, kBadgeH),
@@ -1558,9 +1593,9 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		y += rows * (kBadgeH + kRowGap);
 	};
 
-	drawGroup("video");
-	drawGroup("audio");
-	drawGroup("subtitle");
+	drawGroup("video", d.videoStreams);
+	drawGroup("audio", d.audioStreams);
+	drawGroup("subtitle", d.subtitleStreams);
 
 	// Job queue: live size bar at the bottom of the card (painted last, no clip).
 	// Two independent bars, both measured against the same full width (the original

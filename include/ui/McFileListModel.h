@@ -13,6 +13,25 @@ namespace Mc {
 struct FileEntry {
 	FileRecord          file;
 	QList<StreamRecord> streams;
+
+	// Precomputed for fast filtering and display (avoids repeated QFileInfo + stream scans on applyFilter)
+	QString dirName;      // leaf folder name for text search + display
+	QString parentPath;   // absolute parent dir for folder counts / grouping
+	QString searchText;   // lowercased composite of filename + dir + container + stream fields for fast .contains()
+
+	// Precomputed quick filter flags (set once at entry creation / update)
+	bool has4K    = false;
+	bool hasDV    = false;
+	bool hasHDR   = false;
+	bool hasAtmos = false;
+	bool hasTrueHD = false;
+	bool hasDtsHD = false;
+	bool hasDtsX  = false;
+
+	// Pre-grouped streams (populated once) to avoid repeated type-grouping in delegate sizeHint/paint
+	QList<StreamRecord> videoStreams;
+	QList<StreamRecord> audioStreams;
+	QList<StreamRecord> subtitleStreams;
 };
 
 class McFileListModel : public QAbstractListModel
@@ -32,6 +51,10 @@ public:
 		FolderCountRole   = Qt::UserRole + 10,  // int — number of files sharing same parent folder
 		DisplayYearRole   = Qt::UserRole + 11,  // int — release year from TMDB (0 = unknown)
 		FanartRole        = Qt::UserRole + 12,  // QString — absolute path to w780 backdrop image
+		VideoStreamsRole   = Qt::UserRole + 13,
+		AudioStreamsRole   = Qt::UserRole + 14,
+		SubtitleStreamsRole= Qt::UserRole + 15,
+		FileIdRole         = Qt::UserRole + 16,  // qint64 for fast id lookup (avoids full FileRecord copy in sizeHint)
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -100,6 +123,7 @@ private:
 	bool entryLessThan(const FileEntry& a, const FileEntry& b) const;
 	void applyFilter();
 	void applyEntry(const FileEntry& entry);
+	void computeDerived(FileEntry& e);
 
 	QList<FileEntry>          m_allEntries;      // full unfiltered set
 	QList<FileEntry>          m_entries;         // visible (filtered) set

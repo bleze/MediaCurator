@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Downloads and stages ffprobe and mkvmerge into tools\windows\.
+    Downloads and stages ffprobe, mkvmerge and mkvpropedit into tools\windows\.
     Run once after cloning, and whenever PINNED_VERSIONS changes.
 
 .USAGE

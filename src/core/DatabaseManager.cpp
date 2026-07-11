@@ -1942,6 +1942,36 @@ QHash<qint64, double> DatabaseManager::allRatings() const
 	return result;
 }
 
+void DatabaseManager::loadPosterMeta(QHash<qint64, QString>& posterPaths,
+                                     QHash<qint64, QString>& imdbIds,
+                                     QHash<qint64, double>& ratings,
+                                     QHash<qint64, QString>& fanartPaths) const
+{
+	QSqlQuery q(connection());
+	// Single pass over poster_cache for the common startup meta.
+	// Individual methods are kept for targeted use.
+	q.exec("SELECT file_id, image_path, imdb_id, vote_average, fanart_path FROM poster_cache");
+	while (q.next()) {
+		const qint64 id = q.value(0).toLongLong();
+
+		const QString img = q.value(1).toString();
+		if (!img.isEmpty())
+			posterPaths.insert(id, img);
+
+		const QString imdb = q.value(2).toString();
+		if (!imdb.isEmpty())
+			imdbIds.insert(id, imdb);
+
+		const double vote = q.value(3).toDouble();
+		if (vote > 0.0)
+			ratings.insert(id, vote);
+
+		const QString fan = q.value(4).toString();
+		if (!fan.isEmpty())
+			fanartPaths.insert(id, fan);
+	}
+}
+
 void DatabaseManager::cleanupStalledJobs()
 {
 	QSqlQuery q(connection());

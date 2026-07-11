@@ -2,7 +2,7 @@
 
 namespace Mc {
 
-static constexpr int kPageSizes[] = { 70, 200, 500 };
+static constexpr int kPageSizes[] = { 100, 300, 1000 };
 static constexpr int kPageSizeCount = static_cast<int>(sizeof(kPageSizes) / sizeof(kPageSizes[0]));
 
 LibraryLoader::LibraryLoader(int startOffset, int sortOrder, QObject* parent)
@@ -16,11 +16,11 @@ void LibraryLoader::run()
 	auto& db = DatabaseManager::instance();
 
 	// Emit meta first so posters and IMDb ids appear as files populate
-	emit metaReady(db.allDonePosterPaths(),
-	               db.allKnownImdbIds(),
-	               db.proposedJobFileIds(),
-	               db.allRatings(),
-	               db.allDoneFanartPaths());
+	// Use batched load to cut down on query round-trips during library startup.
+	QHash<qint64, QString> posters, imdbs, fanarts;
+	QHash<qint64, double> ratings;
+	db.loadPosterMeta(posters, imdbs, ratings, fanarts);
+	emit metaReady(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts);
 
 	int offset    = m_startOffset;
 	int pageIndex = 0;
