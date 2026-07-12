@@ -927,18 +927,6 @@ void McJobPanel::setupUi()
 
 		menu.addSeparator();
 
-		auto* refreshPosterAct = menu.addAction(svgIcon(":/icons/refresh.svg"),
-		                                        tr("Refresh &Poster"));
-		connect(refreshPosterAct, &QAction::triggered, this, [this, fileId] {
-			emit refreshPosterRequested(fileId);
-		});
-
-		auto* dlSubsAct = menu.addAction(svgIcon(":/icons/translate.svg"),
-		                                 tr("&Download Subtitles…"));
-		connect(dlSubsAct, &QAction::triggered, this, [this, fileId] {
-			emit downloadSubtitlesRequested(fileId);
-		});
-
 		// Collect all selected file IDs so the context menu can trigger a batch flow.
 		QList<qint64> selectedFileIds;
 		{
@@ -954,6 +942,23 @@ void McJobPanel::setupUi()
 				selectedFileIds.prepend(fileId);
 			}
 		}
+
+		const QString refreshPosterLabel = selectedFileIds.size() > 1
+		    ? tr("Refresh %1 &Posters").arg(selectedFileIds.size())
+		    : tr("Refresh &Poster");
+		auto* refreshPosterAct = menu.addAction(svgIcon(":/icons/refresh.svg"), refreshPosterLabel);
+		connect(refreshPosterAct, &QAction::triggered, this, [this, fileId, selectedFileIds] {
+			if (selectedFileIds.size() > 1)
+				emit refreshPosterBatchRequested(selectedFileIds);
+			else
+				emit refreshPosterRequested(fileId);
+		});
+
+		auto* dlSubsAct = menu.addAction(svgIcon(":/icons/translate.svg"),
+		                                 tr("&Download Subtitles…"));
+		connect(dlSubsAct, &QAction::triggered, this, [this, fileId] {
+			emit downloadSubtitlesRequested(fileId);
+		});
 
 		const QString imdbLabel = selectedFileIds.size() > 1
 		    ? tr("Edit &Movie Metadata (%1 files)…").arg(selectedFileIds.size())

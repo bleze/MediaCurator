@@ -822,10 +822,13 @@ void McMainWindow::setupUi()
 
 		menu.addSeparator();
 
-		auto* refreshPosterAction = menu.addAction(svgIcon(":/icons/refresh.svg"),
-		                                            tr("Refresh &Poster"));
-		connect(refreshPosterAction, &QAction::triggered, this, [file] {
-			PosterManager::instance().refresh(file.id);
+		const QString refreshPosterLabel = selectedFileIds.size() > 1
+		    ? tr("Refresh %1 &Posters").arg(selectedFileIds.size())
+		    : tr("Refresh &Poster");
+		auto* refreshPosterAction = menu.addAction(svgIcon(":/icons/refresh.svg"), refreshPosterLabel);
+		connect(refreshPosterAction, &QAction::triggered, this, [selectedFileIds] {
+			auto& pm = PosterManager::instance();
+			for (qint64 fid : selectedFileIds) pm.refresh(fid);
 		});
 
 		auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"),
@@ -1223,6 +1226,12 @@ void McMainWindow::setupUi()
 	connect(m_jobPanel, &McJobPanel::refreshPosterRequested,
 	        this, [](qint64 fileId) {
 		PosterManager::instance().refresh(fileId);
+	});
+
+	connect(m_jobPanel, &McJobPanel::refreshPosterBatchRequested,
+	        this, [](const QList<qint64>& fileIds) {
+		auto& pm = PosterManager::instance();
+		for (qint64 fid : fileIds) pm.refresh(fid);
 	});
 
 	connect(m_jobPanel, &McJobPanel::downloadSubtitlesRequested,

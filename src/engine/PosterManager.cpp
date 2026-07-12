@@ -870,6 +870,11 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 
 	if (rec && !rec->imagePath.isEmpty())
 		QFile::remove(rec->imagePath);
+	// Fanart must be invalidated too, or a local "-fanart.<ext>" file dropped into the
+	// movie folder after the TMDB backdrop was already cached at this path will be
+	// silently skipped by cacheLocalImage()'s exists-check on every future refresh.
+	if (rec && !rec->fanartPath.isEmpty())
+		QFile::remove(rec->fanartPath);
 
 	// Downloads the user-selected backdrop at w1280 and emits fanartReady.
 	// Only fires when the caller provided a TMDB fanart path (i.e. the user picked

@@ -1896,10 +1896,10 @@ void DatabaseManager::resetPosterForFile(qint64 fileId)
 	QSqlQuery q(connection());
 	// ON CONFLICT preserves imdb_id — only the poster image fields are reset.
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, imdb_id, fetched_at)
-		VALUES(?, '', 'pending', '', '', 0)
+		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, fetched_at)
+		VALUES(?, '', 'pending', '', '', '', 0)
 		ON CONFLICT(file_id) DO UPDATE SET
-			source = '', status = 'pending', image_path = '', fetched_at = 0
+			source = '', status = 'pending', image_path = '', fanart_path = '', fetched_at = 0
 	)");
 	q.addBindValue(fileId);
 	q.exec();
