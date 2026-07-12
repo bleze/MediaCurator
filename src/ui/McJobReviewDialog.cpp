@@ -180,7 +180,7 @@ McJobReviewDialog::McJobReviewDialog(
 	auto* btnBox       = new QDialogButtonBox(this);
 	auto* acceptBtn    = btnBox->addButton(tr("Accept Output"),
 	                                       QDialogButtonBox::AcceptRole);
-	auto* reanalyzeBtn = btnBox->addButton(tr("Re-analyze"),
+	auto* reanalyzeBtn = btnBox->addButton(tr("Rescan && Re-analyze"),
 	                                       QDialogButtonBox::ActionRole);
 	btnBox->addButton(tr("Discard"), QDialogButtonBox::RejectRole);
 

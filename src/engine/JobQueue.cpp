@@ -477,6 +477,50 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 		}
 	}
 
+	// Pre-flight staleness check — ffprobe the file live and compare it against
+	// what the DB (and therefore this job's command line) currently believes the
+	// track layout is. Catches a source file that drifted out-of-band since the
+	// last scan before burning a full mkvmerge remux only to discover the same
+	// mismatch afterward via RemuxJob::onProcessFinished's post-mux verification.
+	// Sidecar subtitles aren't part of the ffprobe comparison — ffprobe never sees
+	// them — so they're only checked for continued existence on disk.
+	if (fileId > 0 && fileOpt) {
+		const QString preflightFfprobePath = ExternalTools::instance().ffprobePath();
+		FfprobeScanner preflightScanner(preflightFfprobePath);
+		const auto preflightResult = preflightScanner.scanFile(fileOpt->path);
+		if (preflightResult.success) {
+			const QList<StreamRecord> dbStreams = db.streamsForFile(fileId);
+
+			QList<StreamRecord> dbContainerStreams;
+			bool sidecarMissing = false;
+			for (const auto& s : dbStreams) {
+				if (s.isExternal) {
+					if (!s.externalPath.isEmpty() && !QFile::exists(s.externalPath))
+						sidecarMissing = true;
+				} else {
+					dbContainerStreams.append(s);
+				}
+			}
+
+			const ActionEngine::StreamDiff preflightDiff =
+				ActionEngine::diffStreams(dbContainerStreams, preflightResult.streams);
+
+			if (!preflightDiff.isEmpty() || sidecarMissing) {
+				qWarning() << "JobQueue: job" << jobId << "for file" << fileId
+				           << "is stale vs the current on-disk track layout"
+				           << (sidecarMissing ? "(missing sidecar file)" : "(track drift)")
+				           << "— dropping and rescanning instead of remuxing";
+				db.deleteJob(jobId);
+				emit jobFinished(jobId, false, 0);
+				rescanFile(fileId, {}, /*triggerReanalysis=*/true);
+				return false;
+			}
+		}
+		// If the pre-flight scan itself fails (locked file, transient I/O hiccup on
+		// a network share, etc.), don't block the job on it — proceed and let the
+		// existing post-mux verification be the backstop.
+	}
+
 	QStringList args;
 	const QJsonArray arr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
 	for (const auto& v : arr) args << v.toString();

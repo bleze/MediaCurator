@@ -451,12 +451,19 @@ McMainWindow::McMainWindow(QWidget* parent)
 			m_progressBar->setRange(0, 100);
 			m_progressBar->setVisible(false);
 			m_progressBar->setValue(0);
-			m_statusLabel->setText(tr("Job failed for '%1'").arg(failedName));
+			// A track-mismatch review already reported this job as failed via this
+			// same signal when the review dialog was raised (JobQueue::onRemuxJobFinished).
+			// Resolving that review (accept/re-analyze/discard) re-emits jobFinished for
+			// bookkeeping, but by then the name has already been consumed above — skip
+			// re-showing the message so it doesn't render as "Job failed for ''".
+			if (!failedName.isEmpty()) {
+				m_statusLabel->setText(tr("Job failed for '%1'").arg(failedName));
 #ifdef Q_OS_WIN
-			if (m_taskbar) {
-				m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_ERROR);
-			}
+				if (m_taskbar) {
+					m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_ERROR);
+				}
 #endif
+			}
 		} else if (m_jobQueue->isPaused()) {
 			m_progressBar->setRange(0, 100);
 			m_progressBar->setVisible(false);
