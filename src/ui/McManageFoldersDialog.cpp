@@ -166,7 +166,7 @@ void McManageFoldersDialog::loadFolders()
 		const QString path  = StorageGroupSettings::normalizedRoot(roots[i]);
 		const int     count = DatabaseManager::instance().fileCountUnderPath(path);
 
-		auto* pathItem = new QTableWidgetItem(path);
+		auto* pathItem = new QTableWidgetItem(QDir::toNativeSeparators(path));
 		pathItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
 
 		auto* countItem = new QTableWidgetItem(QLocale().toString(count));
@@ -207,7 +207,7 @@ void McManageFoldersDialog::onAddFolder()
 
 	if (roots.contains(folder)) {
 		QMessageBox::information(this, tr("Already Added"),
-			tr("\"%1\" is already in the library.").arg(folder));
+			tr("\"%1\" is already in the library.").arg(QDir::toNativeSeparators(folder)));
 		return;
 	}
 
@@ -220,7 +220,7 @@ void McManageFoldersDialog::onAddFolder()
 	const int row = m_table->rowCount();
 	m_table->insertRow(row);
 
-	auto* pathItem = new QTableWidgetItem(folder);
+	auto* pathItem = new QTableWidgetItem(QDir::toNativeSeparators(folder));
 	pathItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
 	m_table->setItem(row, 0, pathItem);
 
