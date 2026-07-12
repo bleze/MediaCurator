@@ -330,6 +330,15 @@ void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 saved
 		applyFilter();
 }
 
+QList<qint64> McJobListModel::jobIdsForFile(qint64 fileId) const
+{
+	QList<qint64> ids;
+	for (const JobCardEntry& e : m_allEntries)
+		if (e.job.fileId == fileId)
+			ids << e.job.jobId;
+	return ids;
+}
+
 void McJobListModel::removeJobIds(const QList<qint64>& ids)
 {
 	if (ids.isEmpty()) return;

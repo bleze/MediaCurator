@@ -50,6 +50,11 @@ public:
 	                                 const QString& language, const QString& externalPath);
 	QList<qint64> visibleFileIds() const;
 
+	// Call after a file is deleted from the library (its jobs are already gone from
+	// the DB) so this panel drops that file's card(s) without a full reload — the jobs
+	// table can hold a large history, and reload() re-queries and re-derives all of it.
+	void removeJobsForFile(qint64 fileId);
+
 public slots:
 	void onJobStatusChanged(qint64 jobId, const QString& status);
 	void repaintCards();

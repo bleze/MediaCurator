@@ -1500,6 +1500,15 @@ void McJobPanel::syncExternalStreamLanguage(qint64 fileId, int streamIndex,
 	m_model->updateExternalStreamInfo(fileId, streamIndex, language, externalPath);
 }
 
+void McJobPanel::removeJobsForFile(qint64 fileId)
+{
+	const auto ids = m_model->jobIdsForFile(fileId);
+	if (ids.isEmpty()) return;
+	m_model->removeJobIds(ids);
+	updateFooter();
+	emit jobsChanged(m_model->rowCount());
+}
+
 void McJobPanel::onJobStatusChanged(qint64 jobId, const QString& status)
 {
 	m_model->updateJob(jobId, status);

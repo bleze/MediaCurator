@@ -59,6 +59,9 @@ public:
 	void reloadPaged(int limit);
 	void removeJobIds(const QList<qint64>& ids);
 
+	/** Job IDs (any status) belonging to a file, from the in-memory list — no DB query. */
+	QList<qint64> jobIdsForFile(qint64 fileId) const;
+
 	/** Update status + savedBytes for a single job without full reload. */
 	void updateJob(qint64 jobId, const QString& status, qint64 savedBytes = -1);
 

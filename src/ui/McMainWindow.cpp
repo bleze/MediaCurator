@@ -1071,9 +1071,12 @@ void McMainWindow::setupUi()
 				if (!db.deleteFile(f.id)) continue;
 				if (deleteFromDisk) QFile::remove(f.path);
 				m_listModel->removeEntry(f.id);
+				// Targeted removal — m_jobPanel->refresh() would re-query and re-derive
+				// the entire jobs table (posters, streams, kept-track diffs for every
+				// job ever run), which is the "feels like a fresh load" stall this avoids.
+				m_jobPanel->removeJobsForFile(f.id);
 				++removed;
 			}
-			m_jobPanel->refresh();
 			m_statusLabel->setText(deleteFromDisk
 			    ? tr("Deleted %1 file(s) from disk and library").arg(removed)
 			    : tr("Removed %1 file(s) from library").arg(removed));
