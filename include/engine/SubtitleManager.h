@@ -39,6 +39,9 @@ public:
 	void setCredentials(const QString& apiKey, const QString& username, const QString& password);
 	void setEnabled(bool enabled);
 	void setUnderstoodLanguages(const QStringList& languages);
+	// Gates SubtitleLanguageDetector + on-disk renaming when re-scanning sidecars
+	// after a download (UserProfile::detectSidecarSubtitleLanguage()). Off by default.
+	void setDetectSubtitleLanguage(bool detect);
 
 	// Enqueue a newly-scanned (or rescanned) file for subtitle lookup.
 	// No-op if disabled, no API key configured, or the file is already fully covered.
@@ -72,6 +75,7 @@ signals:
 	void workerSetCredentials(QString apiKey, QString username, QString password);
 	void workerSetEnabled(bool enabled);
 	void workerSetUnderstoodLanguages(QStringList languages);
+	void workerSetDetectSubtitleLanguage(bool detect);
 	void workerEnqueueFile(qint64 fileId);
 	void workerEnqueueBatch(QList<qint64> fileIds);
 	void workerCancelAll();

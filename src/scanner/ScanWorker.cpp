@@ -171,7 +171,7 @@ static bool externalSidecarsEqual(const QList<StreamRecord>& a, const QList<Stre
 }
 
 bool ScanWorker::refreshSidecarStreamsIfChanged(DatabaseManager& db, qint64 fileId,
-                                                const QString& videoPath)
+                                                const QString& videoPath, bool detectLanguage)
 {
 	const auto existing = db.streamsForFile(fileId);
 	QList<StreamRecord> container;
@@ -184,7 +184,7 @@ bool ScanWorker::refreshSidecarStreamsIfChanged(DatabaseManager& db, qint64 file
 			container << s;
 	}
 
-	const auto newSidecars = scanSidecarSubtitles(videoPath, nextSidecarStreamIndex(container));
+	const auto newSidecars = scanSidecarSubtitles(videoPath, nextSidecarStreamIndex(container), detectLanguage);
 	if (externalSidecarsEqual(oldExternal, newSidecars))
 		return false;
 
@@ -193,7 +193,8 @@ bool ScanWorker::refreshSidecarStreamsIfChanged(DatabaseManager& db, qint64 file
 	return db.insertStreams(fileId, allStreams);
 }
 
-QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, int startIndex)
+QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, int startIndex,
+                                                      bool detectLanguage)
 {
 	const QFileInfo videoFi(videoPath);
 	const QString dir      = videoFi.absolutePath();
@@ -242,7 +243,7 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 		// Filename carried no language token — read the dialogue itself and, only on
 		// a high-confidence read, rename the file so the language is never re-guessed
 		// (subsequent scans will then parse it straight from the filename above).
-		if (lang.isEmpty()) {
+		if (lang.isEmpty() && detectLanguage) {
 			const QString sample = extractSubtitleSampleText(fi);
 			if (const auto detected = SubtitleLanguageDetector::detect(sample)) {
 				const QString lower  = detected->code.toLower();
@@ -336,7 +337,7 @@ void ScanWorker::run()
 			const qint64 curSize  = fi.size();
 			if (existing->mtimeMs == curMtime && existing->sizeBytes == curSize) {
 				++skipped;
-				if (refreshSidecarStreamsIfChanged(db, existing->id, path))
+				if (refreshSidecarStreamsIfChanged(db, existing->id, path, m_detectSubtitleLanguage))
 					emit fileProcessed(*existing, db.streamsForFile(existing->id));
 				// Enqueue even for unchanged files so PosterManager can backfill
 				// any missing display_title or rating without re-running ffprobe.
@@ -363,7 +364,7 @@ void ScanWorker::run()
 		}
 
 		// Combine container streams with any sidecar subtitle files found alongside
-		const auto sidecars  = scanSidecarSubtitles(path, nextSidecarStreamIndex(result.streams));
+		const auto sidecars  = scanSidecarSubtitles(path, nextSidecarStreamIndex(result.streams), m_detectSubtitleLanguage);
 		auto allStreams       = result.streams;
 		allStreams.append(sidecars);
 		if (!db.insertStreams(*fileId, allStreams)) {

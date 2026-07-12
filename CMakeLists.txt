@@ -105,6 +105,13 @@ if(MSVC)
     target_compile_options(cld2 PRIVATE /w)
 else()
     target_compile_options(cld2 PRIVATE -w)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Clang treats C++11 narrowing in brace-init as a hard error that plain
+        # -w cannot silence (GCC/MSVC don't enforce it the same way) — cld2's
+        # generated lookup tables rely on it throughout (e.g. negative int
+        # literals narrowed to uint8 in cld_generated_cjk_uni_prop_80.cc).
+        target_compile_options(cld2 PRIVATE -Wno-c++11-narrowing)
+    endif()
 endif()
 add_library(cld2::cld2 ALIAS cld2)
 

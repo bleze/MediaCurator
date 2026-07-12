@@ -177,6 +177,14 @@ void UserProfile::setAutoDownloadSubtitles(bool v)
 	}
 }
 
+void UserProfile::setDetectSidecarSubtitleLanguage(bool v)
+{
+	if (m_detectSidecarSubtitleLanguage != v) {
+		m_detectSidecarSubtitleLanguage = v;
+		emit profileChanged();
+	}
+}
+
 void UserProfile::setAudioFormatOrder(const QStringList& order)
 {
 	if (m_audioFormatOrder != order) {
@@ -283,6 +291,7 @@ QJsonObject UserProfile::toJson() const
 	o["opensubtitles_username"]          = m_openSubtitlesUsername;
 	o["opensubtitles_password"]          = m_openSubtitlesPassword;
 	o["auto_download_subtitles"]         = m_autoDownloadSubtitles;
+	o["detect_sidecar_subtitle_language"] = m_detectSidecarSubtitleLanguage;
 	return o;
 }
 
@@ -322,6 +331,7 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_openSubtitlesUsername      = json["opensubtitles_username"].toString();
 	m_openSubtitlesPassword      = json["opensubtitles_password"].toString();
 	m_autoDownloadSubtitles      = json["auto_download_subtitles"].toBool(false);
+	m_detectSidecarSubtitleLanguage = json["detect_sidecar_subtitle_language"].toBool(false);
 
 	if (json.contains("audio_format_order")) {
 		QStringList order;

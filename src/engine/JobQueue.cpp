@@ -765,7 +765,7 @@ void JobQueue::rescanFile(qint64 fileId, const QString& filePath, bool triggerRe
 		(void)db2.upsertFile(updated);
 		// Re-discover sidecar subtitles alongside the (possibly renamed) file
 		const auto sidecars = ScanWorker::scanSidecarSubtitles(
-		    fileCopy.path, ScanWorker::nextSidecarStreamIndex(result.streams));
+		    fileCopy.path, ScanWorker::nextSidecarStreamIndex(result.streams), m_detectSubtitleLanguage);
 		auto allStreams      = result.streams;
 		allStreams.append(sidecars);
 		db2.insertStreams(fileId, allStreams);

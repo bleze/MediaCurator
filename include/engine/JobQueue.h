@@ -28,6 +28,7 @@ public:
 
 	void setWriteJobLog(bool v) { m_writeJobLog = v; }
 	void setMergeSidecarSubtitles(bool v) { m_mergeSidecarSubtitles = v; }
+	void setDetectSubtitleLanguage(bool v) { m_detectSubtitleLanguage = v; }
 	void setSortMode(JobSortMode mode) { m_sortMode = mode; }
 	void setUseLocalStaging(bool v) { m_useLocalStaging = v; }
 	void setLocalStagingDir(const QString& dir) { m_localStagingDir = dir; }
@@ -108,6 +109,7 @@ private:
 	bool           m_paused       = false;
 	bool           m_writeJobLog  = false;
 	bool           m_mergeSidecarSubtitles = true;
+	bool           m_detectSubtitleLanguage = false;
 	bool           m_useLocalStaging = false;
 	QString        m_localStagingDir;
 	JobSortMode    m_sortMode     = JobSortMode::SmallestFirst;

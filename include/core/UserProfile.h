@@ -102,6 +102,13 @@ public:
 	bool autoDownloadSubtitles() const { return m_autoDownloadSubtitles; }
 	void setAutoDownloadSubtitles(bool v);
 
+	// When a sidecar subtitle's filename carries no language token, sample its
+	// dialogue text and detect the language via CLD2, renaming the file to embed
+	// it on a high-confidence read. Off by default — renaming files on disk is a
+	// side effect the user should opt into explicitly.
+	bool detectSidecarSubtitleLanguage() const { return m_detectSidecarSubtitleLanguage; }
+	void setDetectSidecarSubtitleLanguage(bool v);
+
 	// Audio format priority — ordered list of format IDs, best first.
 	// Each ID corresponds to a specific codec variant (e.g. "atmos", "dtshdma").
 	// When multiple tracks of the same language exist, the highest-priority one is kept.
@@ -161,6 +168,7 @@ private:
 	QString     m_openSubtitlesUsername;
 	QString     m_openSubtitlesPassword;
 	bool        m_autoDownloadSubtitles   = false;
+	bool        m_detectSidecarSubtitleLanguage = false;
 	QStringList m_audioFormatOrder      = defaultAudioFormatOrder();
 	QStringList m_disabledAudioFormats  = {};
 	QStringList m_subtitleFormatOrder   = defaultSubtitleFormatOrder();

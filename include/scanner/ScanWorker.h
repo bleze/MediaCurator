@@ -35,6 +35,8 @@ public:
 	// it only walks brand-new folders (newly added movies), so it finishes much faster
 	// than a full scan but won't notice files added into already-scanned folders.
 	void setQuickScan(bool quick) { m_quickScan = quick; }
+	// Off by default — see UserProfile::detectSidecarSubtitleLanguage().
+	void setDetectSubtitleLanguage(bool detect) { m_detectSubtitleLanguage = detect; }
 	void cancel() { m_cancelled.storeRelaxed(1); }
 
 	// File extensions considered as video files
@@ -45,10 +47,14 @@ public:
 	static int nextSidecarStreamIndex(const QList<StreamRecord>& containerStreams);
 
 	// Discover subtitle sidecar files next to a video file and return synthetic StreamRecords.
-	static QList<StreamRecord> scanSidecarSubtitles(const QString& videoPath, int startIndex);
+	// detectLanguage gates SubtitleLanguageDetector + on-disk renaming for sidecars whose
+	// filename carries no language token (UserProfile::detectSidecarSubtitleLanguage()).
+	static QList<StreamRecord> scanSidecarSubtitles(const QString& videoPath, int startIndex,
+	                                                 bool detectLanguage);
 
 	// Re-scan sidecar files without ffprobe; updates DB only when sidecars changed.
-	static bool refreshSidecarStreamsIfChanged(DatabaseManager& db, qint64 fileId, const QString& videoPath);
+	static bool refreshSidecarStreamsIfChanged(DatabaseManager& db, qint64 fileId,
+	                                            const QString& videoPath, bool detectLanguage);
 
 public slots:
 	void run();
@@ -70,6 +76,7 @@ private:
 	QString        m_rootPath;
 	QString        m_ffprobePath;
 	bool           m_quickScan{false};
+	bool           m_detectSubtitleLanguage{false};
 	QAtomicInt     m_cancelled{0};
 };
 

@@ -355,12 +355,19 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkKeepForced      = new QCheckBox(tr("Always keep forced subtitle tracks"), subOptGroup);
 	m_chkKeepOriginalSub = new QCheckBox(tr("Keep original-language subtitle even if not understood"), subOptGroup);
 	m_chkMergeSidecarSubs = new QCheckBox(tr("Merge sidecar subtitles into the container when remuxing"), subOptGroup);
+	m_chkDetectSubLanguage = new QCheckBox(
+		tr("Detect language of unlabeled sidecar subtitles and rename the file"), subOptGroup);
 	m_chkKeepForced->setChecked(profile->keepForcedSubtitlesAlways());
 	m_chkKeepOriginalSub->setChecked(profile->keepOriginalLanguageSubtitle());
 	m_chkMergeSidecarSubs->setChecked(profile->mergeSidecarSubtitles());
 	m_chkMergeSidecarSubs->setToolTip(tr(
 		"When a file is remuxed for another reason, also absorb any external .srt/.ass/.vtt "
 		"sidecar subtitles into the output. Disable to leave sidecar files untouched on disk."));
+	m_chkDetectSubLanguage->setChecked(profile->detectSidecarSubtitleLanguage());
+	m_chkDetectSubLanguage->setToolTip(tr(
+		"When a sidecar .srt/.ass/.ssa/.vtt file's name carries no language code, sample its "
+		"dialogue text to detect the language and rename the file to include it. Only renames "
+		"on a high-confidence read. Off by default since this renames files on disk."));
 
 	auto* sdhRow   = new QHBoxLayout;
 	auto* sdhLabel = new QLabel(tr("SDH / hearing-impaired:"), subOptGroup);
@@ -381,6 +388,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subOptLayout->addLayout(sdhRow);
 	subOptLayout->addWidget(m_chkKeepOriginalSub);
 	subOptLayout->addWidget(m_chkMergeSidecarSubs);
+	subOptLayout->addWidget(m_chkDetectSubLanguage);
 	subLeft->addWidget(subOptGroup);
 
 	// Left bottom: OpenSubtitles
@@ -805,6 +813,7 @@ void McSettingsDialog::accept()
 	m_profile->setSdhSubtitleMode(static_cast<UserProfile::SdhSubtitleMode>(m_cmbSdhMode->currentIndex()));
 	m_profile->setKeepOriginalLanguageSubtitle(m_chkKeepOriginalSub->isChecked());
 	m_profile->setMergeSidecarSubtitles(m_chkMergeSidecarSubs->isChecked());
+	m_profile->setDetectSidecarSubtitleLanguage(m_chkDetectSubLanguage->isChecked());
 	m_profile->setWriteJobLog(m_chkWriteLog->isChecked());
 	m_profile->setUseLocalStaging(m_chkUseLocalStaging->isChecked());
 	m_profile->setLocalStagingDir(QDir::fromNativeSeparators(m_editStagingDir->text().trimmed()));

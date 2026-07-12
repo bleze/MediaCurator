@@ -325,12 +325,14 @@ McMainWindow::McMainWindow(QWidget* parent)
 	m_jobQueue->setMergeSidecarSubtitles(m_profile->mergeSidecarSubtitles());
 	m_jobQueue->setUseLocalStaging(m_profile->useLocalStaging());
 	m_jobQueue->setLocalStagingDir(m_profile->localStagingDir());
+	m_jobQueue->setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 
 	connect(m_profile, &UserProfile::profileChanged, this, [this]() {
 		m_jobQueue->setWriteJobLog(m_profile->writeJobLog());
 		m_jobQueue->setMergeSidecarSubtitles(m_profile->mergeSidecarSubtitles());
 		m_jobQueue->setUseLocalStaging(m_profile->useLocalStaging());
 		m_jobQueue->setLocalStagingDir(m_profile->localStagingDir());
+		m_jobQueue->setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 		const bool tmdbConfigured = !m_profile->tmdbApiKey().isEmpty();
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
@@ -341,6 +343,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		                                            m_profile->openSubtitlesPassword());
 		SubtitleManager::instance().setEnabled(m_profile->autoDownloadSubtitles());
 		SubtitleManager::instance().setUnderstoodLanguages(m_profile->understoodLanguages());
+		SubtitleManager::instance().setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 	});
 
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
@@ -584,6 +587,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	sm.start(m_profile->openSubtitlesApiKey(), m_profile->openSubtitlesUsername(),
 	         m_profile->openSubtitlesPassword(), m_profile->autoDownloadSubtitles(),
 	         m_profile->understoodLanguages());
+	sm.setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 	connect(&sm, &SubtitleManager::subtitlesReady, this, [this](qint64 fileId, int downloaded) {
 		m_listModel->reloadFile(fileId);
 		m_jobPanel->refresh();
@@ -942,7 +946,8 @@ void McMainWindow::setupUi()
 					for (const auto& s : existing)
 						if (!s.isExternal) containerStreams << s;
 					const auto sidecars = ScanWorker::scanSidecarSubtitles(
-						filePath, ScanWorker::nextSidecarStreamIndex(containerStreams));
+						filePath, ScanWorker::nextSidecarStreamIndex(containerStreams),
+						m_profile->detectSidecarSubtitleLanguage());
 					auto allStreams = containerStreams;
 					allStreams.append(sidecars);
 					db.insertStreams(fileId, allStreams);
@@ -1365,7 +1370,8 @@ void McMainWindow::setupUi()
 				for (const auto& s : existing)
 					if (!s.isExternal) containerStreams << s;
 				const auto sidecars = ScanWorker::scanSidecarSubtitles(
-					filePath, ScanWorker::nextSidecarStreamIndex(containerStreams));
+					filePath, ScanWorker::nextSidecarStreamIndex(containerStreams),
+					m_profile->detectSidecarSubtitleLanguage());
 				auto allStreams = containerStreams;
 				allStreams.append(sidecars);
 				db.insertStreams(fileId, allStreams);
@@ -2129,6 +2135,7 @@ void McMainWindow::createScanWorkerForGroup(int groupId, const QString& folderPa
 	auto* worker = new ScanWorker(ffprobePath);
 	worker->setRootPath(folderPath);
 	worker->setQuickScan(quickScan);
+	worker->setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 	worker->moveToThread(thread);
 
 	state.thread = thread;

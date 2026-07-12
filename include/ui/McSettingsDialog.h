@@ -61,6 +61,7 @@ private:
 	QComboBox*   m_cmbSdhMode;
 	QCheckBox*   m_chkKeepOriginalSub;
 	QCheckBox*   m_chkMergeSidecarSubs;
+	QCheckBox*   m_chkDetectSubLanguage;
 	QCheckBox*   m_chkWriteLog;
 	QCheckBox*   m_chkUseLocalStaging;
 	QLineEdit*   m_editStagingDir;

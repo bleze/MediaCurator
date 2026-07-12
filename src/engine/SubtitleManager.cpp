@@ -69,6 +69,11 @@ public slots:
 		m_understoodLanguages = std::move(languages);
 	}
 
+	void setDetectSubtitleLanguage(bool detect)
+	{
+		m_detectSubtitleLanguage = detect;
+	}
+
 	void enqueueFile(qint64 fileId)
 	{
 		if (m_stopping || fileId <= 0) return;
@@ -178,7 +183,7 @@ private:
 			for (const auto& s : streams)
 				if (!s.isExternal) containerStreams << s;
 			const auto sidecars = ScanWorker::scanSidecarSubtitles(
-			    file.path, ScanWorker::nextSidecarStreamIndex(containerStreams));
+			    file.path, ScanWorker::nextSidecarStreamIndex(containerStreams), m_detectSubtitleLanguage);
 			auto allStreams = containerStreams;
 			allStreams.append(sidecars);
 			DatabaseManager::instance().insertStreams(fileId, allStreams);
@@ -196,6 +201,7 @@ private:
 	QString                 m_apiKey, m_username, m_password;
 	QStringList             m_understoodLanguages;
 	bool                    m_enabled         = false;
+	bool                    m_detectSubtitleLanguage = false;
 	bool                    m_stopping        = false;
 	bool                    m_processing      = false;
 	bool                    m_quotaExhausted  = false;
@@ -239,6 +245,8 @@ void SubtitleManager::start(const QString& apiKey, const QString& username, cons
 	        m_worker, &SubtitleWorker::setEnabled, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerSetUnderstoodLanguages,
 	        m_worker, &SubtitleWorker::setUnderstoodLanguages, Qt::QueuedConnection);
+	connect(this, &SubtitleManager::workerSetDetectSubtitleLanguage,
+	        m_worker, &SubtitleWorker::setDetectSubtitleLanguage, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueFile,
 	        m_worker, &SubtitleWorker::enqueueFile, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueBatch,
@@ -282,6 +290,11 @@ void SubtitleManager::setEnabled(bool enabled)
 void SubtitleManager::setUnderstoodLanguages(const QStringList& languages)
 {
 	emit workerSetUnderstoodLanguages(languages);
+}
+
+void SubtitleManager::setDetectSubtitleLanguage(bool detect)
+{
+	emit workerSetDetectSubtitleLanguage(detect);
 }
 
 void SubtitleManager::enqueue(qint64 fileId)
