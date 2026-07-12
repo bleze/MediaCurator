@@ -141,7 +141,7 @@ void UpdateChecker::downloadAndInstall(const QString& installerUrl)
 	m_downloadReply = m_nam->get(req);
 	connect(m_downloadReply, &QNetworkReply::downloadProgress,
 	        this, &UpdateChecker::downloadProgress);
-	connect(m_downloadReply, &QNetworkReply::finished, this, [this] {
+	connect(m_downloadReply, &QNetworkReply::finished, this, [this, installerUrl] {
 		QNetworkReply* reply = m_downloadReply;
 		m_downloadReply = nullptr;
 		reply->deleteLater();
@@ -152,7 +152,10 @@ void UpdateChecker::downloadAndInstall(const QString& installerUrl)
 			return;
 		}
 
-		const QString assetName = QFileInfo(reply->url().path()).fileName();
+		// Use the original request URL, not reply->url(): GitHub's
+		// browser_download_url redirects to a signed storage URL whose path
+		// is an opaque object key, not the asset's filename.
+		const QString assetName = QFileInfo(QUrl(installerUrl).path()).fileName();
 		const QString savePath  = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
 		                              .filePath(assetName.isEmpty()
 		                                            ? QStringLiteral("MediaCurator-update.exe")
