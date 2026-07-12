@@ -34,6 +34,7 @@ public:
 		SortByLargest    = 3,
 		SortByRatingHigh = 4,
 		SortByRatingLow  = 5,
+		SortByLastScanned= 6,
 	};
 
 signals:

@@ -162,6 +162,7 @@ bool McFileListModel::entryLessThan(const FileEntry& a, const FileEntry& b) cons
 	case SortByLargest:    return a.file.sizeBytes   > b.file.sizeBytes;
 	case SortByRatingHigh: return m_ratings.value(a.file.id, 0.0) > m_ratings.value(b.file.id, 0.0);
 	case SortByRatingLow:  return m_ratings.value(a.file.id, 0.0) < m_ratings.value(b.file.id, 0.0);
+	case SortByLastScanned:return a.file.scanTime    > b.file.scanTime;
 	default:               // SortByName
 		return a.file.filename.compare(b.file.filename, Qt::CaseInsensitive) < 0;
 	}

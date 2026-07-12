@@ -206,6 +206,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	m_sortCombo->addItem(tr("Largest"),      SortByLargest);    // 4
 	m_sortCombo->addItem(tr("Rating ↓"),     SortByRatingHigh); // 5
 	m_sortCombo->addItem(tr("Rating ↑"),     SortByRatingLow);  // 6
+	m_sortCombo->addItem(tr("Last scanned"), SortByLastScanned);// 7
 	if (auto* m = qobject_cast<QStandardItemModel*>(m_sortCombo->model()))
 		if (auto* item = m->item(0))
 			item->setEnabled(false);

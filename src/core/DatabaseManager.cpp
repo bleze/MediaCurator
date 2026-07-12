@@ -651,6 +651,7 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit, int sort
 	        needsRatingJoin = true;                                   break; // SortByRatingHigh
 	case 5: orderBy = QStringLiteral("COALESCE(pc.vote_average, 0.0) ASC");
 	        needsRatingJoin = true;                                   break; // SortByRatingLow
+	case 6: orderBy = QStringLiteral("f.scan_time DESC");              break; // SortByLastScanned
 	default: orderBy = QStringLiteral("f.filename COLLATE NOCASE ASC"); break; // SortByName
 	}
 

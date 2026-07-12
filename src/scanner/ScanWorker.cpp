@@ -16,6 +16,54 @@
 
 #include <functional>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+static FILETIME toFileTime(const QDateTime& dt)
+{
+	const qint64 ns100 = (dt.toMSecsSinceEpoch() + Q_INT64_C(11644473600000)) * 10000;
+	FILETIME ft;
+	ft.dwLowDateTime  = static_cast<DWORD>(ns100 & 0xFFFFFFFF);
+	ft.dwHighDateTime = static_cast<DWORD>((ns100 >> 32) & 0xFFFFFFFF);
+	return ft;
+}
+// Restore a renamed sidecar subtitle's own creation/modified timestamps. Mirrors
+// preserveTimestamps() in RemuxJob.cpp/JobQueue.cpp.
+static void preserveTimestamps(const QString& target, const QDateTime& origCreated, const QDateTime& origModified)
+{
+	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(target.utf16()),
+	                       FILE_WRITE_ATTRIBUTES, 0, nullptr, OPEN_EXISTING,
+	                       FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	FILETIME ftCreated  = origCreated.isValid()  ? toFileTime(origCreated)  : FILETIME{};
+	FILETIME ftModified = origModified.isValid() ? toFileTime(origModified) : FILETIME{};
+	SetFileTime(h,
+	            origCreated.isValid()  ? &ftCreated  : nullptr,
+	            nullptr,
+	            origModified.isValid() ? &ftModified : nullptr);
+	CloseHandle(h);
+}
+// Restore the folder's own timestamps after a sidecar rename touches its directory
+// entry, so a language-detection rename doesn't bubble the movie's folder up as
+// "newest" in media libraries that sort by Date Modified. Mirrors preserveDirTimestamps()
+// in OpenSubtitlesClient.cpp, needs FILE_FLAG_BACKUP_SEMANTICS to open a directory handle.
+static void preserveDirTimestamps(const QString& dirPath, const QDateTime& origCreated, const QDateTime& origModified)
+{
+	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(dirPath.utf16()),
+	                       FILE_WRITE_ATTRIBUTES,
+	                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                       nullptr, OPEN_EXISTING,
+	                       FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	FILETIME ftCreated  = origCreated.isValid()  ? toFileTime(origCreated)  : FILETIME{};
+	FILETIME ftModified = origModified.isValid() ? toFileTime(origModified) : FILETIME{};
+	SetFileTime(h,
+	            origCreated.isValid()  ? &ftCreated  : nullptr,
+	            nullptr,
+	            origModified.isValid() ? &ftModified : nullptr);
+	CloseHandle(h);
+}
+#endif
+
 namespace Mc {
 
 const QStringList& ScanWorker::videoExtensions()
@@ -205,6 +253,12 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 
 	static const QRegularExpression separatorRe(QStringLiteral("[._\\-]"));
 
+	// Captured lazily on the first rename below — a language-detection rename touches
+	// the directory entry, which bumps the folder's Date Modified on Windows and makes
+	// the movie look "new" in library views that sort by it.
+	QDateTime dirOrigCreated, dirOrigModified;
+	bool anyRenamed = false;
+
 	QList<StreamRecord> result;
 	int idx = startIndex;
 
@@ -257,12 +311,26 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 						qWarning() << "Detected language for" << fi.fileName()
 						           << "but" << QFileInfo(newPath).fileName()
 						           << "already exists — leaving unlabeled";
-					} else if (QFile::rename(finalPath, newPath)) {
-						qDebug() << "Detected" << code639_2 << "(" << detected->confidencePercent
-						         << "% confidence ) for" << fi.fileName()
-						         << "-> renamed to" << QFileInfo(newPath).fileName();
-						lang      = code639_2;
-						finalPath = newPath;
+					} else {
+#ifdef Q_OS_WIN
+						if (!anyRenamed) {
+							dirOrigCreated  = QFileInfo(dir).birthTime();
+							dirOrigModified = QFileInfo(dir).lastModified();
+						}
+						const QDateTime fileOrigCreated  = fi.birthTime();
+						const QDateTime fileOrigModified = fi.lastModified();
+#endif
+						if (QFile::rename(finalPath, newPath)) {
+							qDebug() << "Detected" << code639_2 << "(" << detected->confidencePercent
+							         << "% confidence ) for" << fi.fileName()
+							         << "-> renamed to" << QFileInfo(newPath).fileName();
+							lang       = code639_2;
+							finalPath  = newPath;
+							anyRenamed = true;
+#ifdef Q_OS_WIN
+							preserveTimestamps(newPath, fileOrigCreated, fileOrigModified);
+#endif
+						}
 					}
 				}
 			}
@@ -280,6 +348,12 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 		s.externalPath      = finalPath;
 		result.append(s);
 	}
+
+#ifdef Q_OS_WIN
+	if (anyRenamed)
+		preserveDirTimestamps(dir, dirOrigCreated, dirOrigModified);
+#endif
+
 	return result;
 }
 
