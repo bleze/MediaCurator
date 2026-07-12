@@ -65,6 +65,49 @@ add_library(nlohmann_json INTERFACE)
 target_include_directories(nlohmann_json INTERFACE "${CMAKE_SOURCE_DIR}/third_party")
 add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
 
+# ── CLD2 (vendored "lite" build — n-gram language detection for subtitle text) ─
+# Pinned at CLD2Owners/cld2@b56fa78, Apache-2.0 (see third_party/cld2/LICENSE).
+# This is the same table set ("quadchrome_2") Chrome shipped for years — accurate
+# enough for a few paragraphs of dialogue without the ~70MB "full" table set.
+set(CLD2_DIR "${CMAKE_SOURCE_DIR}/third_party/cld2")
+add_library(cld2 STATIC
+    "${CLD2_DIR}/internal/cldutil.cc"
+    "${CLD2_DIR}/internal/cldutil_shared.cc"
+    "${CLD2_DIR}/internal/compact_lang_det.cc"
+    "${CLD2_DIR}/internal/compact_lang_det_hint_code.cc"
+    "${CLD2_DIR}/internal/compact_lang_det_impl.cc"
+    "${CLD2_DIR}/internal/debug.cc"
+    "${CLD2_DIR}/internal/fixunicodevalue.cc"
+    "${CLD2_DIR}/internal/generated_entities.cc"
+    "${CLD2_DIR}/internal/generated_language.cc"
+    "${CLD2_DIR}/internal/generated_ulscript.cc"
+    "${CLD2_DIR}/internal/getonescriptspan.cc"
+    "${CLD2_DIR}/internal/lang_script.cc"
+    "${CLD2_DIR}/internal/offsetmap.cc"
+    "${CLD2_DIR}/internal/scoreonescriptspan.cc"
+    "${CLD2_DIR}/internal/tote.cc"
+    "${CLD2_DIR}/internal/utf8statetable.cc"
+    "${CLD2_DIR}/internal/cld_generated_cjk_uni_prop_80.cc"
+    "${CLD2_DIR}/internal/cld2_generated_cjk_compatible.cc"
+    "${CLD2_DIR}/internal/cld_generated_cjk_delta_bi_4.cc"
+    "${CLD2_DIR}/internal/generated_distinct_bi_0.cc"
+    "${CLD2_DIR}/internal/cld2_generated_quadchrome_2.cc"
+    "${CLD2_DIR}/internal/cld2_generated_deltaoctachrome.cc"
+    "${CLD2_DIR}/internal/cld2_generated_distinctoctachrome.cc"
+    "${CLD2_DIR}/internal/cld_generated_score_quad_octa_2.cc"
+)
+target_include_directories(cld2
+    PUBLIC  "${CLD2_DIR}/public"
+    PRIVATE "${CLD2_DIR}/internal"
+)
+# Vendored source we don't maintain — silence rather than patch upstream warnings.
+if(MSVC)
+    target_compile_options(cld2 PRIVATE /w)
+else()
+    target_compile_options(cld2 PRIVATE -w)
+endif()
+add_library(cld2::cld2 ALIAS cld2)
+
 # ── Sub-directories ────────────────────────────────────────────────────────────
 add_subdirectory(src)
 

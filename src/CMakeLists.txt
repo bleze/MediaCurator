@@ -60,6 +60,7 @@ set(MC_SOURCES
 
     # Scanner extras
     scanner/OriginalLanguageDetector.cpp
+    scanner/SubtitleLanguageDetector.cpp
     scanner/NfoParser.cpp
 
 )
@@ -77,6 +78,7 @@ set(MC_HEADERS
     ../include/scanner/FfprobeScanner.h
     ../include/scanner/ScanWorker.h
     ../include/scanner/OriginalLanguageDetector.h
+    ../include/scanner/SubtitleLanguageDetector.h
     ../include/scanner/NfoParser.h
 
     # Engine
@@ -211,6 +213,7 @@ target_link_libraries(MediaCurator PRIVATE
     Qt6::Network
     Qt6::Svg
     nlohmann_json::nlohmann_json
+    cld2::cld2
 )
 
 if(WIN32)

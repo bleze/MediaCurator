@@ -54,11 +54,13 @@ static void preserveDirTimestamps(const QString& dirPath, const QDateTime& origC
 
 namespace Mc {
 
-// ── ISO 639-2 → ISO 639-1 conversion ─────────────────────────────────────────
+// ── ISO 639-2 ⇄ ISO 639-1 conversion ─────────────────────────────────────────
+// Single source-of-truth pair list — both directions are derived from this so
+// they can't silently drift apart.
 
-QString iso6392to6391(const QString& iso6392)
+static const QList<QPair<QString, QString>>& iso639PairTable()
 {
-	static const QHash<QString, QString> map = {
+	static const QList<QPair<QString, QString>> pairs = {
 		{"ara","ar"},{"zho","zh"},{"hrv","hr"},{"ces","cs"},{"dan","da"},
 		{"nld","nl"},{"eng","en"},{"fin","fi"},{"fra","fr"},{"deu","de"},
 		{"ell","el"},{"heb","he"},{"hun","hu"},{"ind","id"},{"ita","it"},
@@ -69,7 +71,27 @@ QString iso6392to6391(const QString& iso6392)
 		{"lav","lv"},{"lit","lt"},{"msa","ms"},{"slv","sl"},{"nob","nb"},
 		{"nno","nn"},{"fas","fa"},{"ben","bn"},{"tam","ta"},{"tel","te"},
 	};
+	return pairs;
+}
+
+QString iso6392to6391(const QString& iso6392)
+{
+	static const QHash<QString, QString> map = [] {
+		QHash<QString, QString> m;
+		for (const auto& [c6392, c6391] : iso639PairTable()) m.insert(c6392, c6391);
+		return m;
+	}();
 	return map.value(iso6392.toLower());
+}
+
+QString iso6391to6392(const QString& iso6391)
+{
+	static const QHash<QString, QString> map = [] {
+		QHash<QString, QString> m;
+		for (const auto& [c6392, c6391] : iso639PairTable()) m.insert(c6391, c6392);
+		return m;
+	}();
+	return map.value(iso6391.toLower());
 }
 
 QStringList missingSubtitleLanguages(const QList<StreamRecord>& streams,
@@ -520,8 +542,13 @@ void SubtitleDownloadWorker::run()
 
 		emit languageStarted(lang);
 
-		const auto&   r        = resultMap[lang];
-		const QString savePath = QStringLiteral("%1/%2.%3.srt").arg(dir, basename, lang);
+		const auto&   r = resultMap[lang];
+		// File name uses the 3-letter code — matches the manual "Set Language" menu
+		// and SubtitleLanguageDetector's renames — even though `lang` itself (used
+		// for the API query and the signals above) stays ISO 639-1 throughout.
+		const QString lang6392  = iso6391to6392(lang);
+		const QString fileLang  = !lang6392.isEmpty() ? lang6392 : lang;
+		const QString savePath  = QStringLiteral("%1/%2.%3.srt").arg(dir, basename, fileLang);
 		qCDebug(lcOS) << "Downloading file_id" << r.fileId << "→" << savePath;
 
 		if (client.downloadToFile(r.fileId, savePath)) {

@@ -1,11 +1,14 @@
 ﻿#include "scanner/ScanWorker.h"
 #include "core/DatabaseManager.h"
 #include "scanner/NfoParser.h"
+#include "scanner/SubtitleLanguageDetector.h"
+#include "engine/ActionEngine.h"
 
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QDebug>
 #include <QRegularExpression>
@@ -70,6 +73,75 @@ static const QHash<QString, QString>& subtitleLangMap()
 		{"ukrainian","ukr"},{"croatian","hrv"},{"serbian","srp"},{"bulgarian","bul"},
 	};
 	return m;
+}
+
+// Reads up to this many raw bytes of a sidecar subtitle file to sample for
+// language detection — enough dialogue for CLD2 to be confident without
+// reading pathologically large files in full.
+static constexpr qint64 kSubtitleSampleReadCap = 200 * 1024;
+
+// Strips subtitle-format markup/timing so only dialogue prose remains, for
+// feeding to SubtitleLanguageDetector. Returns empty for formats with no
+// text to extract (image-based .sub/VobSub, per subtitleExtToCodec() above)
+// or files that fail to open.
+//
+// Read as UTF-8 unconditionally, matching NfoParser's convention elsewhere —
+// older rips in other codepages (e.g. Windows-1252) will feed CLD2 a partially
+// garbled sample, but the detector's own confidence threshold is what catches
+// that: a corrupted sample just fails to reach kMinConfidencePercent and gets
+// skipped rather than misdetected.
+static QString extractSubtitleSampleText(const QFileInfo& fi)
+{
+	const QString ext = fi.suffix().toLower();
+	if (ext != QLatin1String("srt") && ext != QLatin1String("ass") &&
+	    ext != QLatin1String("ssa") && ext != QLatin1String("vtt"))
+		return {};
+
+	QFile f(fi.absoluteFilePath());
+	if (!f.open(QIODevice::ReadOnly))
+		return {};
+	const QString content = QString::fromUtf8(f.read(kSubtitleSampleReadCap));
+
+	static const QRegularExpression tagRe(QStringLiteral("<[^>]*>|\\{[^}]*\\}"));
+	static const QRegularExpression digitsOnlyRe(QStringLiteral("^\\d+$"));
+	const bool isAss = (ext == QLatin1String("ass") || ext == QLatin1String("ssa"));
+
+	QString sample;
+	sample.reserve(4096);
+	for (const QString& rawLine : content.split(QLatin1Char('\n'))) {
+		QString line = rawLine.trimmed();
+		if (line.isEmpty())
+			continue;
+
+		if (isAss) {
+			if (!line.startsWith(QLatin1String("Dialogue:")))
+				continue;
+			// "Dialogue: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text"
+			int commas = 0, textStart = -1;
+			for (int i = 0; i < line.size(); ++i) {
+				if (line[i] == QLatin1Char(',') && ++commas == 9) { textStart = i + 1; break; }
+			}
+			if (textStart < 0)
+				continue;
+			line = line.mid(textStart);
+			line.replace(QLatin1String("\\N"), QLatin1String(" "));
+			line.replace(QLatin1String("\\n"), QLatin1String(" "));
+		} else {
+			if (line.contains(QLatin1String("-->")) || line == QLatin1String("WEBVTT") ||
+			    digitsOnlyRe.match(line).hasMatch())
+				continue;
+		}
+
+		line.remove(tagRe);
+		if (line.isEmpty())
+			continue;
+
+		sample += line;
+		sample += QLatin1Char(' ');
+		if (sample.size() >= 4000)
+			break; // plenty for a confident read; avoid scanning huge files fully
+	}
+	return sample;
 }
 
 int ScanWorker::nextSidecarStreamIndex(const QList<StreamRecord>& containerStreams)
@@ -165,6 +237,36 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 			}
 		}
 
+		QString finalPath = fi.absoluteFilePath();
+
+		// Filename carried no language token — read the dialogue itself and, only on
+		// a high-confidence read, rename the file so the language is never re-guessed
+		// (subsequent scans will then parse it straight from the filename above).
+		if (lang.isEmpty()) {
+			const QString sample = extractSubtitleSampleText(fi);
+			if (const auto detected = SubtitleLanguageDetector::detect(sample)) {
+				const QString lower  = detected->code.toLower();
+				const QString mapped = subtitleLangMap().value(lower);
+				const QString code639_2 = !mapped.isEmpty() ? mapped
+				                         : (lower.length() == 3 ? lower : QString());
+				if (!code639_2.isEmpty()) {
+					const QString newPath = ActionEngine::insertLanguageIntoSidecarPath(
+						finalPath, baseName, code639_2);
+					if (QFile::exists(newPath)) {
+						qWarning() << "Detected language for" << fi.fileName()
+						           << "but" << QFileInfo(newPath).fileName()
+						           << "already exists — leaving unlabeled";
+					} else if (QFile::rename(finalPath, newPath)) {
+						qDebug() << "Detected" << code639_2 << "(" << detected->confidencePercent
+						         << "% confidence ) for" << fi.fileName()
+						         << "-> renamed to" << QFileInfo(newPath).fileName();
+						lang      = code639_2;
+						finalPath = newPath;
+					}
+				}
+			}
+		}
+
 		StreamRecord s;
 		s.streamIndex       = idx++;
 		s.codecType         = QStringLiteral("subtitle");
@@ -174,7 +276,7 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 		s.isForced          = isForced;
 		s.isHearingImpaired = isSDH;
 		s.isExternal        = true;
-		s.externalPath      = fi.absoluteFilePath();
+		s.externalPath      = finalPath;
 		result.append(s);
 	}
 	return result;

@@ -126,6 +126,12 @@ private:
 
 QString iso6392to6391(const QString& iso6392);
 
+// Reverse of the above — used to name downloaded sidecar files with the same
+// 3-letter convention as the rest of the app (manual "Set Language" menu,
+// SubtitleLanguageDetector), even though the OpenSubtitles API itself is
+// queried with 2-letter codes.
+QString iso6391to6392(const QString& iso6391);
+
 // Understood languages (ISO 639-2) with no subtitle coverage among the given streams.
 // A stream covers a language if it's a subtitle track whose language converts to the
 // same ISO 639-1 code. "mul" (multiple/unknown) is never treated as missing.
