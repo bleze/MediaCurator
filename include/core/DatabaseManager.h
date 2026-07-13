@@ -6,6 +6,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QString>
+#include <QStringList>
 #include <QList>
 #include <QMetaType>
 #include <optional>
@@ -235,7 +236,12 @@ public:
 	bool updateJobEstimate(qint64 jobId, qint64 estimatedSavedBytes, const QString& streamEstimatesJson);
 	void updateCalibrationFromJob(qint64 jobId);
 	[[nodiscard]] QList<CalibrationEntry> calibrationReport() const;
-	void clearCalibration();
+	// Empty codecNames clears everything; otherwise clears only the named
+	// codecs' used_fallback=1 rows — the ones actually included when the
+	// calibration dialog's "Copy Suggested Code" ran, so a format still
+	// accumulating samples (too few to have been actionable yet) isn't reset
+	// just because some other format's constant was just updated in code.
+	void clearCalibration(const QStringList& codecNames = {});
 	bool updateJobType(qint64 jobId, const QString& jobType);
 	bool updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson);
 	bool updateJobFlagChanges(qint64 jobId, const QString& flagChangesJson);

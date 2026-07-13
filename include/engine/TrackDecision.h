@@ -35,8 +35,9 @@ namespace FallbackBps {
 	constexpr double kTrueHd           = 3'500'000.0; // TrueHD / Atmos — 5.1 (6ch) reference
 	constexpr double kTrueHdPerChannel =   583'333.0; // kTrueHd / 6 — scale by actual channel count
 	constexpr double kPcmDefault       = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
-	constexpr double kFlac             =   620'000.0; // FLAC (lossless, variable)
-	constexpr double kPgsSubtitle      =    10'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
+	constexpr double kFlac             =   620'000.0; // FLAC (lossless, variable) — 2.0 (stereo) reference
+	constexpr double kFlacPerChannel   =   310'000.0; // kFlac / 2 — scale by actual channel count
+	constexpr double kPgsSubtitle      =    16'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
 	constexpr double kTextSubtitle     =     5'000.0; // SRT / ASS / SSA / WebVTT
 } // namespace FallbackBps
 
@@ -61,7 +62,7 @@ inline double effectiveBitrate(const StreamRecord& s) noexcept
 			return FallbackBps::kPcmDefault;
 		}
 		if (cn == QLatin1String("flac"))
-			return FallbackBps::kFlac;
+			return s.channels > 0 ? FallbackBps::kFlacPerChannel * s.channels : FallbackBps::kFlac;
 		return FallbackBps::kAudio;
 	}
 	if (s.codecType == QLatin1String("subtitle")) {
@@ -118,7 +119,7 @@ inline double fallbackBpsForKey(const QString& key)
 	if (key == QLatin1String("dts-hd"))          return FallbackBps::kDtsHdPerChannel;
 	if (key == QLatin1String("truehd"))          return FallbackBps::kTrueHdPerChannel;
 	if (key == QLatin1String("pcm"))             return FallbackBps::kPcmDefault;
-	if (key == QLatin1String("flac"))            return FallbackBps::kFlac;
+	if (key == QLatin1String("flac"))            return FallbackBps::kFlacPerChannel;
 	if (key == QLatin1String("audio-lossy"))     return FallbackBps::kAudio;
 	if (key == QLatin1String("image-subtitle"))  return FallbackBps::kPgsSubtitle;
 	if (key == QLatin1String("text-subtitle"))   return FallbackBps::kTextSubtitle;
@@ -130,7 +131,7 @@ inline QString fallbackBpsConstName(const QString& key)
 	if (key == QLatin1String("dts-hd"))          return QStringLiteral("kDtsHdPerChannel");
 	if (key == QLatin1String("truehd"))          return QStringLiteral("kTrueHdPerChannel");
 	if (key == QLatin1String("pcm"))             return QStringLiteral("kPcmDefault");
-	if (key == QLatin1String("flac"))            return QStringLiteral("kFlac");
+	if (key == QLatin1String("flac"))            return QStringLiteral("kFlacPerChannel");
 	if (key == QLatin1String("audio-lossy"))     return QStringLiteral("kAudio");
 	if (key == QLatin1String("image-subtitle"))  return QStringLiteral("kPgsSubtitle");
 	if (key == QLatin1String("text-subtitle"))   return QStringLiteral("kTextSubtitle");

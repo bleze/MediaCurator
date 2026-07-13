@@ -4,6 +4,7 @@
 #include "engine/ActionEngine.h"
 #include "engine/TrackDecision.h"
 
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
@@ -279,15 +280,12 @@ void McJobListModel::reloadPaged(int limit)
 	applyFilter();
 }
 
-void McJobListModel::setSortMode(JobSortMode sortMode)
+void McJobListModel::resortAllEntries()
 {
-	if (m_sortMode == sortMode) return;
-	m_sortMode = sortMode;
-
 	// Every field these sorts key on (savedBytes-derived estimate, finishedAt,
 	// sizeBytes/createdAt) is already sitting in m_allEntries — re-sort in place
-	// instead of the caller doing a full DB reload just to change row order.
-	switch (sortMode) {
+	// instead of the caller doing a full DB reload just to fix row order.
+	switch (m_sortMode) {
 	case JobSortMode::LargestSavingsFirst:
 		sortEntriesByDisplaySavings(m_allEntries, m_allCheckStates);
 		break;
@@ -299,7 +297,14 @@ void McJobListModel::setSortMode(JobSortMode sortMode)
 		sortEntriesBySmallestFirst(m_allEntries, m_allCheckStates);
 		break;
 	}
-	applyFilter();
+}
+
+void McJobListModel::setSortMode(JobSortMode sortMode)
+{
+	if (m_sortMode == sortMode) return;
+	m_sortMode = sortMode;
+	resortAllEntries();
+	applyFilter(/*forceFullReset=*/true);
 }
 
 void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 savedBytes)
@@ -310,24 +315,22 @@ void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 saved
 		if (e.job.jobId != jobId) continue;
 		e.job.status = status;
 		if (savedBytes >= 0) e.job.savedBytes = savedBytes;
+		// Mirrors DatabaseManager::updateJobStatus() — every non-"running" status
+		// transition stamps finished_at there. Without updating it here too,
+		// "Most Recent First" keeps sorting on whatever stale finishedAt this
+		// entry was loaded with and a job that just finished never moves to the top.
+		if (status != QLatin1String("running"))
+			e.job.finishedAt = QDateTime::currentSecsSinceEpoch();
 		break;
 	}
-	// Update filtered view — or reapply if status filter makes entry appear/disappear
-	for (int i = 0; i < m_entries.size(); ++i) {
-		if (m_entries[i].job.jobId != jobId) continue;
-		m_entries[i].job.status = status;
-		if (savedBytes >= 0) m_entries[i].job.savedBytes = savedBytes;
-		if (!statusMatchesFilter(status)) {
-			applyFilter();   // entry no longer passes status filter
-		} else {
-			const QModelIndex idx = index(i);
-			emit dataChanged(idx, idx, { StatusRole, SavedRole });
-		}
-		return;
-	}
-	// Not in filtered view — check if the status change makes it visible now
-	if (statusMatchesFilter(status))
-		applyFilter();
+	// A status transition can change this entry's position under the current sort
+	// mode (MostRecentFirst on the finishedAt just stamped above, LargestSavingsFirst
+	// once an estimate is known), not just its filter membership — resort first.
+	// That reorders m_allEntries, which applyFilter()'s diff-based fast path can't
+	// express (it assumes only filter membership changes between calls, never a
+	// reorder) — force a full reset instead of letting it silently drop the reorder.
+	resortAllEntries();
+	applyFilter(/*forceFullReset=*/true);
 }
 
 QList<qint64> McJobListModel::jobIdsForFile(qint64 fileId) const
@@ -489,7 +492,7 @@ bool McJobListModel::statusMatchesFilter(const QString& status) const
 	return status == m_filterStatus;
 }
 
-void McJobListModel::applyFilter()
+void McJobListModel::applyFilter(bool forceFullReset)
 {
 	using QF = McFilterPanel;
 
@@ -591,6 +594,18 @@ void McJobListModel::applyFilter()
 
 		newEntries.append(e);
 		newChecks.append(m_allCheckStates[i]);
+	}
+
+	// forceFullReset: m_allEntries was just re-sorted (resortAllEntries()), so its
+	// relative order changed — the diff below can't express a pure reorder (it
+	// only knows insertion/removal), so skip straight to a full reset instead of
+	// risking an incomplete update.
+	if (forceFullReset) {
+		beginResetModel();
+		m_entries     = std::move(newEntries);
+		m_checkStates = std::move(newChecks);
+		endResetModel();
+		return;
 	}
 
 	// Diff against the previous filtered list instead of a full model reset.

@@ -1328,10 +1328,20 @@ QList<Mc::CalibrationEntry> DatabaseManager::calibrationReport() const
 	return result;
 }
 
-void DatabaseManager::clearCalibration()
+void DatabaseManager::clearCalibration(const QStringList& codecNames)
 {
 	QSqlQuery q(connection());
-	q.exec("DELETE FROM codec_calibration");
+	if (codecNames.isEmpty()) {
+		q.exec("DELETE FROM codec_calibration");
+		return;
+	}
+	QStringList placeholders;
+	for (int i = 0; i < codecNames.size(); ++i) placeholders << QStringLiteral("?");
+	q.prepare(QStringLiteral("DELETE FROM codec_calibration WHERE used_fallback=1 AND codec_name IN (%1)")
+	          .arg(placeholders.join(QLatin1Char(','))));
+	for (const QString& name : codecNames) q.addBindValue(name);
+	if (!q.exec())
+		qWarning() << "clearCalibration failed:" << q.lastError().text();
 }
 
 bool DatabaseManager::updateJobType(qint64 jobId, const QString& jobType)

@@ -12,6 +12,8 @@
 #include <QCoreApplication>
 #include <QColor>
 #include <QFont>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
@@ -258,6 +260,47 @@ int main(int argc, char* argv[])
 	qRegisterMetaType<Mc::FileIdList>("QList<qint64>");
 
 	QApplication app(argc, argv);
+
+	// ── Single instance guard ────────────────────────────────────────────────
+	// A second process reading/writing the same SQLite DB (jobs, scans, subtitle
+	// downloads) races the first and can stomp its state — e.g. cleanupStalledJobs()
+	// below would wrongly reset a job the other instance has legitimately marked
+	// "running". If another MediaCurator already answers on this local socket,
+	// ask it to raise its window and exit immediately instead of opening a second one.
+	static const QString kSingleInstanceServerName = QStringLiteral("MediaCurator-SingleInstance");
+	{
+		QLocalSocket probe;
+		probe.connectToServer(kSingleInstanceServerName);
+		if (probe.waitForConnected(200)) {
+			probe.write("activate");
+			probe.waitForBytesWritten(200);
+			return 0;
+		}
+	}
+	// No live instance answered — become the primary. Remove any stale socket a
+	// crashed previous instance may have left behind before listening for real.
+	QLocalServer::removeServer(kSingleInstanceServerName);
+	auto* singleInstanceServer = new QLocalServer(&app);
+	singleInstanceServer->listen(kSingleInstanceServerName);
+	// Set once McMainWindow is constructed below; captured by reference so the
+	// newConnection handler (which can fire before or after that point) always
+	// sees the current value.
+	Mc::McMainWindow* activeMainWindow = nullptr;
+	QObject::connect(singleInstanceServer, &QLocalServer::newConnection, [singleInstanceServer, &activeMainWindow]() {
+		QLocalSocket* client = singleInstanceServer->nextPendingConnection();
+		if (!client) return;
+		QObject::connect(client, &QLocalSocket::readyRead, [client, &activeMainWindow]() {
+			client->readAll();
+			if (activeMainWindow) {
+				if (activeMainWindow->isMinimized())
+					activeMainWindow->showNormal();
+				activeMainWindow->raise();
+				activeMainWindow->activateWindow();
+			}
+		});
+		QObject::connect(client, &QLocalSocket::disconnected, client, &QObject::deleteLater);
+	});
+
 	app.setStyle(new McAppStyle(QStyleFactory::create("Fusion")));
 	QPixmapCache::setCacheLimit(256 * 1024);  // 256 MB — scaled fanart/posters never evict
 
@@ -346,6 +389,7 @@ int main(int argc, char* argv[])
 	Mc::DatabaseManager::instance().cleanupStalledJobs();
 
 	Mc::McMainWindow window;
+	activeMainWindow = &window;
 	window.attachSplash(&splash, appIcon);
 
 	return app.exec();

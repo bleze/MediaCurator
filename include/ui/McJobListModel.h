@@ -124,7 +124,17 @@ private:
 	[[nodiscard]] bool ensureJobInMasterList(qint64 jobId);
 	[[nodiscard]] JobCardEntry buildCardEntry(const JobDisplayRecord& djr,
 	                                          const QHash<qint64, QList<StreamRecord>>& streamsMap) const;
-	void applyFilter();
+	// forceFullReset bypasses the diff-based incremental update (which assumes
+	// m_allEntries's relative order is unchanged since the last call — only
+	// filter membership may differ) and rebuilds m_entries from scratch instead.
+	// Needed whenever m_allEntries itself was just re-sorted (see resortAllEntries()),
+	// since the diff otherwise can't express a pure reorder and leaves stale rows.
+	void applyFilter(bool forceFullReset = false);
+	// Re-sorts m_allEntries according to m_sortMode — shared by setSortMode() and
+	// updateJob(), since a job's status transition can change its position under
+	// MostRecentFirst (finishedAt) or LargestSavingsFirst (estimate) just as much
+	// as an explicit sort-mode change does.
+	void resortAllEntries();
 	bool statusMatchesFilter(const QString& status) const;
 	static QList<StreamRecord> streamsFromJson(const QString& json);
 	static QString rebuildCommandArgs(const QString& existingJson,

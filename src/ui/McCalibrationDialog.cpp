@@ -163,19 +163,41 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 
 	connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::accept);
 
-	connect(clearBtn, &QPushButton::clicked, this, [this] {
+	connect(clearBtn, &QPushButton::clicked, this, [this, entries, MIN_SAMPLES, MIN_DRIFT] {
+		// Only the formats that were actually confident-and-drifting — i.e. the
+		// ones "Copy Suggested Code" would have included — get cleared. A format
+		// still accumulating samples (too few to be actionable yet) is left alone
+		// so it keeps its progress instead of being reset to zero for no reason.
+		QStringList actionableCodecs;
+		for (const CalibrationEntry& e : entries) {
+			if (!e.usedFallback) continue;
+			const bool confident = e.sampleCount >= MIN_SAMPLES
+			                     && e.stdDevRatio / qMax(e.avgRatio, 0.01) < 0.4;
+			const bool worthChanging = qAbs(e.avgRatio - 1.0) >= MIN_DRIFT;
+			if (confident && worthChanging)
+				actionableCodecs << e.codecName;
+		}
+
+		if (actionableCodecs.isEmpty()) {
+			QMessageBox::information(this, tr("Clear Calibration Data"),
+				tr("Nothing to clear yet — no format has enough confident, drifting "
+				   "samples to have been included in \"Copy Suggested Code\"."));
+			return;
+		}
+
 		const auto reply = QMessageBox::warning(
 			this,
 			tr("Clear Calibration Data"),
-			tr("This will delete all accumulated calibration samples.\n\n"
-			   "Do this after changing a fallback constant so that old measurements\n"
-			   "don’t skew future suggestions.\n\n"
-			   "Continue?"),
+			tr("This will delete calibration samples for the %1 format(s) that were just "
+			   "suggested for a code change:\n\n%2\n\n"
+			   "Formats still accumulating samples are left untouched.\n\nContinue?")
+			    .arg(actionableCodecs.size())
+			    .arg(actionableCodecs.join(QStringLiteral(", "))),
 			QMessageBox::Yes | QMessageBox::Cancel,
 			QMessageBox::Cancel);
 		if (reply == QMessageBox::Yes) {
-			DatabaseManager::instance().clearCalibration();
-			accept(); // Close and re-open to show empty state
+			DatabaseManager::instance().clearCalibration(actionableCodecs);
+			accept(); // Close and re-open to show updated state
 		}
 	});
 
