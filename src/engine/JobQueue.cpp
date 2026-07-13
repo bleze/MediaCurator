@@ -847,6 +847,11 @@ void JobQueue::rescanFile(qint64 fileId, const QString& filePath, bool triggerRe
 		updated.scanRunId        = fileCopy.scanRunId;
 		if (updated.originalLanguage.isEmpty())
 			updated.originalLanguage = fileCopy.originalLanguage;
+		// This is an internal rescan following a job (remux, tag edit, self-heal),
+		// not a user-initiated library scan — don't let it bump "Last scanned",
+		// or a processed movie bubbles to the top of that sort for no reason the
+		// user actually did.
+		updated.scanTime = fileCopy.scanTime;
 		(void)db2.upsertFile(updated);
 		// Re-discover sidecar subtitles alongside the (possibly renamed) file
 		const auto sidecars = ScanWorker::scanSidecarSubtitles(
