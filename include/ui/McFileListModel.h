@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "core/DatabaseManager.h"
+#include "core/StorageGroupSettings.h"
 #include <QAbstractListModel>
 #include <QHash>
 #include <QImage>
@@ -32,6 +33,8 @@ struct FileEntry {
 	QList<StreamRecord> videoStreams;
 	QList<StreamRecord> audioStreams;
 	QList<StreamRecord> subtitleStreams;
+
+	int storageGroup = StorageGroupSettings::DefaultGroup;  // 1-4, from StorageGroupSettings::groupForFilePath(file.path)
 };
 
 class McFileListModel : public QAbstractListModel
@@ -55,6 +58,7 @@ public:
 		AudioStreamsRole   = Qt::UserRole + 14,
 		SubtitleStreamsRole= Qt::UserRole + 15,
 		FileIdRole         = Qt::UserRole + 16,  // qint64 for fast id lookup (avoids full FileRecord copy in sizeHint)
+		StorageGroupRole   = Qt::UserRole + 17,  // int 1-4 — see StorageGroupSettings
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter

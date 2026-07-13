@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
 #include <QPixmap>
 #include <QVBoxLayout>
 
@@ -22,6 +23,26 @@ QLabel* badgeLabel(QWidget* parent, const QString& text, const QString& codecTyp
 	lbl->setPixmap(McCardDelegate::badgePixmap(text, codecType, parent->font(),
 	                                           parent->devicePixelRatioF(),
 	                                           flagLang, removed));
+	return lbl;
+}
+
+// Renders a storage-group chip into a label using the exact card drawing code
+// (McCardDelegate::drawGroupChip — shared with the badge on library/job cards
+// and the picker in McManageFoldersDialog).
+QLabel* groupChipLabel(QWidget* parent, int group)
+{
+	const qreal dpr = parent->devicePixelRatioF();
+	const int   w   = McCardDelegate::groupChipWidth(group, parent->font());
+	const int   h   = McCardDelegate::kBadgeH;
+
+	QPixmap pm(qRound(w * dpr), qRound(h * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	McCardDelegate::drawGroupChip(&p, 0, 0, h, group, parent->font(), dpr);
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
 	return lbl;
 }
 
@@ -208,6 +229,9 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	            badgeLabel(this, tr("Audio"),    QStringLiteral("audio")),
 	            badgeLabel(this, tr("Subtitle"), QStringLiteral("subtitle")) },
 	       tr("Pill color shows the track type"));
+	addRow(g, { groupChipLabel(this, 1), groupChipLabel(this, 2),
+	            groupChipLabel(this, 3), groupChipLabel(this, 4) },
+	       tr("Storage group — shown when library spans more than one"));
 
 	// ── Assembly: Audio + Icons left, Video + Subtitles + Badges right ───────
 	auto* columns  = new QHBoxLayout;

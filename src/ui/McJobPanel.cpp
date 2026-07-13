@@ -1423,6 +1423,12 @@ void McJobPanel::setTmdbConfigured(bool configured)
 		d->setTmdbConfigured(configured);
 }
 
+void McJobPanel::setMultiGroupBadgeEnabled(bool enabled)
+{
+	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))
+		d->setMultiGroupBadgeEnabled(enabled);
+}
+
 void McJobPanel::setFanartOpacity(double opacity)
 {
 	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))

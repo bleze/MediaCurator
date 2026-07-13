@@ -672,6 +672,7 @@ void McMainWindow::setupUi()
 
 	m_listView->setItemDelegate(fileDelegate);
 	fileDelegate->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
+	fileDelegate->setMultiGroupBadgeEnabled(StorageGroupSettings::multipleGroupsInUse());
 	fileDelegate->setFanartOpacity(
 	    AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
 
@@ -1171,6 +1172,7 @@ void McMainWindow::setupUi()
 	m_jobPanel = new McJobPanel(this);
 	m_jobPanel->setJobQueue(m_jobQueue);
 	m_jobPanel->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
+	m_jobPanel->setMultiGroupBadgeEnabled(StorageGroupSettings::multipleGroupsInUse());
 	m_jobPanel->setFanartOpacity(
 	    AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
 	m_jobPanel->setMinimumHeight(120);
@@ -2074,6 +2076,11 @@ void McMainWindow::onRemoveFolder()
 	});
 
 	dlg.exec();
+
+	const bool multiGroup = StorageGroupSettings::multipleGroupsInUse();
+	if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+		d->setMultiGroupBadgeEnabled(multiGroup);
+	m_jobPanel->setMultiGroupBadgeEnabled(multiGroup);
 
 	if (dlg.anyRemoved() || dlg.anyAdded())
 		onRefreshView();

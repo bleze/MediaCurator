@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "core/DatabaseManager.h"
+#include "core/StorageGroupSettings.h"
 #include <QAbstractListModel>
 #include <QHash>
 #include <QImage>
@@ -14,6 +15,7 @@ struct JobCardEntry {
 	QList<StreamRecord> allStreams;   // every stream for the file
 	QList<StreamRecord> keptStreams;  // streams that survive the job
 	QString             flagChangesJson; // cached flag_changes_json; updated by setStreamFlag
+	int                 storageGroup = StorageGroupSettings::DefaultGroup;  // 1-4, from StorageGroupSettings::groupForFilePath(job.filePath)
 };
 
 class McJobListModel : public QAbstractListModel
@@ -46,6 +48,7 @@ public:
 		ContainerTitleRole    = Qt::UserRole + 23,  // QString title from ffprobe format tags; may be absent or junk
 		DisplayTitleRole      = Qt::UserRole + 24,  // QString TMDB/user-assigned override; preferred over all others
 		DisplayYearRole       = Qt::UserRole + 25,  // int release year from TMDB (0 = unknown)
+		StorageGroupRole      = Qt::UserRole + 26,  // int 1-4 — see StorageGroupSettings
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);

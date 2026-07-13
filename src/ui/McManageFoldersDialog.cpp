@@ -2,12 +2,13 @@
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "core/StorageGroupSettings.h"
+#include "ui/McCardDelegate.h"
 #include "ui/SvgIcon.h"
 
 #include <algorithm>
+#include <functional>
 
 #include <QAction>
-#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
@@ -18,6 +19,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QModelIndex>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
 #include <QStyle>
@@ -74,6 +76,100 @@ protected:
 		style()->drawControl(QStyle::CE_Header, &option, painter, this);
 	}
 };
+
+// A row of colored disk-icon chips, one per storage group, exactly one checked
+// at a time. Hand-painted (hover/checked state via bookkeeping, no QButtonGroup
+// precedent exists in this codebase) — same idea as McMainWindow's McQueueToggle,
+// generalized from a single bool toggle to an N-way exclusive pick, and sharing
+// the card badge's color+icon language (StorageGroupSettings::colorForGroup,
+// storage_group.svg) so "assign a group" and "this file is in group X" read as
+// one design system.
+class McGroupChipRow final : public QWidget
+{
+public:
+	std::function<void(int)> onGroupChanged;
+
+	// Renders chips for groups MinGroup..max(maxGroup, initialGroup) — a folder
+	// already assigned to a group beyond the current uiMaxGroup() setting still
+	// shows its real assignment instead of silently losing it.
+	McGroupChipRow(int maxGroup, int initialGroup, QWidget* parent = nullptr)
+	    : QWidget(parent)
+	    , m_maxGroup(std::max(maxGroup, initialGroup))
+	    , m_selected(initialGroup)
+	{
+		setMouseTracking(true);
+		setToolTip(McManageFoldersDialog::tr(
+			"Assign folders on the same drive or NAS to the same storage group."
+			" Different groups can scan and remux in parallel."));
+	}
+
+	int selected() const { return m_selected; }
+
+protected:
+	void paintEvent(QPaintEvent*) override
+	{
+		QPainter p(this);
+		const qreal dpr = devicePixelRatioF();
+		for (int g = StorageGroupSettings::MinGroup; g <= m_maxGroup; ++g) {
+			const QRect r       = chipRect(g);
+			const bool  checked = (g == m_selected);
+			const bool  hovered = r.contains(m_hoverPos);
+			// Same chip McCardDelegate draws on cards — only opacity varies here
+			// to convey on/off (darker when off, brighter on hover, full when
+			// selected), the same darker→brighter convention as McFilterPanel's
+			// quick-filter pills (4K/DV/Atmos…), without switching to a
+			// different background/icon/text style.
+			const double opacity = checked ? 1.0 : (hovered ? 0.55 : 0.25);
+			McCardDelegate::drawGroupChip(&p, r.left(), r.top(), r.height(), g, font(), dpr, opacity);
+		}
+	}
+
+	void mousePressEvent(QMouseEvent* e) override
+	{
+		for (int g = StorageGroupSettings::MinGroup; g <= m_maxGroup; ++g) {
+			if (chipRect(g).contains(e->pos()) && g != m_selected) {
+				m_selected = g;
+				update();
+				if (onGroupChanged) onGroupChanged(g);
+				return;
+			}
+		}
+	}
+
+	void mouseMoveEvent(QMouseEvent* e) override { m_hoverPos = e->pos(); update(); }
+	void leaveEvent(QEvent*) override { m_hoverPos = { -1, -1 }; update(); }
+
+	QSize sizeHint() const override
+	{
+		int totalW = 0;
+		for (int g = StorageGroupSettings::MinGroup; g <= m_maxGroup; ++g) {
+			if (g > StorageGroupSettings::MinGroup) totalW += kChipGap;
+			totalW += McCardDelegate::groupChipWidth(g, font());
+		}
+		return { totalW, kChipH };
+	}
+
+private:
+	static constexpr int kChipH   = 18; // matches McCardDelegate::kBadgeH
+	static constexpr int kChipGap = 4;
+
+	// y is centered on the widget's actual height, not kChipH — setCellWidget()
+	// stretches this widget to fill the full (taller) row height, so a fixed
+	// y=0 would leave the chip stuck to the top of the cell.
+	QRect chipRect(int group) const
+	{
+		int x = 0;
+		for (int g = StorageGroupSettings::MinGroup; g < group; ++g)
+			x += McCardDelegate::groupChipWidth(g, font()) + kChipGap;
+		const int y = (height() - kChipH) / 2;
+		return QRect(x, y, McCardDelegate::groupChipWidth(group, font()), kChipH);
+	}
+
+	int    m_maxGroup;
+	int    m_selected;
+	QPoint m_hoverPos { -1, -1 };
+};
+
 } // namespace
 
 McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
@@ -176,21 +272,12 @@ void McManageFoldersDialog::loadFolders()
 		m_table->setItem(i, 0, pathItem);
 		m_table->setItem(i, 1, countItem);
 
-		auto* groupCombo = new QComboBox(m_table);
-		groupCombo->setToolTip(tr(
-			"Assign folders on the same drive or NAS to the same storage group."
-			" Different groups can scan and remux in parallel."));
-		for (int g = StorageGroupSettings::MinGroup; g <= StorageGroupSettings::uiMaxGroup(); ++g)
-			groupCombo->addItem(tr("Group %1").arg(g), g);
-		const int idx = groupCombo->findData(StorageGroupSettings::groupForRoot(path));
-		groupCombo->blockSignals(true);
-		groupCombo->setCurrentIndex(idx >= 0 ? idx : 0);
-		groupCombo->blockSignals(false);
-		connect(groupCombo, &QComboBox::currentIndexChanged, this,
-		        [path, groupCombo](int) {
-			StorageGroupSettings::setGroupForRoot(path, groupCombo->currentData().toInt());
-		});
-		m_table->setCellWidget(i, 2, groupCombo);
+		auto* groupRow = new McGroupChipRow(StorageGroupSettings::uiMaxGroup(),
+		                                    StorageGroupSettings::groupForRoot(path), m_table);
+		groupRow->onGroupChanged = [path](int g) {
+			StorageGroupSettings::setGroupForRoot(path, g);
+		};
+		m_table->setCellWidget(i, 2, groupRow);
 	}
 }
 
@@ -229,21 +316,13 @@ void McManageFoldersDialog::onAddFolder()
 	countItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 	m_table->setItem(row, 1, countItem);
 
-	auto* groupCombo = new QComboBox(m_table);
-	groupCombo->setToolTip(tr(
-		"Assign folders on the same drive or NAS to the same storage group."
-		" Different groups can scan and remux in parallel."));
-	for (int g = StorageGroupSettings::MinGroup; g <= StorageGroupSettings::uiMaxGroup(); ++g)
-		groupCombo->addItem(tr("Group %1").arg(g), g);
-	groupCombo->blockSignals(true);
-	groupCombo->setCurrentIndex(0);
-	groupCombo->blockSignals(false);
-	StorageGroupSettings::setGroupForRoot(folder, groupCombo->currentData().toInt());
-	connect(groupCombo, &QComboBox::currentIndexChanged, this,
-	        [folder, groupCombo](int) {
-		StorageGroupSettings::setGroupForRoot(folder, groupCombo->currentData().toInt());
-	});
-	m_table->setCellWidget(row, 2, groupCombo);
+	auto* groupRow = new McGroupChipRow(StorageGroupSettings::uiMaxGroup(),
+	                                    StorageGroupSettings::DefaultGroup, m_table);
+	StorageGroupSettings::setGroupForRoot(folder, groupRow->selected());
+	groupRow->onGroupChanged = [folder](int g) {
+		StorageGroupSettings::setGroupForRoot(folder, g);
+	};
+	m_table->setCellWidget(row, 2, groupRow);
 
 	// Let McMainWindow's existing scan infrastructure handle this —
 	// no duplicate worker here.

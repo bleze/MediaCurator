@@ -35,6 +35,7 @@ void McFileListModel::computeDerived(FileEntry& e)
 	QFileInfo fi(e.file.path);
 	e.dirName = fi.dir().dirName();
 	e.parentPath = fi.absolutePath();
+	e.storageGroup = StorageGroupSettings::groupForFilePath(e.file.path);
 
 	QString s;
 	s.reserve(128 + e.streams.size() * 32);
@@ -511,6 +512,7 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case AudioStreamsRole:   return QVariant::fromValue(e.audioStreams);
 	case SubtitleStreamsRole:return QVariant::fromValue(e.subtitleStreams);
 	case FileIdRole:         return e.file.id;
+	case StorageGroupRole:   return e.storageGroup;
 	default:              return {};
 	}
 }

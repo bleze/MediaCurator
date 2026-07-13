@@ -129,4 +129,22 @@ void StorageGroupSettings::setUiMaxGroup(int maxGroup)
 	                                qBound(2, maxGroup, MaxGroup));
 }
 
+QColor StorageGroupSettings::colorForGroup(int group)
+{
+	static const QColor kColors[MaxGroup] = {
+		{ 0x3a, 0x9c, 0x6e },  // Group 1 — teal-green
+		{ 0x5b, 0x7c, 0xd6 },  // Group 2 — indigo-blue
+		{ 0xc7, 0x7a, 0x2e },  // Group 3 — amber-brown
+		{ 0xb0, 0x4a, 0x8f },  // Group 4 — magenta-purple
+	};
+	const int idx = qBound(MinGroup, group, MaxGroup) - MinGroup;
+	return kColors[idx];
+}
+
+bool StorageGroupSettings::multipleGroupsInUse()
+{
+	const QStringList roots = AppSettings::instance().value(QStringLiteral("scan/roots")).toStringList();
+	return partitionRootsByGroup(roots).size() > 1;
+}
+
 } // namespace Mc

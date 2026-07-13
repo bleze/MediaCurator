@@ -255,6 +255,7 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/translate.svg
         resources/icons/chat.svg
         resources/icons/system_update.svg
+        resources/icons/storage_group.svg
 )
 
 # Country flags for track-badge language icons (lipis/flag-icons, MIT —

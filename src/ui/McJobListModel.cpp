@@ -142,6 +142,7 @@ JobCardEntry McJobListModel::buildCardEntry(
 {
 	JobCardEntry e;
 	e.job = djr;
+	e.storageGroup = StorageGroupSettings::groupForFilePath(djr.filePath);
 	if (djr.status == QLatin1String("done") && !djr.originalStreamsJson.isEmpty())
 		e.allStreams = streamsFromJson(djr.originalStreamsJson);
 	else
@@ -217,6 +218,7 @@ void McJobListModel::reload()
 	for (const JobDisplayRecord& djr : displayJobs) {
 		JobCardEntry e;
 		e.job = djr;
+		e.storageGroup = StorageGroupSettings::groupForFilePath(djr.filePath);
 		const QString& origJson = origStreamsMap.value(djr.jobId);
 		if (djr.status == QLatin1String("done") && !origJson.isEmpty()) {
 			// Use the pre-remux stream snapshot so removed tracks (now gone from DB)
@@ -720,6 +722,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case ContainerTitleRole: return e.job.containerTitle;
 	case DisplayTitleRole:   return e.job.displayTitle;
 	case DisplayYearRole:    return e.job.displayYear;
+	case StorageGroupRole:   return e.storageGroup;
 	default:                   return {};
 	}
 }

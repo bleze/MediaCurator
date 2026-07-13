@@ -4,6 +4,7 @@
 #include "ui/McLanguageFlags.h"
 #include "classifier/RegexClassifier.h"
 #include "core/ExternalTools.h"
+#include "core/StorageGroupSettings.h"
 #include "engine/TrackDecision.h"
 
 #include <QAbstractItemView>
@@ -124,6 +125,72 @@ QPixmap McCardDelegate::renderSvgIcon(const QString& resourcePath,
 	QSvgRenderer(svg.toUtf8()).render(&ep, QRectF(0, 0, targetH, targetH));
 	QPixmapCache::insert(key, pm);
 	return pm;
+}
+
+namespace {
+QFont groupChipFont(const QFont& baseFont)
+{
+	QFont f = baseFont;
+	f.setPointSizeF(baseFont.pointSizeF() * 0.78);
+	f.setBold(true);
+	return f;
+}
+constexpr int kGroupChipPad     = 5;
+constexpr int kGroupChipIconGap = 3;
+} // namespace
+
+int McCardDelegate::groupChipWidth(int group, const QFont& baseFont)
+{
+	const QFontMetrics fm(groupChipFont(baseFont));
+	const int textW = fm.horizontalAdvance(QString::number(group));
+	return kGroupChipPad + kFlagH + kGroupChipIconGap + textW + kGroupChipPad;
+}
+
+void McCardDelegate::drawGroupChip(QPainter* painter, int x, int y, int h, int group,
+                                   const QFont& baseFont, qreal dpr, double opacity)
+{
+	const QFont   groupFont = groupChipFont(baseFont);
+	const QString groupText = QString::number(group);
+	const int     textW     = QFontMetrics(groupFont).horizontalAdvance(groupText);
+	const int     iconSize  = kFlagH;
+	const int     w         = kGroupChipPad + iconSize + kGroupChipIconGap + textW + kGroupChipPad;
+	const QRect   chipRect(x, y, w, h);
+
+	const QColor groupColor = StorageGroupSettings::colorForGroup(group);
+	QColor bg       = groupColor.darker(160);
+	QColor iconTint = groupColor;
+	QColor textTint = Qt::white;
+	if (opacity < 1.0) {
+		// Dim background, icon, and number all toward black together, rather
+		// than toward whatever sits behind the chip (a real alpha blend washes
+		// out against an unknown — e.g. alternating table row — backdrop) and
+		// rather than leaving icon/text at full strength (which read as "on"
+		// even with a darker background). Stays fully opaque so the "off"
+		// state reads as uniformly darker.
+		const double f = 0.35 + 0.65 * opacity;
+		bg       = QColor(int(bg.red()       * f), int(bg.green()       * f), int(bg.blue()       * f));
+		iconTint = QColor(int(iconTint.red() * f), int(iconTint.green() * f), int(iconTint.blue() * f));
+		textTint = QColor(int(255 * f),             int(255 * f),             int(255 * f));
+	}
+
+	painter->save();
+	painter->setRenderHint(QPainter::Antialiasing);
+	painter->setPen(Qt::NoPen);
+	painter->setBrush(bg);
+	painter->drawRoundedRect(chipRect, 3, 3);
+
+	const QPixmap iconPm = renderSvgIcon(QStringLiteral(":/icons/storage_group.svg"),
+	                                      iconTint, iconSize, dpr);
+	if (!iconPm.isNull()) {
+		const int iy = chipRect.top() + (chipRect.height() - iconSize) / 2;
+		painter->drawPixmap(chipRect.left() + kGroupChipPad, iy, iconPm);
+	}
+	painter->setFont(groupFont);
+	painter->setPen(textTint);
+	painter->drawText(QRect(chipRect.left() + kGroupChipPad + iconSize + kGroupChipIconGap, chipRect.top(),
+	                        textW, chipRect.height()),
+	                  Qt::AlignVCenter | Qt::AlignLeft, groupText);
+	painter->restore();
 }
 
 // Reads a handful of cues from around the middle of a subtitle sidecar file
@@ -384,6 +451,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.containerTitle    = index.data(McFileListModel::ContainerTitleRole).toString();
 		d.folderCount       = index.data(McFileListModel::FolderCountRole).toInt();
 		d.originalLanguage  = file.originalLanguage;
+		d.storageGroup      = index.data(McFileListModel::StorageGroupRole).toInt();
 		d.fanartPath        = index.data(McFileListModel::FanartRole).toString();
 		d.allStreams         = index.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
 		d.videoStreams       = index.data(McFileListModel::VideoStreamsRole).value<QList<StreamRecord>>();
@@ -408,6 +476,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
 		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued") || d.status == QLatin1String("failed"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
+		d.storageGroup      = index.data(McJobListModel::StorageGroupRole).toInt();
 		d.displayTitle      = index.data(McJobListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McJobListModel::DisplayYearRole).toInt();
 		d.containerTitle    = index.data(McJobListModel::ContainerTitleRole).toString();
@@ -1042,6 +1111,21 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 		return true;
 	}
 
+	// Storage-group chip tooltip — mirrors the chip's position/size in paint().
+	if (m_showGroupBadge) {
+		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
+		                content.width(), kHeaderH);
+		const QRect playBtn = playButtonRect(content);
+
+		const int   chipW = groupChipWidth(d.storageGroup, option.font);
+		const QRect chipRect(playBtn.left() - kBadgeGap - chipW,
+		                     hdr.top() + (hdr.height() - kBadgeH) / 2, chipW, kBadgeH);
+		if (chipRect.contains(event->pos())) {
+			QToolTip::showText(event->globalPos(), tr("Storage group %1").arg(d.storageGroup), view);
+			return true;
+		}
+	}
+
 	QFont badgeFont = option.font;
 	badgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
 	const QFontMetrics fm(badgeFont);
@@ -1296,6 +1380,14 @@ void McCardDelegate::setTmdbConfigured(bool configured)
 	m_view->viewport()->update();
 }
 
+void McCardDelegate::setMultiGroupBadgeEnabled(bool enabled)
+{
+	if (m_showGroupBadge == enabled) return;
+	m_showGroupBadge = enabled;
+	// No size-cache invalidation needed — the chip doesn't change card height.
+	if (m_view) m_view->viewport()->update();
+}
+
 void McCardDelegate::setFanartOpacity(double opacity)
 {
 	opacity = qBound(0.0, opacity, 1.0);
@@ -1537,6 +1629,23 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		// Right-side meta: library → play only / job → status pill
 		int rightEdgeForFilename = playBtn.left() - kBadgeGap;
 
+		// Storage-group chip — colored disk icon + group number, drawn only when
+		// the user actually has files spread across >1 group (see
+		// setMultiGroupBadgeEnabled). Sits immediately left of the VLC button,
+		// before the status pill (job mode) or filename (library mode) claim the
+		// remaining width. The number backs up the color (4 fixed hues alone can
+		// be hard to tell apart at a glance, especially for colorblind users).
+		// Shared with McManageFoldersDialog's group picker (see drawGroupChip)
+		// so the badge and the picker render identically.
+		if (m_showGroupBadge) {
+			const qreal dpr    = painter->device()->devicePixelRatioF();
+			const int   chipW  = groupChipWidth(d.storageGroup, option.font);
+			const int   chipX  = rightEdgeForFilename - chipW;
+			const int   chipY  = hdr.top() + (hdr.height() - kBadgeH) / 2;
+			drawGroupChip(painter, chipX, chipY, kBadgeH, d.storageGroup, option.font, dpr);
+			rightEdgeForFilename = chipX - kBadgeGap;
+		}
+
 		if (m_mode == Mode::JobQueue) {
 			QFont pillFont = option.font;
 			pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
@@ -1567,7 +1676,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 				pillText += QStringLiteral("  %1").arg(saved);
 			}
 			const int pillW = QFontMetrics(pillFont).horizontalAdvance(pillText) + 2 * kBadgePad;
-			const int pillX = playBtn.left() - kBadgeGap - pillW;
+			const int pillX = rightEdgeForFilename - pillW;
 			const int pillY = hdr.top() + (hdr.height() - kBadgeH) / 2;
 			drawBadge(painter, pillX, pillY, kBadgeH,
 			          pillText, statusColor(d.status), pillFont);

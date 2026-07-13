@@ -74,6 +74,16 @@ public:
 	                           const QFont& baseFont, qreal dpr,
 	                           const QString& flagLang = {}, bool removed = false);
 
+	// Storage-group chip (colored disk icon + group number) — shared between
+	// the card badge and McManageFoldersDialog's group picker so both render
+	// identically. opacity < 1.0 darkens background, icon, and number all
+	// toward black together (staying fully opaque, not alpha-blended against
+	// the backdrop) — used for the "unselected" chips in the picker, so the
+	// off state reads as uniformly darker rather than washed out.
+	static int  groupChipWidth(int group, const QFont& baseFont);
+	static void drawGroupChip(QPainter* painter, int x, int y, int h, int group,
+	                         const QFont& baseFont, qreal dpr, double opacity = 1.0);
+
 	static constexpr int kBadgeH   = 18; // height of each track badge pill
 	static constexpr int kBadgePad = 6;  // horizontal text padding inside each badge pill
 	static constexpr int kFlagW    = 16; // flag icon width inside a badge (4:3)
@@ -110,6 +120,13 @@ public slots:
 	// cards stay aligned with the rest of the list.
 	void setTmdbConfigured(bool configured);
 
+	// Whether the per-card storage-group disk-icon chip should render at all.
+	// Gated on StorageGroupSettings::multipleGroupsInUse() — single-storage-group
+	// users see no new UI. Pushed once by McMainWindow whenever roots/groups
+	// change (folder add/remove, Manage Folders dialog close), never recomputed
+	// inside paint().
+	void setMultiGroupBadgeEnabled(bool enabled);
+
 	// Opacity (0.0-1.0) of the fanart backdrop drawn behind each card. Settings-
 	// dialog-tunable; see AppSettings key "library/fanartOpacity".
 	void setFanartOpacity(double opacity);
@@ -144,6 +161,7 @@ private:
 		QString             containerTitle;         // ffprobe format tags title (Library only)
 		int                 folderCount    = 1;     // files sharing the same parent folder (Library only)
 		QString             originalLanguage;       // ISO 639-2 original audio language (both modes)
+		int                 storageGroup   = 1;     // 1-4; see StorageGroupSettings (both modes)
 		QString             fanartPath;             // w780 backdrop; empty if not yet fetched
 		QList<StreamRecord> allStreams;
 		QList<StreamRecord> videoStreams;
@@ -209,6 +227,7 @@ private:
 
 	Mode                  m_mode;
 	bool                  m_tmdbConfigured   = true;
+	bool                  m_showGroupBadge   = false;
 	double                m_fanartOpacity    = 0.05;
 	QAbstractItemView*    m_view             = nullptr;
 	QPersistentModelIndex m_lastHoveredIndex;

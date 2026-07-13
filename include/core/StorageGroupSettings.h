@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QHash>
 #include <QString>
 #include <QStringList>
@@ -35,6 +36,17 @@ public:
 	// How many storage groups the UI offers (2–MaxGroup).
 	[[nodiscard]] static int uiMaxGroup();
 	static void setUiMaxGroup(int maxGroup);
+
+	// Fixed per-group accent color (group 1..MaxGroup), shared by the card
+	// badge (McCardDelegate) and the group picker (McManageFoldersDialog).
+	// Keyed by group number, not by how many groups are currently offered —
+	// a group's color never changes if uiMaxGroup() shrinks or grows.
+	[[nodiscard]] static QColor colorForGroup(int group);
+
+	// True when the configured library roots resolve to more than one
+	// distinct storage group — the signal used to decide whether the
+	// per-card group badge should render at all.
+	[[nodiscard]] static bool multipleGroupsInUse();
 };
 
 } // namespace Mc
