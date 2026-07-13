@@ -1243,7 +1243,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 
 	// Job queue: hover over the exposed-green sliver of the live size bar (the part of
 	// mkvmerge's progress not yet covered by the blue output-bytes-written extent) →
-	// show bytes saved so far. The bar itself is only 3px tall, so pad the hit area
+	// show bytes reclaimed so far. The bar itself is only 3px tall, so pad the hit area
 	// vertically to make it easy to land on.
 	if (m_mode == Mode::JobQueue && d.status == QLatin1String("running") && d.progress > 0 && d.sizeBytes > 0) {
 		const QRect barRect(option.rect.left(), option.rect.bottom() - 2, option.rect.width(), 3);
@@ -1255,7 +1255,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 			if (event->pos().x() >= barRect.left() + blueW && event->pos().x() <= barRect.left() + redW) {
 				const qint64 savedSoFar = qMax<qint64>(0, qint64(d.sizeBytes * redTarget) - d.outputSizeBytes);
 				QToolTip::showText(event->globalPos(),
-				                    tr("~%1 saved so far").arg(formatSize(savedSoFar)), view);
+				                    tr("~%1 reclaimed so far").arg(formatSize(savedSoFar)), view);
 				return true;
 			}
 		}

@@ -1735,7 +1735,7 @@ void McMainWindow::setupMenuBar()
 	fileMenu->addSeparator();
 	auto* quitAction = new QAction(svgIcon(":/icons/logout.svg"), tr("&Quit"), this);
 	quitAction->setShortcut(QKeySequence::Quit);
-	connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
+	connect(quitAction, &QAction::triggered, this, &QWidget::close);
 	fileMenu->addAction(quitAction);
 
 	// View menu
@@ -1936,10 +1936,10 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		QMessageBox msg(this);
 		msg.setWindowTitle(tr("Job Running"));
 		msg.setText(tr("A job is currently processing.\n\n"
-		               "Closing immediately will interrupt it and may leave a temporary file on disk."));
-		auto* pauseBtn  = msg.addButton(tr("Pause && Wait"),  QMessageBox::AcceptRole);
-		auto* closeBtn  = msg.addButton(tr("Close Anyway"),   QMessageBox::DestructiveRole);
-		/*auto* cancelBtn =*/ msg.addButton(tr("Cancel"),     QMessageBox::RejectRole);
+		               "Quiting immediately will interrupt it and may leave a temporary file on disk."));
+		auto* pauseBtn = msg.addButton(tr("Quit After"), QMessageBox::AcceptRole);
+		auto* closeBtn = msg.addButton(tr("Quit Now"), QMessageBox::DestructiveRole);
+		/*auto* cancelBtn =*/ msg.addButton(tr("Cancel"), QMessageBox::RejectRole);
 		msg.setDefaultButton(pauseBtn);
 		msg.exec();
 

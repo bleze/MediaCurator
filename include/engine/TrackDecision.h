@@ -37,8 +37,8 @@ namespace FallbackBps {
 	constexpr double kPcmDefault       = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
 	constexpr double kFlac             =   620'000.0; // FLAC (lossless, variable) — 2.0 (stereo) reference
 	constexpr double kFlacPerChannel   =   310'000.0; // kFlac / 2 — scale by actual channel count
-	constexpr double kPgsSubtitle      =    37'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher) — calibrated directly against actual saved_bytes on jobs whose only fallback-estimated tracks were PGS (isolates the PGS-specific error instead of the whole-job ratio the Calibration dialog uses, which under-corrects when a job also carries an unrelated fallback track)
-	constexpr double kTextSubtitle     =     5'000.0; // SRT / ASS / SSA / WebVTT
+	constexpr double kPgsSubtitle      =    45'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher) — calibrated directly against actual saved_bytes on jobs whose only fallback-estimated tracks were PGS (isolates the PGS-specific error instead of the whole-job ratio the Calibration dialog uses, which under-corrects when a job also carries an unrelated fallback track)
+	constexpr double kTextSubtitle     =     7'000.0; // SRT / ASS / SSA / WebVTT
 } // namespace FallbackBps
 
 // Returns the effective bitrate used for size estimation:

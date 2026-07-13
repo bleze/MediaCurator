@@ -33,7 +33,7 @@ namespace Mc {
 
 // ── Badge-styled tab bar ──────────────────────────────────────────────────────
 // Draws each tab as a colored rectangle with 3px corner radius — matching the
-// badge style used on library cards. Selected tab is full color + bold;
+// badge style used on cards. Selected tab is full color + bold;
 // unselected is darker + dimmed text. Tabs touch the pane at the bottom to
 // read as tabs rather than floating pills.
 class McBadgeTabBar : public QTabBar
@@ -658,8 +658,8 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	jobLayout->addWidget(m_chkAutoTrack);
 	genPageLo->addWidget(jobGroup);
 
-	// Library Cards
-	auto* cardsGroup  = new QGroupBox(tr("Library Cards"), genPage);
+	// Cards
+	auto* cardsGroup  = new QGroupBox(tr("Cards"), genPage);
 	auto* cardsLayout = new QVBoxLayout(cardsGroup);
 
 	auto* fanartRow   = new QHBoxLayout;
@@ -669,7 +669,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	const int initialFanartPct = AppSettings::instance().value("library/fanartOpacity", 5).toInt();
 	m_sliderFanartOpacity->setValue(initialFanartPct);
 	m_sliderFanartOpacity->setToolTip(tr(
-		"How visible the movie's fanart backdrop is behind each library card. "
+		"How visible the movie's fanart backdrop is behind each card. "
 		"0% hides it entirely; higher values make it more prominent."));
 	m_lblFanartOpacity = new QLabel(tr("%1%").arg(initialFanartPct), cardsGroup);
 	m_lblFanartOpacity->setMinimumWidth(36);
