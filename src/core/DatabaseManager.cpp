@@ -636,6 +636,35 @@ QList<FileRecord> DatabaseManager::allFiles() const
 	return result;
 }
 
+QList<FileRecord> DatabaseManager::filesWithoutAnyJob() const
+{
+	QList<FileRecord> result;
+	QSqlQuery q("SELECT f.* FROM files f "
+	            "WHERE NOT EXISTS (SELECT 1 FROM jobs j WHERE j.file_id = f.id) "
+	            "ORDER BY f.filename", m_db);
+	while (q.next()) {
+		FileRecord r;
+		r.id               = q.value("id").toLongLong();
+		r.path             = q.value("path").toString();
+		r.filename         = q.value("filename").toString();
+		r.sizeBytes        = q.value("size_bytes").toLongLong();
+		r.mtimeMs          = q.value("mtime_ms").toLongLong();
+		r.createdMs        = q.value("created_ms").toLongLong();
+		r.container        = q.value("container").toString();
+		r.durationSec      = q.value("duration_s").toDouble();
+		r.overallBitrate   = q.value("overall_bitrate").toLongLong();
+		r.originalLanguage = q.value("original_language").toString();
+		r.scanTime         = q.value("scan_time").toLongLong();
+		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+		r.containerTitle   = q.value("container_title").toString();
+		r.displayTitle     = q.value("display_title").toString();
+		r.displayYear      = q.value("display_year").toInt();
+		r.ignored          = q.value("ignored").toInt() != 0;
+		result.append(r);
+	}
+	return result;
+}
+
 QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit, int sortOrder) const
 {
 	QList<FileRecord> result;

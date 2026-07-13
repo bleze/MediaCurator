@@ -1,14 +1,32 @@
 #include "engine/SubtitleManager.h"
 #include "engine/OpenSubtitlesClient.h"
+#include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "scanner/NfoParser.h"
 #include "scanner/ScanWorker.h"
 
+#include <QDateTime>
+#include <QEventLoop>
 #include <QThread>
 #include <QTimer>
 #include <utility>
 
 namespace Mc {
+
+// Persisted so a multi-hour OpenSubtitles backoff survives an app restart
+// instead of resetting every time the process is relaunched.
+static const QString kQuotaResumeAtKey = QStringLiteral("subtitles/quotaResumeAtEpoch");
+
+// Fallback when a 429 carries no (or an unparseable) Retry-After header —
+// conservative enough to not hammer the API, short enough to recover same-session.
+static constexpr int kDefaultRateLimitBackoffSecs = 15 * 60;
+
+static int secondsUntilNextUtcMidnight()
+{
+	const QDateTime now = QDateTime::currentDateTimeUtc();
+	const QDateTime nextMidnight(now.date().addDays(1), QTime(0, 0), Qt::UTC);
+	return static_cast<int>(now.secsTo(nextMidnight));
+}
 
 // ── SubtitleWorker ────────────────────────────────────────────────────────────
 
@@ -25,6 +43,14 @@ public slots:
 		m_timer->setSingleShot(false);
 		m_timer->setInterval(0);
 		connect(m_timer, &QTimer::timeout, this, &SubtitleWorker::processNext);
+
+		// Resume a backoff that was still pending when the app last closed.
+		const qint64 resumeAt = AppSettings::instance().value(kQuotaResumeAtKey, 0).toLongLong();
+		const qint64 now      = QDateTime::currentSecsSinceEpoch();
+		if (resumeAt > now)
+			scheduleQuotaBackoff(static_cast<int>(resumeAt - now));
+		else if (resumeAt != 0)
+			AppSettings::instance().setValue(kQuotaResumeAtKey, 0); // stale — clear it
 	}
 
 	void stop()
@@ -42,24 +68,29 @@ public slots:
 		if (hadWork) emit queueActiveChanged(false);
 	}
 
-	void reportQuotaExceeded()
+	void reportQuotaExceeded(int retryAfterSecs)
 	{
-		if (m_quotaExhausted) return;
-		m_quotaExhausted = true;
-		emit quotaExhausted();
+		scheduleQuotaBackoff(retryAfterSecs > 0 ? retryAfterSecs : kDefaultRateLimitBackoffSecs);
 	}
 
 	void setCredentials(QString apiKey, QString username, QString password)
 	{
+		// A credentials change (new API key / different account) means whatever
+		// quota we were backing off for no longer applies — but only once we're
+		// past the very first call at startup, where "differs from empty" would
+		// otherwise wipe out a backoff we just restored from disk.
+		const bool changed = m_credentialsInitialized
+		    && (apiKey != m_apiKey || username != m_username || password != m_password);
 		m_apiKey   = std::move(apiKey);
 		m_username = std::move(username);
 		m_password = std::move(password);
+		m_credentialsInitialized = true;
+		if (changed) clearQuotaBackoff();
 	}
 
 	void setEnabled(bool enabled)
 	{
 		m_enabled = enabled;
-		if (m_enabled) m_quotaExhausted = false;   // re-arm the guard
 		startTimerIfWork();
 		if (canRun() && !m_queue.isEmpty()) emit queueActiveChanged(true);
 	}
@@ -96,10 +127,37 @@ public slots:
 		startTimerIfWork();
 	}
 
+	// Cheap, no-network synchronous check — called cross-thread via
+	// BlockingQueuedConnection from JobQueue's thread. Answers "is it worth
+	// bumping this file to the front of the queue and waiting for it?" without
+	// making the caller wait on anything but a DB read.
+	bool hasFetchableSubtitles(qint64 fileId)
+	{
+		if (!canRun()) return false;
+		const auto streams = DatabaseManager::instance().streamsForFile(fileId);
+		return !missingSubtitleLanguages(streams, m_understoodLanguages).isEmpty();
+	}
+
+	// Move fileId to the front of the queue so it's attempted next, rather than
+	// waiting behind whatever else is pending. If it's already mid-download
+	// (m_processing took it out of m_queue already), this just re-queues a
+	// redundant follow-up attempt — harmless, and the in-flight one still emits
+	// fileAttempted() when it finishes, which is what the caller is waiting on.
+	void prioritizeFile(qint64 fileId)
+	{
+		if (m_stopping || fileId <= 0) return;
+		m_queue.removeAll(fileId);
+		m_queue.prepend(fileId);
+		startTimerIfWork();
+	}
+
 signals:
 	void subtitlesReady(qint64 fileId, int downloadedCount);
-	void quotaExhausted();
+	void quotaExhausted(qint64 resumeAtEpoch);
 	void queueActiveChanged(bool active);
+	// Emitted at the end of every processFile() attempt, success or not — lets a
+	// bounded waiter (JobQueue's tryDownloadNow) know the attempt resolved.
+	void fileAttempted(qint64 fileId);
 
 private slots:
 	void processNext()
@@ -137,6 +195,15 @@ private:
 
 	void processFile(qint64 fileId)
 	{
+		// Fires on every exit path (including early returns below) so a bounded
+		// waiter — JobQueue's tryDownloadNow via SubtitleManager — always gets
+		// unblocked once this attempt resolves, whatever the outcome.
+		struct AttemptedGuard {
+			SubtitleWorker* self;
+			qint64 fileId;
+			~AttemptedGuard() { emit self->fileAttempted(fileId); }
+		} attemptedGuard{this, fileId};
+
 		const auto fileOpt = DatabaseManager::instance().fileById(fileId);
 		if (!fileOpt) return;
 		const FileRecord& file = *fileOpt;
@@ -159,7 +226,7 @@ private:
 		}
 		if (missing6391.isEmpty()) return;
 
-		int downloaded = 0, remaining = -1;
+		int downloaded = 0, remaining = -1, retryAfterSecs = -1;
 		bool quotaHit = false;
 		{
 			// Runs on this worker's own QThread/event loop, same requirement
@@ -169,10 +236,12 @@ private:
 			                          imdbId, missing6391, file.path);
 			m_currentDl = &dl;
 			connect(&dl, &SubtitleDownloadWorker::done, &dl,
-			        [&downloaded, &remaining, &quotaHit](int dlCount, int, QString, int rem, bool quota) {
-				downloaded = dlCount;
-				remaining  = rem;
-				quotaHit   = quota;
+			        [&downloaded, &remaining, &quotaHit, &retryAfterSecs]
+			        (int dlCount, int, QString, int rem, bool quota, int retryAfter) {
+				downloaded     = dlCount;
+				remaining      = rem;
+				quotaHit       = quota;
+				retryAfterSecs = retryAfter;
 			});
 			dl.run();
 			m_currentDl = nullptr;
@@ -191,9 +260,47 @@ private:
 		}
 
 		if (remaining == 0 || quotaHit) {
-			m_quotaExhausted = true;
-			emit quotaExhausted();
+			// retryAfterSecs (from a 429's Retry-After header) is the most reliable
+			// figure when present. Otherwise: a bare "remaining == 0" with no 429 is
+			// the daily download quota, which OpenSubtitles resets at UTC midnight;
+			// a 429 with no usable header is an unexplained rate limit, so fall back
+			// to a conservative default rather than guessing at a reset time.
+			const int backoff = retryAfterSecs > 0 ? retryAfterSecs
+			    : (remaining == 0 && !quotaHit) ? secondsUntilNextUtcMidnight()
+			                                     : kDefaultRateLimitBackoffSecs;
+			scheduleQuotaBackoff(backoff);
 		}
+	}
+
+	// Pauses the queue and persists the resume time so it survives an app
+	// restart — OpenSubtitles backoffs are frequently many hours (daily quota).
+	void scheduleQuotaBackoff(int seconds)
+	{
+		seconds = qMax(1, seconds);
+		const qint64 resumeAtEpoch = QDateTime::currentSecsSinceEpoch() + seconds;
+		AppSettings::instance().setValue(kQuotaResumeAtKey, resumeAtEpoch);
+
+		const bool wasExhausted = m_quotaExhausted;
+		m_quotaExhausted = true;
+		++m_quotaGeneration;
+		const int gen = m_quotaGeneration;
+		if (m_timer) m_timer->stop();
+
+		QTimer::singleShot(qint64(seconds) * 1000, this, [this, gen] {
+			if (gen != m_quotaGeneration) return; // superseded by a newer backoff
+			clearQuotaBackoff();
+		});
+
+		if (!wasExhausted) emit quotaExhausted(resumeAtEpoch);
+	}
+
+	void clearQuotaBackoff()
+	{
+		++m_quotaGeneration;
+		m_quotaExhausted = false;
+		AppSettings::instance().setValue(kQuotaResumeAtKey, 0);
+		startTimerIfWork();
+		if (canRun() && !m_queue.isEmpty()) emit queueActiveChanged(true);
 	}
 
 	QTimer*                 m_timer      = nullptr;
@@ -205,6 +312,8 @@ private:
 	bool                    m_stopping        = false;
 	bool                    m_processing      = false;
 	bool                    m_quotaExhausted  = false;
+	bool                    m_credentialsInitialized = false;
+	int                     m_quotaGeneration = 0;
 	SubtitleDownloadWorker* m_currentDl       = nullptr; // valid only mid-processFile()
 };
 
@@ -308,16 +417,37 @@ void SubtitleManager::enqueueBatch(const QList<qint64>& fileIds)
 	emit workerEnqueueBatch(fileIds);
 }
 
+void SubtitleManager::tryDownloadNow(qint64 fileId, int maxWaitMs)
+{
+	if (!m_thread || !m_thread->isRunning() || fileId <= 0) return;
+
+	bool fetchable = false;
+	QMetaObject::invokeMethod(m_worker, "hasFetchableSubtitles", Qt::BlockingQueuedConnection,
+	                           Q_RETURN_ARG(bool, fetchable), Q_ARG(qint64, fileId));
+	if (!fetchable) return;
+
+	QEventLoop loop;
+	const QMetaObject::Connection conn = connect(m_worker, &SubtitleWorker::fileAttempted,
+	    &loop, [&loop, fileId](qint64 attemptedFileId) {
+		if (attemptedFileId == fileId) loop.quit();
+	});
+	QTimer::singleShot(qMax(0, maxWaitMs), &loop, &QEventLoop::quit);
+
+	QMetaObject::invokeMethod(m_worker, "prioritizeFile", Qt::QueuedConnection, Q_ARG(qint64, fileId));
+	loop.exec();
+	disconnect(conn);
+}
+
 void SubtitleManager::cancelAll()
 {
 	if (!m_thread || !m_thread->isRunning()) return;
 	emit workerCancelAll();
 }
 
-void SubtitleManager::reportQuotaExceeded()
+void SubtitleManager::reportQuotaExceeded(int retryAfterSecs)
 {
 	if (!m_thread || !m_thread->isRunning()) return;
-	emit workerReportQuotaExceeded();
+	emit workerReportQuotaExceeded(retryAfterSecs);
 }
 
 } // namespace Mc

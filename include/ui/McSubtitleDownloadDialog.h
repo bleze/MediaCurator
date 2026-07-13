@@ -38,7 +38,8 @@ private slots:
 	void onDownload();
 	void onLanguageStarted(const QString& lang6391);
 	void onLanguageDone(const QString& lang6391, bool success, const QString& message);
-	void onAllDone(int downloaded, int failed, const QString& statusMsg, int remaining, bool quotaExceeded);
+	void onAllDone(int downloaded, int failed, const QString& statusMsg, int remaining,
+	               bool quotaExceeded, int retryAfterSecs);
 
 private:
 	static QString languageDisplayName(const QString& iso6392);

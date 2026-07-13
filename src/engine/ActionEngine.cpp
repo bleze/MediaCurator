@@ -1,11 +1,13 @@
 ﻿#include "engine/ActionEngine.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSet>
 #include <QString>
 
@@ -292,6 +294,80 @@ QStringList ActionEngine::buildSidecarArgsForRemux(const QList<StreamRecord>& st
 		args << s.externalPath;
 	}
 	return args;
+}
+
+double ActionEngine::parseFrameRate(const QString& frameRate)
+{
+	const QStringList parts = frameRate.split(QLatin1Char('/'));
+	if (parts.size() == 2) {
+		const double den = parts.at(1).toDouble();
+		return den > 0.0 ? parts.at(0).toDouble() / den : 0.0;
+	}
+	return frameRate.toDouble();
+}
+
+static QString microDvdTimestampToSrt(double totalSeconds)
+{
+	qint64 totalMs = qRound64(qMax(0.0, totalSeconds) * 1000.0);
+	const qint64 ms = totalMs % 1000; totalMs /= 1000;
+	const qint64 s  = totalMs % 60;   totalMs /= 60;
+	const qint64 m  = totalMs % 60;   totalMs /= 60;
+	const qint64 h  = totalMs;
+	return QStringLiteral("%1:%2:%3,%4")
+	    .arg(h, 2, 10, QLatin1Char('0')).arg(m, 2, 10, QLatin1Char('0'))
+	    .arg(s, 2, 10, QLatin1Char('0')).arg(ms, 3, 10, QLatin1Char('0'));
+}
+
+bool ActionEngine::fixMislabeledSidecarSubtitle(const QString& path, double fps)
+{
+	if (fps <= 0.0) return false;
+
+	QFile f(path);
+	if (!f.open(QIODevice::ReadOnly)) return false;
+	const QString content = QString::fromUtf8(f.readAll());
+	f.close();
+
+	// MicroDVD: one entry per line, "{startFrame}{endFrame}text" — real SRT's
+	// first non-empty line is a bare index number followed by a
+	// "-->" timestamp line, so this alone reliably tells them apart.
+	static const QRegularExpression lineRe(
+	    QStringLiteral(R"(^\{(-?\d+)\}\{(-?\d+)\}(.*)$)"));
+	const QStringList rawLines = content.split(QLatin1Char('\n'));
+
+	QString firstNonEmpty;
+	for (const QString& line : rawLines) {
+		const QString trimmed = line.trimmed();
+		if (!trimmed.isEmpty()) { firstNonEmpty = trimmed; break; }
+	}
+	if (!lineRe.match(firstNonEmpty).hasMatch())
+		return false; // not MicroDVD — leave the file untouched
+
+	static const QRegularExpression styleTagRe(QStringLiteral(R"(\{[^{}]*\})"));
+
+	QStringList srtBlocks;
+	int index = 1;
+	for (const QString& line : rawLines) {
+		const QString trimmed = line.trimmed();
+		if (trimmed.isEmpty()) continue;
+		const auto match = lineRe.match(trimmed);
+		if (!match.hasMatch()) continue; // stray line — drop it
+
+		const double startSec = match.captured(1).toLongLong() / fps;
+		const double endSec   = match.captured(2).toLongLong() / fps;
+		QString text = match.captured(3);
+		text.remove(styleTagRe);              // drop {y:i}-style formatting codes
+		text.replace(QLatin1Char('|'), QLatin1Char('\n')); // MicroDVD line-break marker
+
+		srtBlocks << QStringLiteral("%1\n%2 --> %3\n%4")
+		    .arg(index++)
+		    .arg(microDvdTimestampToSrt(startSec), microDvdTimestampToSrt(endSec), text);
+	}
+	if (srtBlocks.isEmpty()) return false;
+
+	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+	f.write(srtBlocks.join(QStringLiteral("\n\n")).toUtf8());
+	f.write("\n");
+	return true;
 }
 
 QString ActionEngine::computeRenamedSidecarPath(const QString& currentPath, bool wantForced)

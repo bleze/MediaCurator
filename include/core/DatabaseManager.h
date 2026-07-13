@@ -188,6 +188,11 @@ public:
 	// of ids (see streamsForFiles() for the same pattern with streams).
 	QHash<qint64, FileRecord> filesByIds(const QList<qint64>& ids) const;
 	QList<FileRecord> allFiles() const;
+	// Files with no row at all in the jobs table (any status) — never analyzed
+	// before, as opposed to a stale/failed/completed job existing already. Used
+	// by "Quick Analyze" to only run the rule engine over files it hasn't
+	// touched yet, unlike "Analyze Library" which re-evaluates everything.
+	QList<FileRecord> filesWithoutAnyJob() const;
 	// sortOrder mirrors Mc::McFileListModel::SortOrder (0=Name, 1=Newest, 2=Oldest,
 	// 3=Largest, 4=RatingHigh, 5=RatingLow) — duplicated as a plain int here so this
 	// core class doesn't depend on a UI header. Callers must keep pages in the same

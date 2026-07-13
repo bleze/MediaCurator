@@ -75,6 +75,8 @@ public:
 	QList<qint64> checkedJobIds() const;
 	/** IDs of all jobs with a given status. */
 	QList<qint64> jobIdsByStatus(const QString& status) const;
+	/** fileId of every job with a given status (deduplicated). */
+	QList<qint64> fileIdsByStatus(const QString& status) const;
 
 	// Toggle a stream's inclusion in a Proposed or Queued job's kept-tracks list.
 	// No-op if the job is Running, Done, Failed, or Cancelled. Persists the new command args to DB.

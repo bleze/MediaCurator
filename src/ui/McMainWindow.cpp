@@ -47,6 +47,8 @@
 
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QDateTime>
+#include <QLocale>
 #include <QShowEvent>
 #include <QPaintEvent>
 #include <QSplashScreen>
@@ -596,9 +598,11 @@ McMainWindow::McMainWindow(QWidget* parent)
 			tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
 				.arg(fileOpt ? fileOpt->filename : QString::number(fileId)));
 	});
-	connect(&sm, &SubtitleManager::quotaExhausted, this, [this] {
+	connect(&sm, &SubtitleManager::quotaExhausted, this, [this](qint64 resumeAtEpoch) {
+		const QDateTime resumeAt = QDateTime::fromSecsSinceEpoch(resumeAtEpoch);
 		m_statusLabel->setText(
-			tr("OpenSubtitles daily download quota reached — automatic subtitle downloads paused."));
+			tr("OpenSubtitles rate limit reached — automatic subtitle downloads paused until %1.")
+				.arg(QLocale::system().toString(resumeAt, QLocale::ShortFormat)));
 	});
 	connect(&sm, &SubtitleManager::queueActiveChanged, this, [this](bool active) {
 		m_btnCancelSubtitles->setVisible(active);
@@ -1617,6 +1621,13 @@ void McMainWindow::setupActions()
 	m_actAnalyze->setIcon(svgIcon(":/icons/manage_search.svg"));
 	connect(m_actAnalyze, &QAction::triggered, this, &McMainWindow::onAnalyzeLibrary);
 
+	m_actQuickAnalyze = new QAction(tr("Quick Analyze"), this);
+	m_actQuickAnalyze->setToolTip(tr("Only analyze files that have never been analyzed before — skips "
+	                                 "anything that already has a job, so a policy change won't be "
+	                                 "picked up here (use Analyze Library for that)"));
+	m_actQuickAnalyze->setIcon(svgIcon(":/icons/manage_search.svg"));
+	connect(m_actQuickAnalyze, &QAction::triggered, this, &McMainWindow::onQuickAnalyze);
+
 	m_actSimulate = new QAction(tr("Simulate Policy…"), this);
 	m_actSimulate->setShortcut(QKeySequence("Ctrl+Shift+W"));
 	m_actSimulate->setToolTip(tr("Preview what the current policy would remove — no jobs are created (Ctrl+Shift+W)"));
@@ -1690,6 +1701,7 @@ void McMainWindow::setupToolBar()
 	tb->addAction(m_actScanLibrary);
 	tb->addAction(m_actQuickScan);
 	tb->addAction(m_actAnalyze);
+	tb->addAction(m_actQuickAnalyze);
 	tb->addAction(m_actSimulate);
 	tb->addAction(m_actToggleQueue);
 	if (m_actToggleHighscore)
@@ -1777,6 +1789,7 @@ void McMainWindow::setupMenuBar()
 	// Tools menu
 	QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
 	toolsMenu->addAction(m_actAnalyze);
+	toolsMenu->addAction(m_actQuickAnalyze);
 	toolsMenu->addAction(m_actSimulate);
 	toolsMenu->addSeparator();
 	toolsMenu->addAction(m_actSettings);
@@ -2692,6 +2705,60 @@ void McMainWindow::onAnalyzeLibrary()
 	m_progressBar->setVisible(true);
 	m_actScanFolder->setEnabled(false);
 	m_actAnalyze->setEnabled(false);
+	m_actQuickAnalyze->setEnabled(false);
+	m_btnCancelAnalyze->setEnabled(true);
+	m_btnCancelAnalyze->setText(tr("Cancel Analyze"));
+	m_btnCancelAnalyze->setVisible(true);
+
+	m_analyzeThread = new QThread(this);
+	m_analyzeWorker = new AnalyzeWorker(files, m_profile,
+	                                    ExternalTools::instance().mkvmergePath(),
+	                                    std::move(forcedRemovals));
+	m_analyzeWorker->moveToThread(m_analyzeThread);
+
+	connect(m_analyzeThread, &QThread::started,                m_analyzeWorker, &AnalyzeWorker::run);
+	connect(m_analyzeWorker, &AnalyzeWorker::finished, m_analyzeThread,         &QThread::quit);
+	connect(m_analyzeWorker, &AnalyzeWorker::finished, m_analyzeWorker,         &QObject::deleteLater);
+	connect(m_analyzeThread, &QThread::finished, this, [this] {
+		m_analyzeThread->deleteLater();
+		m_analyzeThread = nullptr;
+	});
+
+	connect(m_analyzeWorker, &AnalyzeWorker::progress,   this, &McMainWindow::onAnalyzeProgress);
+	connect(m_analyzeWorker, &AnalyzeWorker::jobProposed, this, &McMainWindow::onAnalyzeJobProposed);
+	connect(m_analyzeWorker, &AnalyzeWorker::finished,    this, &McMainWindow::onAnalyzeFinished);
+
+	m_analyzeThread->start();
+}
+
+void McMainWindow::onQuickAnalyze()
+{
+	if (m_analyzeThread) return;   // already running
+
+	auto& db = DatabaseManager::instance();
+	QList<FileRecord> files;
+	for (const auto& f : db.filesWithoutAnyJob())
+		if (!f.ignored) files << f;
+	if (files.isEmpty()) {
+		m_statusLabel->setText(tr("No unanalyzed files found — everything already has a job."));
+		return;
+	}
+
+	// Pre-fetch forced removals from the UI model — must happen on the main thread
+	QHash<qint64, QSet<int>> forcedRemovals;
+	for (const auto& file : files) {
+		const auto fr = m_listModel->forcedRemovalsFor(file.id);
+		if (!fr.isEmpty())
+			forcedRemovals.insert(file.id, fr);
+	}
+
+	m_analyzeJobCount = 0;
+	m_progressBar->setMaximum(files.size());
+	m_progressBar->setValue(0);
+	m_progressBar->setVisible(true);
+	m_actScanFolder->setEnabled(false);
+	m_actAnalyze->setEnabled(false);
+	m_actQuickAnalyze->setEnabled(false);
 	m_btnCancelAnalyze->setEnabled(true);
 	m_btnCancelAnalyze->setText(tr("Cancel Analyze"));
 	m_btnCancelAnalyze->setVisible(true);
@@ -2834,6 +2901,7 @@ void McMainWindow::setScanningState(bool scanning)
 		m_actScanLibrary->setEnabled(false);
 		m_actQuickScan->setEnabled(false);
 		m_actAnalyze->setEnabled(false);
+		m_actQuickAnalyze->setEnabled(false);
 		m_actSimulate->setEnabled(false);
 	} else {
 		updateActionStates();
@@ -2930,6 +2998,7 @@ void McMainWindow::updateActionStates()
 	m_actScanLibrary->setEnabled(hasRoots);
 	m_actQuickScan->setEnabled(hasRoots);
 	m_actAnalyze->setEnabled(hasFiles);
+	m_actQuickAnalyze->setEnabled(hasFiles);
 	m_actSimulate->setEnabled(hasFiles);
 }
 

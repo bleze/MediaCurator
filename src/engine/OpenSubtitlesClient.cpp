@@ -94,6 +94,24 @@ QString iso6391to6392(const QString& iso6391)
 	return map.value(iso6391.toLower());
 }
 
+int parseRetryAfterSeconds(const QByteArray& headerValue)
+{
+	if (headerValue.isEmpty())
+		return -1;
+
+	bool ok = false;
+	const int secs = headerValue.trimmed().toInt(&ok);
+	if (ok)
+		return secs >= 0 ? secs : -1;
+
+	// Not a delta-seconds value — try the HTTP-date form (RFC 7231 / RFC 2822).
+	const QDateTime when = QDateTime::fromString(QString::fromLatin1(headerValue), Qt::RFC2822Date);
+	if (!when.isValid())
+		return -1;
+	const qint64 diff = QDateTime::currentDateTimeUtc().secsTo(when);
+	return diff > 0 ? static_cast<int>(diff) : -1;
+}
+
 QStringList missingSubtitleLanguages(const QList<StreamRecord>& streams,
                                       const QStringList& understoodLanguages6392)
 {
@@ -321,6 +339,7 @@ bool OpenSubtitlesClient::httpPost(const QString& endpoint, const QByteArray& bo
 
 	m_lastStatus = m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 	out = m_reply->readAll();
+	const QByteArray retryAfterHeader = m_reply->rawHeader(QByteArrayLiteral("Retry-After"));
 	m_reply->deleteLater();
 	m_reply = nullptr;
 
@@ -334,7 +353,10 @@ bool OpenSubtitlesClient::httpPost(const QString& endpoint, const QByteArray& bo
 	}
 	if (m_lastStatus == 429) {
 		m_quotaExceeded = true;
+		m_retryAfterSecs = parseRetryAfterSeconds(retryAfterHeader);
 		m_lastError = QStringLiteral("Rate limit reached — try again later");
+		qWarning(lcOS) << "429 on POST" << endpoint << "— Retry-After:" << retryAfterHeader
+		               << "parsed:" << m_retryAfterSecs << "s — body:" << out.left(400);
 		return false;
 	}
 	if (m_lastStatus == 401) {
@@ -379,6 +401,7 @@ bool OpenSubtitlesClient::httpGet(const QUrl& url, QByteArray& out)
 
 	m_lastStatus = m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 	out = m_reply->readAll();
+	const QByteArray retryAfterHeader = m_reply->rawHeader(QByteArrayLiteral("Retry-After"));
 	m_reply->deleteLater();
 	m_reply = nullptr;
 
@@ -392,7 +415,10 @@ bool OpenSubtitlesClient::httpGet(const QUrl& url, QByteArray& out)
 	}
 	if (m_lastStatus == 429) {
 		m_quotaExceeded = true;
+		m_retryAfterSecs = parseRetryAfterSeconds(retryAfterHeader);
 		m_lastError = QStringLiteral("Rate limit reached — try again later");
+		qWarning(lcOS) << "429 on GET" << url << "— Retry-After:" << retryAfterHeader
+		               << "parsed:" << m_retryAfterSecs << "s — body:" << out.left(400);
 		return false;
 	}
 	if (m_lastStatus >= 400) {
@@ -424,6 +450,7 @@ bool OpenSubtitlesClient::fetchUrl(const QUrl& url, QByteArray& out)
 
 	m_lastStatus = m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 	out = m_reply->readAll();
+	const QByteArray retryAfterHeader = m_reply->rawHeader(QByteArrayLiteral("Retry-After"));
 	m_reply->deleteLater();
 	m_reply = nullptr;
 
@@ -437,7 +464,10 @@ bool OpenSubtitlesClient::fetchUrl(const QUrl& url, QByteArray& out)
 	}
 	if (m_lastStatus == 429) {
 		m_quotaExceeded = true;
+		m_retryAfterSecs = parseRetryAfterSeconds(retryAfterHeader);
 		m_lastError = QStringLiteral("Rate limit reached — try again later");
+		qWarning(lcOS) << "429 fetching CDN content — Retry-After:" << retryAfterHeader
+		               << "parsed:" << m_retryAfterSecs << "s";
 		return false;
 	}
 	if (m_lastStatus >= 400) {
@@ -489,7 +519,7 @@ void SubtitleDownloadWorker::run()
 		const QString err = QStringLiteral("Login failed: %1").arg(client.lastError());
 		for (const QString& lang : m_languages)
 			emit languageDone(lang, false, err);
-		emit done(0, m_languages.size(), err, -1, client.quotaExceeded());
+		emit done(0, m_languages.size(), err, -1, client.quotaExceeded(), client.retryAfterSeconds());
 		m_client = nullptr;
 		return;
 	}
@@ -588,7 +618,8 @@ void SubtitleDownloadWorker::run()
 		statusMsg += QStringLiteral(" (%1 downloads remaining today)").arg(client.remaining());
 
 	qCDebug(lcOS) << "Done:" << statusMsg;
-	emit done(downloaded, failed, statusMsg, client.remaining(), client.quotaExceeded());
+	emit done(downloaded, failed, statusMsg, client.remaining(), client.quotaExceeded(),
+	          client.retryAfterSeconds());
 	m_client = nullptr;
 }
 

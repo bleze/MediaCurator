@@ -653,6 +653,15 @@ QList<qint64> McJobListModel::jobIdsByStatus(const QString& status) const
 	return ids;
 }
 
+QList<qint64> McJobListModel::fileIdsByStatus(const QString& status) const
+{
+	QList<qint64> ids;
+	for (const auto& e : m_entries)
+		if (e.job.status == status && !ids.contains(e.job.fileId))
+			ids << e.job.fileId;
+	return ids;
+}
+
 // ── QAbstractListModel interface ──────────────────────────────────────────────
 
 int McJobListModel::rowCount(const QModelIndex& parent) const

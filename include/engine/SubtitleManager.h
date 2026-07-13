@@ -55,18 +55,33 @@ public:
 	// enqueued files afterward (mirrors ScanWorker::cancel()/JobQueue::cancel()).
 	void cancelAll();
 
+	// Bounded, synchronous check-and-wait for JobQueue to call right before
+	// muxing a file that has sidecar-merging enabled: if this file is actually
+	// missing an understood-language subtitle and downloading can currently run
+	// (enabled, configured, not in a quota backoff), bumps it to the front of
+	// the background queue and waits up to maxWaitMs for that attempt to
+	// resolve, so a freshly-downloaded sidecar can be included in the mux.
+	// Returns immediately with no wait at all if there's nothing fetchable or
+	// downloading can't run right now — must never turn into a long stall.
+	void tryDownloadNow(qint64 fileId, int maxWaitMs);
+
 	// Called when a caller outside the background queue (e.g. the manual
 	// McSubtitleDownloadDialog) observes an HTTP 429, so the shared quota guard
 	// pauses the background queue too instead of only pausing its own dialog.
-	void reportQuotaExceeded();
+	// retryAfterSecs: the 429's Retry-After header in seconds, or -1 if unknown
+	// (a sane default backoff is used in that case).
+	void reportQuotaExceeded(int retryAfterSecs = -1);
 
 signals:
 	// A background download wrote new subtitle file(s) for fileId; streams table
 	// has already been updated — listeners only need to refresh their view.
 	void subtitlesReady(qint64 fileId, int downloadedCount);
 	// OpenSubtitles reported zero downloads remaining for the day (or a request came
-	// back HTTP 429); the queue is paused until the app restarts or credentials change.
-	void quotaExhausted();
+	// back HTTP 429). The queue auto-resumes at resumeAtEpoch (epoch seconds, UTC) —
+	// derived from the 429's Retry-After header when present, otherwise the next UTC
+	// midnight (daily quota) or a conservative default (unexplained rate limit).
+	// Persisted to AppSettings so the pause survives an app restart.
+	void quotaExhausted(qint64 resumeAtEpoch);
 	// The queue transitioned between idle and actively processing files — drives the
 	// visibility of a "Cancel Subtitle Downloads" UI affordance.
 	void queueActiveChanged(bool active);
@@ -79,7 +94,7 @@ signals:
 	void workerEnqueueFile(qint64 fileId);
 	void workerEnqueueBatch(QList<qint64> fileIds);
 	void workerCancelAll();
-	void workerReportQuotaExceeded();
+	void workerReportQuotaExceeded(int retryAfterSecs);
 	void workerStop();
 
 private:

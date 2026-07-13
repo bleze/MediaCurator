@@ -184,7 +184,7 @@ void McSubtitleDownloadDialog::onLanguageDone(const QString& lang6391,
 }
 
 void McSubtitleDownloadDialog::onAllDone(int downloaded, int /*failed*/, const QString& /*statusMsg*/,
-                                          int /*remaining*/, bool quotaExceeded)
+                                          int /*remaining*/, bool quotaExceeded, int retryAfterSecs)
 {
 	m_downloaded  = downloaded;
 	m_downloading = false;
@@ -193,9 +193,10 @@ void McSubtitleDownloadDialog::onAllDone(int downloaded, int /*failed*/, const Q
 	emit downloadComplete(downloaded);
 
 	// A 429 seen here means the account's daily quota is exhausted regardless of
-	// which dialog observed it — pause the background auto-download queue too.
+	// which dialog observed it — pause the background auto-download queue too,
+	// using whatever Retry-After wait OpenSubtitles reported (if any).
 	if (quotaExceeded)
-		SubtitleManager::instance().reportQuotaExceeded();
+		SubtitleManager::instance().reportQuotaExceeded(retryAfterSecs);
 
 	if (m_closeRequested)
 		QDialog::reject();

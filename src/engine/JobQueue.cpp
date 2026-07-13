@@ -1,6 +1,7 @@
 #include "engine/JobQueue.h"
 #include "engine/ActionEngine.h"
 #include "engine/RemuxJob.h"
+#include "engine/SubtitleManager.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "core/StorageGroupSettings.h"
@@ -53,9 +54,36 @@ static void preserveTimestamps(const QString& target, const QDateTime& origCreat
 	            origModified.isValid() ? &ftModified : nullptr);
 	CloseHandle(h);
 }
+// Same idea as preserveTimestamps() above, but for the containing folder —
+// FILE_FLAG_BACKUP_SEMANTICS is needed to open a directory handle at all.
+// Restores the folder's timestamp to what it was before this job's subtitle
+// prefetch + remux started, so an automated maintenance pass (download a
+// sidecar, mux it in, delete the source) doesn't bubble the folder up as
+// "newest" in media libraries that sort by Date Modified.
+static void preserveDirTimestamps(const QString& dirPath, const QDateTime& origCreated, const QDateTime& origModified)
+{
+	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(dirPath.utf16()),
+	                       FILE_WRITE_ATTRIBUTES,
+	                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                       nullptr, OPEN_EXISTING,
+	                       FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	FILETIME ftCreated  = origCreated.isValid()  ? toFileTime(origCreated)  : FILETIME{};
+	FILETIME ftModified = origModified.isValid() ? toFileTime(origModified) : FILETIME{};
+	SetFileTime(h,
+	            origCreated.isValid()  ? &ftCreated  : nullptr,
+	            nullptr,
+	            origModified.isValid() ? &ftModified : nullptr);
+	CloseHandle(h);
+}
 #endif
 
 namespace Mc {
+
+// How long tryStartJob() will wait for a missing subtitle to download before
+// giving up and muxing without it — bounded deliberately short so an
+// unresponsive OpenSubtitles never turns into a long stall of the queue.
+static constexpr int kSubtitlePrefetchTimeoutMs = 6000;
 
 // A queued job's DB-frozen estimated_saved_bytes was computed at proposal time —
 // if the estimate formula has changed since (see calibration/estimate tuning), that
@@ -521,6 +549,44 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 		// existing post-mux verification be the backstop.
 	}
 
+	// Reserve this storage-group slot and flip the job to "running" now, before
+	// the subtitle prefetch below — mirrors the tag_edit path's use of
+	// finishBusy above. Two reasons: (1) marks the group busy immediately, so a
+	// dispatchJobs() call re-entering while we're blocked waiting on the
+	// download (e.g. a different storage group's job finishing mid-wait) can't
+	// pick this same job or group again; (2) the UI's "queued → running"
+	// transition and auto-scroll fire right away instead of being delayed by
+	// however long the subtitle wait takes.
+	// Note: deliberately not holding a RunningJobSlot& across the subtitle wait
+	// below — a different storage group's job getting reentrantly dispatched
+	// during that wait can insert a new key into m_runningByGroup and rehash,
+	// invalidating any reference taken beforehand. Every access here is its own
+	// fresh operator[] lookup instead.
+	occupySlot(storageGroup, jobId, fileId, estimatedSavings);
+	m_runningByGroup[storageGroup].finishBusy = true;
+#ifdef Q_OS_WIN
+	// Capture the folder's timestamp now, before the subtitle prefetch touches
+	// it — restored in onRemuxJobFinished() once every file operation for this
+	// job (mux, rename, sidecar cleanup) is actually done.
+	if (fileOpt) {
+		const QFileInfo dirFi(QFileInfo(fileOpt->path).absolutePath());
+		m_runningByGroup[storageGroup].dirOrigCreated  = dirFi.birthTime();
+		m_runningByGroup[storageGroup].dirOrigModified = dirFi.lastModified();
+	}
+#endif
+	db.updateJobStatus(jobId, "running");
+	emit jobStarted(jobId);
+
+	// Sidecar merging is about to absorb whatever external subtitles exist right
+	// now (streams fetched just below) — give a missing one a short, bounded
+	// chance to land first so it gets embedded instead of only ever existing as
+	// an unmerged sidecar. No-ops immediately if there's nothing fetchable or
+	// downloading can't run right now; if OpenSubtitles is slow, this simply
+	// gives up after the timeout and the file muxes without it, same as before —
+	// it stays available for a manual "Download Subtitles" pass afterward.
+	if (m_mergeSidecarSubtitles && fileId > 0)
+		SubtitleManager::instance().tryDownloadNow(fileId, kSubtitlePrefetchTimeoutMs);
+
 	QStringList args;
 	const QJsonArray arr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
 	for (const auto& v : arr) args << v.toString();
@@ -571,6 +637,25 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 		// unless the user has opted out. Flag changes (if any) are applied
 		// per-sidecar inside buildSidecarArgsForRemux.
 		if (m_mergeSidecarSubtitles) {
+			// Some subtitle sources (OpenSubtitles included) sometimes serve
+			// MicroDVD content mislabeled with a .srt extension — mkvmerge sniffs
+			// the real content and rejects the whole job outright. Fix any such
+			// sidecar in place before building the merge args, using this file's
+			// own frame rate to convert frame-based timing to real timestamps.
+			double videoFps = 0.0;
+			for (const StreamRecord& s : streams) {
+				if (s.codecType == QLatin1String("video")) {
+					videoFps = ActionEngine::parseFrameRate(s.frameRate);
+					break;
+				}
+			}
+			if (videoFps > 0.0) {
+				for (const StreamRecord& s : streams) {
+					if (s.isExternal && !s.externalPath.isEmpty() && s.codecType == QLatin1String("subtitle"))
+						ActionEngine::fixMislabeledSidecarSubtitle(s.externalPath, videoFps);
+				}
+			}
+
 			const QStringList sidecarArgs = ActionEngine::buildSidecarArgsForRemux(
 				streams, flagChangesJson);
 			args.append(sidecarArgs);
@@ -619,7 +704,10 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 
 	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
 	const QString ffprobePath  = ExternalTools::instance().ffprobePath();
-	occupySlot(storageGroup, jobId, fileId, estimatedSavings);
+	// The slot was already reserved (and the job already marked "running")
+	// above, before the subtitle prefetch — fetch it fresh now (safe: nothing
+	// between here and its use below touches m_runningByGroup) and attach the
+	// actual process.
 	RunningJobSlot& slot = m_runningByGroup[storageGroup];
 	slot.remux = new RemuxJob(jobId, mkvmergePath, args, sourcePath, descriptionText,
 	                          m_writeJobLog, finalOutputPathOverride,
@@ -638,9 +726,6 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	        [this, jobId](const QString& label) {
 		emit phaseChanged(jobId, label);
 	});
-
-	db.updateJobStatus(jobId, "running");
-	emit jobStarted(jobId);
 
 	slot.remux->run();
 	return true;
@@ -794,6 +879,12 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 	if (!remux)
 		return;
 
+	// Captured into locals now, before releaseSlot() below erases the slot —
+	// used at the very end of the success path to restore the containing
+	// folder's timestamp once every file operation for this job is done.
+	const QDateTime dirOrigCreated  = slot ? slot->dirOrigCreated  : QDateTime();
+	const QDateTime dirOrigModified = slot ? slot->dirOrigModified : QDateTime();
+
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
 	// hasTrackMismatch() covers both triggers RemuxJob checks before finalizing: the
 	// mkvmerge "track not found" warning, and the streams-level diff against what
@@ -943,6 +1034,17 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 		db.clearStreamForcedRemovals(fileId);
 
 		deleteMergedSidecars(jobId);
+
+#ifdef Q_OS_WIN
+		// Every file operation for this job (subtitle prefetch, mux, rename,
+		// sidecar cleanup) is done now — restore the folder's timestamp to what
+		// it was before any of it started, so this automated pass doesn't bubble
+		// the folder up as "newest" in media libraries sorted by Date Modified.
+		if (dirOrigCreated.isValid() || dirOrigModified.isValid()) {
+			const QString dirPath = QFileInfo(!finalOutput.isEmpty() ? finalOutput : originalInput).absolutePath();
+			preserveDirTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+		}
+#endif
 
 		if (!finalOutput.isEmpty() && finalOutput != originalInput) {
 			const QFileInfo fi(finalOutput);

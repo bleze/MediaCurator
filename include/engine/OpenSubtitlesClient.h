@@ -50,6 +50,9 @@ public:
 	// exhausted, so further requests will fail the same way; callers should stop
 	// retrying rather than treating it as an ordinary per-item failure.
 	bool    quotaExceeded()  const { return m_quotaExceeded; }
+	// Seconds to wait before retrying, taken from the most recent 429's Retry-After
+	// header; -1 if no 429 was seen or the header was absent/unparseable.
+	int     retryAfterSeconds() const { return m_retryAfterSecs; }
 	bool    wasCancelled()   const { return m_cancelled.loadRelaxed() != 0; }
 
 	// Blocking — must be called from the thread this object lives on.
@@ -79,10 +82,16 @@ private:
 	int     m_remaining      = -1;
 	int     m_lastStatus     = 0;
 	bool    m_quotaExceeded  = false;
+	int     m_retryAfterSecs = -1;
 	QAtomicInt m_cancelled{0};
 
 	static constexpr const char* kBaseUrl = "https://api.opensubtitles.com/api/v1";
 };
+
+// Parses an HTTP Retry-After header value — either a plain integer number of
+// seconds, or an RFC 2822/HTTP-date string — into seconds from now.
+// Returns -1 if the value is empty or unparseable.
+int parseRetryAfterSeconds(const QByteArray& headerValue);
 
 // ── Worker QObject — move to a QThread, call run() via QThread::started ──────
 
@@ -111,7 +120,9 @@ signals:
 	// remaining: OpenSubtitles' reported downloads-left-today, or -1 if unknown.
 	// quotaExceeded: an HTTP 429 was seen — the account is rate-limited, not just
 	// this run's languages failing individually.
-	void done(int downloaded, int failed, QString statusMessage, int remaining, bool quotaExceeded);
+	// retryAfterSecs: seconds from the 429's Retry-After header, or -1 if unknown.
+	void done(int downloaded, int failed, QString statusMessage, int remaining,
+	          bool quotaExceeded, int retryAfterSecs);
 
 private:
 	QString     m_apiKey, m_username, m_password;

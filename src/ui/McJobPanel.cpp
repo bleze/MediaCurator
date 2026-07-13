@@ -12,6 +12,7 @@
 #include "engine/ActionEngine.h"
 #include "engine/JobQueue.h"
 #include "engine/PosterManager.h"
+#include "engine/SubtitleManager.h"
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
 
@@ -1540,16 +1541,23 @@ void McJobPanel::onQueueSelected()
 	// Promote selected proposed jobs to queued
 	const auto selected = m_listView->selectionModel()->selectedIndexes();
 	QList<qint64> ids;
+	QList<qint64> fileIds;
 	QSet<int> seen;
 	for (const QModelIndex& idx : selected) {
 		if (seen.contains(idx.row())) continue;
 		seen.insert(idx.row());
-		if (idx.data(McJobListModel::StatusRole).toString() == "proposed")
+		if (idx.data(McJobListModel::StatusRole).toString() == "proposed") {
 			ids << idx.data(McJobListModel::JobIdRole).toLongLong();
+			const qint64 fid = idx.data(McJobListModel::FileIdRole).toLongLong();
+			if (!fileIds.contains(fid)) fileIds << fid;
+		}
 	}
 	if (ids.isEmpty()) return;
 
 	DatabaseManager::instance().promoteJobsToQueued(ids);
+	// A job may have been proposed days ago while subtitles were still missing —
+	// retry them now that it's about to sit in the processing queue.
+	SubtitleManager::instance().enqueueBatch(fileIds);
 
 	// Update each card in-place (no model reset) so the selection stays intact.
 	for (qint64 id : ids)
@@ -1572,7 +1580,10 @@ void McJobPanel::onQueueAll()
 	const QList<qint64> ids = m_model->jobIdsByStatus("proposed");
 	if (ids.isEmpty()) return;
 
+	// Fetch file IDs before promoting — fileIdsByStatus filters on "proposed".
+	const QList<qint64> fileIds = m_model->fileIdsByStatus("proposed");
 	DatabaseManager::instance().promoteJobsToQueued(ids);
+	SubtitleManager::instance().enqueueBatch(fileIds);
 
 	for (qint64 id : ids)
 		m_model->updateJob(id, "queued");
@@ -1651,6 +1662,10 @@ void McJobPanel::onStartPause()
 	} else if (m_queue->isRunning()) {
 		m_queue->pause();
 	} else {
+		// Files may have been queued a while ago and are still missing subtitles
+		// (e.g. the OpenSubtitles quota ran out mid-scan) — retry them now that
+		// processing is about to start, rather than only at scan time.
+		SubtitleManager::instance().enqueueBatch(m_model->fileIdsByStatus("queued"));
 		// The disk-space check in startJob() calls QStorageInfo, which can stall
 		// for several seconds when the target drive is asleep (e.g. NAS spin-up).
 		// Show a wait cursor so the UI doesn't look frozen during that window.
@@ -1686,6 +1701,8 @@ void McJobPanel::onStartWithGoal()
 		m_goalBar->setLive(0);
 		m_goalBar->setVisible(true);
 	}
+
+	SubtitleManager::instance().enqueueBatch(m_model->fileIdsByStatus("queued"));
 
 	// Same stall risk as onStartPause() — the disk-space check calls QStorageInfo,
 	// which can block for seconds on a sleeping/NAS drive.

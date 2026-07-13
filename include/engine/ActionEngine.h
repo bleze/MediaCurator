@@ -39,6 +39,20 @@ public:
 	static QStringList buildSidecarArgsForRemux(const QList<StreamRecord>& streams,
 	                                             const QString& flagChangesJson);
 
+	// Some subtitle sources (OpenSubtitles included) sometimes serve MicroDVD
+	// content — "{startFrame}{endFrame}text" — mislabeled with a .srt extension.
+	// mkvmerge sniffs the real content and rejects it outright ("non-supported
+	// file type"), which would otherwise fail the whole remux job. If `path`
+	// looks like MicroDVD, rewrites it in place as genuine SubRip using fps to
+	// turn frame numbers into timestamps. No-op (returns false) if the file
+	// doesn't look like MicroDVD, fps isn't positive, or the file can't be
+	// read/written — callers should just proceed with the file as-is either way.
+	static bool fixMislabeledSidecarSubtitle(const QString& path, double fps);
+
+	// Parses an ffprobe-style frame rate string ("24000/1001", "25/1", "25") into
+	// a plain fps double. Returns 0.0 if empty/unparseable.
+	static double parseFrameRate(const QString& frameRate);
+
 	// Returns the new sidecar path with the forced indicator added or removed.
 	// E.g. "movie.da.srt" + forced=true → "movie.da.forced.srt"
 	static QString computeRenamedSidecarPath(const QString& currentPath, bool wantForced);

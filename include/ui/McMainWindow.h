@@ -66,6 +66,7 @@ private slots:
 
 	void onRefreshView();
 	void onAnalyzeLibrary();
+	void onQuickAnalyze();
 	void onAnalyzeProgress(int current, int total, const QString& filename);
 	void onAnalyzeJobProposed(qint64 fileId);
 	void onAnalyzeFinished(int analyzed, int created);
@@ -127,6 +128,7 @@ private:
 	QAction*     m_actQuickScan     = nullptr;
 	QAction*     m_actRemoveFolder  = nullptr;
 	QAction*     m_actAnalyze       = nullptr;
+	QAction*     m_actQuickAnalyze  = nullptr;
 	QAction*     m_actSimulate      = nullptr;
 	QAction*     m_actSettings      = nullptr;
 	QAction*     m_actRefresh       = nullptr;

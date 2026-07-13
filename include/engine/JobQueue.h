@@ -1,5 +1,6 @@
 #pragma once
 #include "core/DatabaseManager.h"
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
@@ -86,6 +87,12 @@ private:
 		qint64    fileId          = -1;
 		qint64    estimatedSavings = 0;
 		bool      finishBusy      = false;
+		// Containing folder's timestamp, captured before the subtitle prefetch in
+		// tryStartJob() runs — restored in onRemuxJobFinished() once every file
+		// operation for this job (mux, rename, sidecar cleanup) is done. Windows-only,
+		// same scope as RemuxJob's own per-file timestamp preservation.
+		QDateTime dirOrigCreated;
+		QDateTime dirOrigModified;
 	};
 
 	// excludeJobId skips that one job for this pass — used right after cancelJob()
