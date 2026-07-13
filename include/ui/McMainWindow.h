@@ -166,6 +166,13 @@ private:
 	QHash<int, ScanGroupState> m_scanGroups;
 	QStringList      m_newFilesFound;   // accumulated across chained roots within one scan session
 	int              m_scannedSoFar = 0;   // files scanned in already-finished roots this session
+	// Accumulated across chained roots this scan session — only an updated or removed
+	// file can invalidate an existing job (see ScanWorker::deletePendingJobsForFile),
+	// so the job panel only needs refreshing when either is nonzero. A pure "found new
+	// files" scan (the common Quick Scan case) can skip re-rendering hundreds of
+	// unrelated job cards entirely.
+	int              m_updatedSoFar = 0;
+	int              m_removedSoFar = 0;
 	QTimer*          m_analyzeRefreshTimer = nullptr;
 	QThread*         m_loadThread      = nullptr;
 	LibraryLoader*   m_loader          = nullptr;

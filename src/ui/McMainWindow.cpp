@@ -2093,6 +2093,8 @@ void McMainWindow::startScanRoots(const QStringList& roots, bool quickScan)
 	m_scanGroups.clear();
 	m_newFilesFound.clear();
 	m_scannedSoFar = 0;
+	m_updatedSoFar = 0;
+	m_removedSoFar = 0;
 
 	const QHash<int, QStringList> byGroup = StorageGroupSettings::partitionRootsByGroup(roots);
 	for (auto it = byGroup.cbegin(); it != byGroup.cend(); ++it) {
@@ -2239,8 +2241,8 @@ void McMainWindow::updateScanStatusLabel()
 		                           .arg(activeGroups).arg(parts.join(QStringLiteral("; "))));
 }
 
-void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*/, int /*updated*/,
-                                          int /*failed*/, int /*skipped*/, int /*removed*/,
+void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*/, int updated,
+                                          int /*failed*/, int /*skipped*/, int removed,
                                           QStringList newFiles)
 {
 	auto it = m_scanGroups.find(groupId);
@@ -2251,6 +2253,8 @@ void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*
 	it->worker = nullptr;
 	m_newFilesFound << newFiles;
 	m_scannedSoFar += scanned;
+	m_updatedSoFar += updated;
+	m_removedSoFar += removed;
 
 	if (!it->pendingRoots.isEmpty()) {
 		const QString next = it->pendingRoots.takeFirst();
@@ -2277,7 +2281,13 @@ void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*
 		box.exec();
 	}
 
-	m_jobPanel->refresh();
+	// A scan only invalidates existing jobs when a known file changed or a file
+	// was removed (see ScanWorker::deletePendingJobsForFile) — newly discovered
+	// files have no jobs yet. Skipping this for a pure "found new files" scan
+	// (the common Quick Scan case) avoids a full, unpaged reload and re-render
+	// of every job card just to reflect a change that never happened.
+	if (m_updatedSoFar > 0 || m_removedSoFar > 0)
+		m_jobPanel->refresh();
 	updateSavedLabel();
 
 	const int libTotal = m_listModel->totalCount();
