@@ -37,7 +37,7 @@ namespace FallbackBps {
 	constexpr double kPcmDefault       = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
 	constexpr double kFlac             =   620'000.0; // FLAC (lossless, variable) — 2.0 (stereo) reference
 	constexpr double kFlacPerChannel   =   310'000.0; // kFlac / 2 — scale by actual channel count
-	constexpr double kPgsSubtitle      =    16'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
+	constexpr double kPgsSubtitle      =    37'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher) — calibrated directly against actual saved_bytes on jobs whose only fallback-estimated tracks were PGS (isolates the PGS-specific error instead of the whole-job ratio the Calibration dialog uses, which under-corrects when a job also carries an unrelated fallback track)
 	constexpr double kTextSubtitle     =     5'000.0; // SRT / ASS / SSA / WebVTT
 } // namespace FallbackBps
 
@@ -138,37 +138,57 @@ inline QString fallbackBpsConstName(const QString& key)
 	return {};
 }
 
-// Proportional savings estimate: removed tracks' share of total declared bitrate,
-// applied to the known file size. The denominator is floored at the actual container
-// bitrate (fileSize * 8 / duration) so video tracks that declare no bitrate don't
-// collapse the denominator to just the audio tracks.
+// Estimates the on-disk size of a single stream within a file. Uses a direct
+// bitrate x duration calculation whenever ffprobe reported a real bitrate for
+// this stream and the file's duration is known — that's exact and immune to
+// estimation error in any *other* track. Only falls back to a proportional
+// share of the container's total bitrate (allStreams, floored at the overall
+// container bitrate) when this stream's own bitrate is unknown, e.g. lossless
+// audio codecs that don't declare one in MKV.
+inline qint64 estimateStreamSizeBytes(const StreamRecord& s,
+                                       const QList<StreamRecord>& allStreams,
+                                       qint64 fileSizeBytes,
+                                       double durationSec)
+{
+	if (s.bitRate > 0 && durationSec > 0)
+		return qMin(static_cast<qint64>(static_cast<double>(s.bitRate) * durationSec / 8.0),
+		            fileSizeBytes);
+
+	if (fileSizeBytes <= 0) return 0;
+
+	// Proportional fallback. When durationSec = 0 AND no video has a declared bitrate,
+	// audio fallbacks would dominate totalBr and produce absurdly large estimates.
+	const bool hasVideoBitrate = std::any_of(allStreams.cbegin(), allStreams.cend(),
+	    [](const StreamRecord& sr) {
+	        return sr.codecType == QLatin1String("video") && sr.bitRate > 0;
+	    });
+	if (durationSec <= 0 && !hasVideoBitrate) return 0;
+
+	double totalBr = 0.0;
+	for (const StreamRecord& sr : allStreams)
+		totalBr += effectiveBitrate(sr);
+	if (durationSec > 0)
+		totalBr = qMax(totalBr, static_cast<double>(fileSizeBytes) * 8.0 / durationSec);
+	if (totalBr <= 0.0) return 0;
+	return static_cast<qint64>(effectiveBitrate(s) / totalBr * static_cast<double>(fileSizeBytes));
+}
+
+// Removed tracks' total estimated size, summing estimateStreamSizeBytes() per track
+// so tracks with a known declared bitrate are computed exactly instead of diluted by
+// estimation error in unrelated fallback-estimated tracks kept or removed elsewhere
+// in the same file.
 inline qint64 estimateSavingBytes(const QList<StreamRecord>& allStreams,
                                    const QSet<int>& removedStreamIndices,
                                    qint64 fileSizeBytes,
                                    double durationSec)
 {
 	if (fileSizeBytes <= 0) return 0;
-	double totalBr = 0.0, removedBr = 0.0;
+	qint64 removedBytes = 0;
 	for (const StreamRecord& s : allStreams) {
-		const double br = effectiveBitrate(s);
-		totalBr += br;
 		if (removedStreamIndices.contains(s.streamIndex))
-			removedBr += br;
+			removedBytes += estimateStreamSizeBytes(s, allStreams, fileSizeBytes, durationSec);
 	}
-	if (durationSec > 0) {
-		totalBr = qMax(totalBr, static_cast<double>(fileSizeBytes) * 8.0 / durationSec);
-	} else {
-		// Without duration the qMax floor can't fire. If no video stream has a
-		// declared bitrate, totalBr is dominated by audio/sub fallbacks and the
-		// ratio approaches 1.0, claiming the whole file as savings. Return 0 instead.
-		const bool hasVideoBitrate = std::any_of(allStreams.cbegin(), allStreams.cend(),
-		    [](const StreamRecord& s) {
-		        return s.codecType == QLatin1String("video") && s.bitRate > 0;
-		    });
-		if (!hasVideoBitrate) return 0;
-	}
-	if (totalBr <= 0.0) return 0;
-	return static_cast<qint64>(removedBr / totalBr * static_cast<double>(fileSizeBytes));
+	return qMin(removedBytes, fileSizeBytes);
 }
 
 // Per-track estimate entry stored at job-creation time for calibration.
@@ -186,28 +206,14 @@ struct StreamEstimate {
 	qint64  estimatedBytes  = 0;
 };
 
-// Returns per-stream estimates for every track in removedStreamIndices.
-// Uses the same totalBr denominator as estimateSavingBytes so the individual
-// estimates sum to the overall estimate.
+// Returns per-stream estimates for every track in removedStreamIndices, using
+// estimateStreamSizeBytes() so these sum to the same total as estimateSavingBytes.
 inline QList<StreamEstimate> perStreamEstimates(const QList<StreamRecord>& allStreams,
                                                   const QSet<int>& removedStreamIndices,
                                                   qint64 fileSizeBytes,
                                                   double durationSec)
 {
 	if (fileSizeBytes <= 0) return {};
-	double totalBr = 0.0;
-	for (const StreamRecord& s : allStreams)
-		totalBr += effectiveBitrate(s);
-	if (durationSec > 0) {
-		totalBr = qMax(totalBr, static_cast<double>(fileSizeBytes) * 8.0 / durationSec);
-	} else {
-		const bool hasVideoBitrate = std::any_of(allStreams.cbegin(), allStreams.cend(),
-		    [](const StreamRecord& s) {
-		        return s.codecType == QLatin1String("video") && s.bitRate > 0;
-		    });
-		if (!hasVideoBitrate) return {};
-	}
-	if (totalBr <= 0.0) return {};
 
 	QList<StreamEstimate> result;
 	for (const StreamRecord& s : allStreams) {
@@ -220,7 +226,7 @@ inline QList<StreamEstimate> perStreamEstimates(const QList<StreamRecord>& allSt
 		e.channels        = s.channels;
 		e.sampleRate      = s.sampleRate;
 		e.declaredBitrate = s.bitRate > 0 ? s.bitRate : 0;
-		e.estimatedBytes  = static_cast<qint64>(effectiveBitrate(s) / totalBr * fileSizeBytes);
+		e.estimatedBytes  = estimateStreamSizeBytes(s, allStreams, fileSizeBytes, durationSec);
 		result.append(e);
 	}
 	return result;

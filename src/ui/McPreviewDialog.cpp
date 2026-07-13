@@ -33,36 +33,6 @@
 
 namespace {
 
-static qint64 estimateStreamSizeBytes(const Mc::StreamRecord& s,
-                                       const QList<Mc::StreamRecord>& allStreams,
-                                       qint64 fileSizeBytes,
-                                       double durationSec)
-{
-	// Direct calculation when both bitrate and duration are known — avoids the
-	// proportional formula collapsing when the video stream has no declared bitrate.
-	if (s.bitRate > 0 && durationSec > 0)
-		return qMin(static_cast<qint64>(static_cast<double>(s.bitRate) * durationSec / 8.0),
-		            fileSizeBytes);
-
-	if (fileSizeBytes <= 0) return 0;
-
-	// Proportional fallback. When durationSec = 0 AND no video has a declared bitrate,
-	// audio fallbacks would dominate totalBr and produce absurdly large estimates.
-	const bool hasVideoBitrate = std::any_of(allStreams.cbegin(), allStreams.cend(),
-	    [](const Mc::StreamRecord& sr) {
-	        return sr.codecType == QLatin1String("video") && sr.bitRate > 0;
-	    });
-	if (durationSec <= 0 && !hasVideoBitrate) return 0;
-
-	double totalBr = 0.0;
-	for (const Mc::StreamRecord& sr : allStreams)
-		totalBr += Mc::effectiveBitrate(sr);
-	if (durationSec > 0)
-		totalBr = qMax(totalBr, static_cast<double>(fileSizeBytes) * 8.0 / durationSec);
-	if (totalBr <= 0.0) return 0;
-	return static_cast<qint64>(Mc::effectiveBitrate(s) / totalBr * static_cast<double>(fileSizeBytes));
-}
-
 static QString buildTrackTooltip(const Mc::StreamRecord& s, bool isOrig)
 {
 	QStringList lines;
@@ -458,7 +428,7 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
-		    estimateStreamSizeBytes(td.stream, allStreams,
+		    Mc::estimateStreamSizeBytes(td.stream, allStreams,
 		                        decision.file.sizeBytes, decision.file.durationSec)));
 
 		const QString decText = decisionText(td.decision)
@@ -529,7 +499,7 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
-		    estimateStreamSizeBytes(td.stream, allStreams,
+		    Mc::estimateStreamSizeBytes(td.stream, allStreams,
 		                        decision.file.sizeBytes, decision.file.durationSec)));
 		bitrateItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
