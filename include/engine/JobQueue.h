@@ -87,12 +87,11 @@ private:
 		qint64    fileId          = -1;
 		qint64    estimatedSavings = 0;
 		bool      finishBusy      = false;
-		// Containing folder's timestamp, captured before the subtitle prefetch in
-		// tryStartJob() runs — restored in onRemuxJobFinished() once every file
-		// operation for this job (mux, rename, sidecar cleanup) is done. Windows-only,
-		// same scope as RemuxJob's own per-file timestamp preservation.
-		QDateTime dirOrigCreated;
-		QDateTime dirOrigModified;
+	};
+
+	struct DirTimestamp {
+		QDateTime origCreated;
+		QDateTime origModified;
 	};
 
 	// excludeJobId skips that one job for this pass — used right after cancelJob()
@@ -109,8 +108,17 @@ private:
 	                      const QString& log, const QString& sidecarDeletionsJson,
 	                      const QString& flagChangesJson, const QList<StreamRecord>& allStreams);
 	[[nodiscard]] bool consumeAbortedJob(qint64 jobId, int storageGroup);
+	// Restores the containing folder's timestamp to whatever it was before this
+	// job's subtitle prefetch + mux started (captured in tryStartJob(), keyed by
+	// jobId rather than kept on RunningJobSlot so it survives cancelJob()'s
+	// releaseSlot() call, which runs before the killed process's async cleanup —
+	// and thus this restore — actually happens). Removes the stashed entry.
+	// No-op if nothing was stashed for this job (e.g. needs_review hasn't
+	// resolved yet — commitReview()/rejectReview() consume it later instead).
+	void restoreDirTimestampForJob(qint64 jobId, qint64 fileId);
 
 	QHash<int, RunningJobSlot> m_runningByGroup;
+	QHash<qint64, DirTimestamp> m_pendingDirTimestamps;
 	QSet<qint64>   m_cancelledJobIds;
 	bool           m_running      = false;
 	bool           m_paused       = false;

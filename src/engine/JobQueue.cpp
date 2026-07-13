@@ -566,12 +566,14 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	m_runningByGroup[storageGroup].finishBusy = true;
 #ifdef Q_OS_WIN
 	// Capture the folder's timestamp now, before the subtitle prefetch touches
-	// it — restored in onRemuxJobFinished() once every file operation for this
-	// job (mux, rename, sidecar cleanup) is actually done.
+	// it — restored once this job's mux actually finishes mutating the folder,
+	// whichever way that turns out (success, cancel, or failure). Keyed by
+	// jobId (not kept on the RunningJobSlot) so it survives cancelJob()'s
+	// releaseSlot() call, which happens before the killed process's async
+	// cleanup — and thus the restore — actually runs.
 	if (fileOpt) {
 		const QFileInfo dirFi(QFileInfo(fileOpt->path).absolutePath());
-		m_runningByGroup[storageGroup].dirOrigCreated  = dirFi.birthTime();
-		m_runningByGroup[storageGroup].dirOrigModified = dirFi.lastModified();
+		m_pendingDirTimestamps[jobId] = DirTimestamp{ dirFi.birthTime(), dirFi.lastModified() };
 	}
 #endif
 	db.updateJobStatus(jobId, "running");
@@ -868,11 +870,33 @@ void JobQueue::rescanFile(qint64 fileId, const QString& filePath, bool triggerRe
 	});
 }
 
+void JobQueue::restoreDirTimestampForJob(qint64 jobId, qint64 fileId)
+{
+	const auto it = m_pendingDirTimestamps.constFind(jobId);
+	if (it == m_pendingDirTimestamps.cend()) return;
+	const DirTimestamp snap = it.value();
+	m_pendingDirTimestamps.erase(it);
+#ifdef Q_OS_WIN
+	if (fileId <= 0) return;
+	const auto fileOpt = DatabaseManager::instance().fileById(fileId);
+	if (!fileOpt) return;
+	const QString dirPath = QFileInfo(fileOpt->path).absolutePath();
+	preserveDirTimestamps(dirPath, snap.origCreated, snap.origModified);
+#else
+	Q_UNUSED(fileId);
+#endif
+}
+
 void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
                                   int exitCode, const QString& log, qint64 savedBytes)
 {
-	if (consumeAbortedJob(jobId, storageGroup))
+	if (consumeAbortedJob(jobId, storageGroup)) {
+		// The killed process's .tmp cleanup (RemuxJob::onProcessFinished's
+		// exitCode!=0 branch) has now run — restore the folder timestamp it
+		// bumped, same as any other non-success exit below.
+		restoreDirTimestampForJob(jobId, fileId);
 		return;
+	}
 
 	RunningJobSlot* slot = m_runningByGroup.contains(storageGroup)
 	    ? &m_runningByGroup[storageGroup] : nullptr;
@@ -883,12 +907,6 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 	}
 	if (!remux)
 		return;
-
-	// Captured into locals now, before releaseSlot() below erases the slot —
-	// used at the very end of the success path to restore the containing
-	// folder's timestamp once every file operation for this job is done.
-	const QDateTime dirOrigCreated  = slot ? slot->dirOrigCreated  : QDateTime();
-	const QDateTime dirOrigModified = slot ? slot->dirOrigModified : QDateTime();
 
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
 	// hasTrackMismatch() covers both triggers RemuxJob checks before finalizing: the
@@ -1003,6 +1021,7 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 			remux->deleteLater();
 			releaseSlot(storageGroup);
 			emit jobFinished(jobId, false, 0);
+			restoreDirTimestampForJob(jobId, fileId);
 			rescanFile(fileId, {}, /*triggerReanalysis=*/true);
 
 			if (m_running && !m_paused) {
@@ -1040,22 +1059,23 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 
 		deleteMergedSidecars(jobId);
 
-#ifdef Q_OS_WIN
 		// Every file operation for this job (subtitle prefetch, mux, rename,
 		// sidecar cleanup) is done now — restore the folder's timestamp to what
 		// it was before any of it started, so this automated pass doesn't bubble
 		// the folder up as "newest" in media libraries sorted by Date Modified.
-		if (dirOrigCreated.isValid() || dirOrigModified.isValid()) {
-			const QString dirPath = QFileInfo(!finalOutput.isEmpty() ? finalOutput : originalInput).absolutePath();
-			preserveDirTimestamps(dirPath, dirOrigCreated, dirOrigModified);
-		}
-#endif
+		restoreDirTimestampForJob(jobId, fileId);
 
 		if (!finalOutput.isEmpty() && finalOutput != originalInput) {
 			const QFileInfo fi(finalOutput);
 			db.updateFilePath(fileId, finalOutput, fi.fileName());
 		}
 		rescanFile(fileId, {});
+	} else if (!ok) {
+		// mkvmerge failed for an ordinary reason (not cancelled, not the
+		// stale-sidecar self-heal above) — RemuxJob::onProcessFinished still
+		// deleted the .tmp it had started writing, bumping the folder the same
+		// way a success would; restore it here too.
+		restoreDirTimestampForJob(jobId, fileId);
 	}
 
 	if (m_running && !m_paused) {
@@ -1230,6 +1250,7 @@ void JobQueue::commitReview(qint64 jobId)
 
 			if (fileId > 0) {
 				deleteMergedSidecars(jobId);
+				restoreDirTimestampForJob(jobId, fileId);
 				if (!isInPlace) {
 					const QFileInfo fi(finalPath);
 					DatabaseManager::instance().updateFilePath(fileId, finalPath, fi.fileName());
@@ -1258,6 +1279,7 @@ void JobQueue::rejectReview(qint64 jobId, bool reanalyze)
 	m_reviewOrigSize = 0;
 
 	QFile::remove(tmpPath);
+	restoreDirTimestampForJob(jobId, fileId);
 
 	auto& db = DatabaseManager::instance();
 	if (reanalyze) {
