@@ -109,6 +109,23 @@ public:
 	bool detectSidecarSubtitleLanguage() const { return m_detectSidecarSubtitleLanguage; }
 	void setDetectSidecarSubtitleLanguage(bool v);
 
+	// Freeform words/phrases (case-insensitive) that mark a distinct cut/edition of a
+	// film — "EXTENDED", "DIRECTORS CUT", etc. Used to score OpenSubtitles candidates'
+	// release names against the local filename and to penalize an edition mismatch.
+	// Not an exhaustive list (release naming isn't a governed standard) — user-editable
+	// in Settings so new/obscure edition tags can be added without a code change.
+	QStringList editionTokens() const { return m_editionTokens; }
+	void setEditionTokens(const QStringList& tokens);
+	static QStringList defaultEditionTokens();
+
+	// Compute the OpenSubtitles moviehash (first+last 64KB + filesize) and send it
+	// alongside every search, opportunistically boosting an exact moviehash_match hit
+	// to the top. Off by default — it means reading the actual media file for every
+	// subtitle lookup, which slows batch downloads and is moot for files that were
+	// re-muxed/edited since the hash only matches the exact original release rip.
+	bool computeSubtitleMovieHash() const { return m_computeSubtitleMovieHash; }
+	void setComputeSubtitleMovieHash(bool v);
+
 	// Audio format priority — ordered list of format IDs, best first.
 	// Each ID corresponds to a specific codec variant (e.g. "atmos", "dtshdma").
 	// When multiple tracks of the same language exist, the highest-priority one is kept.
@@ -169,6 +186,8 @@ private:
 	QString     m_openSubtitlesPassword;
 	bool        m_autoDownloadSubtitles   = false;
 	bool        m_detectSidecarSubtitleLanguage = false;
+	QStringList m_editionTokens          = defaultEditionTokens();
+	bool        m_computeSubtitleMovieHash = false;
 	QStringList m_audioFormatOrder      = defaultAudioFormatOrder();
 	QStringList m_disabledAudioFormats  = {};
 	QStringList m_subtitleFormatOrder   = defaultSubtitleFormatOrder();

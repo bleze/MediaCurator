@@ -53,6 +53,7 @@ set(MC_SOURCES
     engine/PosterManager.cpp
     engine/SubtitleManager.cpp
     engine/OpenSubtitlesClient.cpp
+    engine/SubtitleSyncMatcher.cpp
     engine/HighscoreClient.cpp
 
     # Classifier
@@ -92,6 +93,7 @@ set(MC_HEADERS
     ../include/engine/PosterManager.h
     ../include/engine/SubtitleManager.h
     ../include/engine/OpenSubtitlesClient.h
+    ../include/engine/SubtitleSyncMatcher.h
     ../include/engine/HighscoreClient.h
     ../include/engine/HighscoreConfig.h
 

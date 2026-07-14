@@ -1,14 +1,20 @@
 #include "ui/McSubtitleDownloadDialog.h"
 #include "ui/McCardDelegate.h"
 #include "ui/McLanguageFlags.h"
+#include "core/DatabaseManager.h"
 #include "engine/OpenSubtitlesClient.h"
 #include "engine/SubtitleManager.h"
 
+#include <QClipboard>
+#include <QCursor>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QThread>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <QtMath>
 
@@ -26,11 +32,17 @@ McSubtitleDownloadDialog::McSubtitleDownloadDialog(const QString& apiKey,
                                                    const QString& imdbId,
                                                    const QStringList& iso6392Languages,
                                                    const QString& videoPath,
+                                                   double durationSec,
+                                                   const QStringList& editionTokens,
+                                                   bool computeMovieHash,
+                                                   const QList<StreamRecord>& existingStreams,
                                                    const QString& movieTitle,
                                                    QWidget* parent)
 	: QDialog(parent)
 	, m_apiKey(apiKey), m_username(username), m_password(password)
 	, m_imdbId(imdbId), m_iso6392Languages(iso6392Languages), m_videoPath(videoPath)
+	, m_durationSec(durationSec), m_editionTokens(editionTokens), m_computeMovieHash(computeMovieHash)
+	, m_existingStreams(existingStreams)
 {
 	setWindowTitle(movieTitle.isEmpty()
 	    ? tr("Download Subtitles")
@@ -40,6 +52,17 @@ McSubtitleDownloadDialog::McSubtitleDownloadDialog(const QString& apiKey,
 	auto* root = new QVBoxLayout(this);
 	root->setSpacing(10);
 	root->setContentsMargins(12, 12, 12, 12);
+
+	// ── Status line ───────────────────────────────────────────────────────────
+	// Otherwise a slow phase (the reference-subtitle lookup, or a slow search/download)
+	// looks identical to a frozen dialog — nothing here changes except this label.
+	m_statusLabel = new QLabel(this);
+	m_statusLabel->setWordWrap(true);
+	// Left visible but blank (rather than hidden) so its line height is already
+	// accounted for by setFixedSize() below — the dialog can't grow later to make
+	// room for it once shown.
+	m_statusLabel->setText(QStringLiteral(" "));
+	root->addWidget(m_statusLabel);
 
 	// ── Language table ────────────────────────────────────────────────────────
 	m_table = new QTableWidget(iso6392Languages.size(), 3, this);
@@ -110,6 +133,7 @@ McSubtitleDownloadDialog::McSubtitleDownloadDialog(const QString& apiKey,
 
 	connect(m_downloadBtn, &QPushButton::clicked, this, &McSubtitleDownloadDialog::onDownload);
 	connect(m_closeBtn,    &QPushButton::clicked, this, &QDialog::reject);
+	connect(m_table, &QTableWidget::cellClicked, this, &McSubtitleDownloadDialog::onStatusCellClicked);
 
 	setFixedWidth(400);
 	adjustSize();
@@ -121,6 +145,7 @@ void McSubtitleDownloadDialog::onDownload()
 	m_downloadBtn->setEnabled(false);
 	m_downloadBtn->hide();
 	m_downloading = true;
+	m_statusLabel->setText(tr("Logging in to OpenSubtitles…"));
 	// m_closeBtn stays enabled, reading "Cancel", so the user can abort mid-download.
 
 	QStringList iso6391Languages;
@@ -132,11 +157,17 @@ void McSubtitleDownloadDialog::onDownload()
 	m_thread = new QThread(this);
 	m_worker = new SubtitleDownloadWorker(
 		m_apiKey, m_username, m_password,
-		m_imdbId, iso6391Languages, m_videoPath);
+		m_imdbId, iso6391Languages, m_videoPath,
+		m_durationSec, m_editionTokens, m_computeMovieHash,
+		m_existingStreams);
 	m_worker->moveToThread(m_thread);
 
 	connect(m_thread, &QThread::started,
 	        m_worker, &SubtitleDownloadWorker::run, Qt::QueuedConnection);
+	connect(m_worker, &SubtitleDownloadWorker::referenceLookupStarted,
+	        this, &McSubtitleDownloadDialog::onReferenceLookupStarted, Qt::QueuedConnection);
+	connect(m_worker, &SubtitleDownloadWorker::referenceLookupDone,
+	        this, &McSubtitleDownloadDialog::onReferenceLookupDone, Qt::QueuedConnection);
 	connect(m_worker, &SubtitleDownloadWorker::languageStarted,
 	        this, &McSubtitleDownloadDialog::onLanguageStarted, Qt::QueuedConnection);
 	connect(m_worker, &SubtitleDownloadWorker::languageDone,
@@ -151,8 +182,22 @@ void McSubtitleDownloadDialog::onDownload()
 	m_thread->start();
 }
 
+void McSubtitleDownloadDialog::onReferenceLookupStarted()
+{
+	m_statusLabel->setText(tr("Checking existing subtitles for a sync reference…"));
+}
+
+void McSubtitleDownloadDialog::onReferenceLookupDone(bool found, const QString& label)
+{
+	m_statusLabel->setText(found
+		? tr("Using %1 as a sync reference").arg(label)
+		: tr("No existing subtitle found — matching by runtime only"));
+}
+
 void McSubtitleDownloadDialog::onLanguageStarted(const QString& lang6391)
 {
+	m_statusLabel->setText(tr("Searching %1…").arg(languageDisplayName(iso6391to6392(lang6391))));
+
 	const int row = m_rowByLang6391.value(lang6391, -1);
 	if (row < 0) return;
 	auto* item = m_table->item(row, 2);
@@ -173,7 +218,7 @@ void McSubtitleDownloadDialog::onLanguageDone(const QString& lang6391,
 	if (success) {
 		item->setText(tr("✓ Downloaded"));
 		item->setForeground(QColor(0, 150, 0));
-		item->setToolTip(QString{});
+		item->setToolTip(message); // which candidate matched, and why — see SubtitleDownloadWorker::run()
 	} else {
 		const bool notFound = message.contains(QLatin1String("Not found"), Qt::CaseInsensitive);
 		item->setText(notFound ? tr("Not found") : tr("✗ Failed"));
@@ -183,13 +228,27 @@ void McSubtitleDownloadDialog::onLanguageDone(const QString& lang6391,
 	}
 }
 
-void McSubtitleDownloadDialog::onAllDone(int downloaded, int /*failed*/, const QString& /*statusMsg*/,
+void McSubtitleDownloadDialog::onStatusCellClicked(int row, int column)
+{
+	if (column != 2) return;
+	auto* item = m_table->item(row, column);
+	if (!item) return;
+
+	const QString text = item->toolTip().isEmpty() ? item->text() : item->toolTip();
+	if (text.isEmpty()) return;
+
+	QGuiApplication::clipboard()->setText(text);
+	QToolTip::showText(QCursor::pos(), tr("Copied to clipboard"), m_table);
+}
+
+void McSubtitleDownloadDialog::onAllDone(int downloaded, int /*failed*/, const QString& statusMsg,
                                           int /*remaining*/, bool quotaExceeded, int retryAfterSecs)
 {
 	m_downloaded  = downloaded;
 	m_downloading = false;
 	m_closeBtn->setEnabled(true);
 	m_closeBtn->setText(tr("Close"));
+	m_statusLabel->setText(statusMsg);
 	emit downloadComplete(downloaded);
 
 	// A 429 seen here means the account's daily quota is exhausted regardless of

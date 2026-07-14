@@ -42,6 +42,11 @@ public:
 	// Gates SubtitleLanguageDetector + on-disk renaming when re-scanning sidecars
 	// after a download (UserProfile::detectSidecarSubtitleLanguage()). Off by default.
 	void setDetectSubtitleLanguage(bool detect);
+	// Push updated edition-token list / moviehash setting (UserProfile::editionTokens(),
+	// UserProfile::computeSubtitleMovieHash()) — same "push updated settings" pattern
+	// as setCredentials/setUnderstoodLanguages above.
+	void setEditionTokens(const QStringList& tokens);
+	void setComputeMovieHash(bool enabled);
 
 	// Enqueue a newly-scanned (or rescanned) file for subtitle lookup.
 	// No-op if disabled, no API key configured, or the file is already fully covered.
@@ -91,6 +96,8 @@ signals:
 	void workerSetEnabled(bool enabled);
 	void workerSetUnderstoodLanguages(QStringList languages);
 	void workerSetDetectSubtitleLanguage(bool detect);
+	void workerSetEditionTokens(QStringList tokens);
+	void workerSetComputeMovieHash(bool enabled);
 	void workerEnqueueFile(qint64 fileId);
 	void workerEnqueueBatch(QList<qint64> fileIds);
 	void workerCancelAll();

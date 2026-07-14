@@ -31,10 +31,13 @@ class OpenSubtitlesClient : public QObject
 	Q_OBJECT
 public:
 	struct SubtitleFile {
-		int     fileId        = 0;
-		QString language;       // ISO 639-1, e.g. "en"
-		QString fileName;       // suggested filename from API
-		int     downloadCount = 0;
+		int     fileId         = 0;
+		QString language;        // ISO 639-1, e.g. "en"
+		QString fileName;        // suggested filename from API
+		QString release;         // freeform uploader-supplied release name, e.g.
+		                          // "Movie.Title.2020.EXTENDED.1080p.BluRay.x264-GROUP"
+		int     downloadCount  = 0;
+		bool    movieHashMatch = false; // true when the request's moviehash matched exactly
 	};
 
 	explicit OpenSubtitlesClient(const QString& apiKey,
@@ -56,9 +59,33 @@ public:
 	bool    wasCancelled()   const { return m_cancelled.loadRelaxed() != 0; }
 
 	// Blocking — must be called from the thread this object lives on.
-	bool                ensureLoggedIn();
-	QList<SubtitleFile> search(const QString& imdbId, const QStringList& iso639_1Languages);
-	bool                downloadToFile(int fileId, const QString& savePath);
+	bool ensureLoggedIn();
+
+	// Returns up to a handful of ranked candidates per language (best match first),
+	// not just the single most-downloaded file — callers can try the next candidate
+	// when the first fails a post-download check (e.g. runtime mismatch).
+	// localFileName/editionTokens drive release-name scoring (see candidateScore() in
+	// the .cpp); movieHash is sent opportunistically (opt-in, see
+	// UserProfile::computeSubtitleMovieHash) and, on an exact moviehash_match, that
+	// candidate is boosted to the very top regardless of filename score.
+	QList<SubtitleFile> search(const QString& imdbId, const QStringList& iso639_1Languages,
+	                           const QString& localFileName = QString(),
+	                           const QStringList& editionTokens = {},
+	                           const QString& movieHash = QString());
+
+	// Steps 1+2 of a download (resolve the signed CDN link, fetch its content) without
+	// writing to disk — lets a caller inspect content (e.g. check subtitle runtime)
+	// before deciding whether to keep it.
+	bool downloadToBuffer(int fileId, QByteArray& outContent);
+	bool downloadToFile(int fileId, const QString& savePath);
+
+	// OpenSubtitles' moviehash: filesize plus the first and last 64 KiB of the file,
+	// summed as little-endian uint64 words. Matches the original file's exact bytes —
+	// meaningless once a file has been remuxed/re-edited, which is why this is opt-in
+	// (UserProfile::computeSubtitleMovieHash) rather than always-on: it means reading
+	// the whole 128 KiB from every file up front, which adds up over a batch.
+	// Returns an empty string if the file is smaller than 128 KiB or unreadable.
+	static QString computeMovieHash(const QString& filePath);
 
 public slots:
 	// Abort whatever request is currently in flight (safe to invoke cross-thread
@@ -105,6 +132,10 @@ public:
 	                                const QString& imdbId,
 	                                const QStringList& iso639_1Languages,
 	                                const QString& videoPath,
+	                                double durationSec,
+	                                const QStringList& editionTokens,
+	                                bool computeMovieHash,
+	                                const QList<StreamRecord>& existingStreams,
 	                                QObject* parent = nullptr);
 
 public slots:
@@ -115,6 +146,12 @@ public slots:
 	void cancel();
 
 signals:
+	// Emitted once, before the (usually few-second, occasionally longer) reference-subtitle
+	// lookup runs — the only phase of a download with no other visible progress signal.
+	void referenceLookupStarted();
+	// found/label mirror pickAndExtractReferenceSubtitle()'s result — label is empty when
+	// found is false (no existing subtitle qualified, falling back to the duration check).
+	void referenceLookupDone(bool found, QString label);
 	void languageStarted(QString language);                           // ISO 639-1
 	void languageDone(QString language, bool success, QString message); // ISO 639-1
 	// remaining: OpenSubtitles' reported downloads-left-today, or -1 if unknown.
@@ -129,6 +166,10 @@ private:
 	QString     m_imdbId;
 	QStringList m_languages;
 	QString     m_videoPath;
+	double      m_durationSec = 0.0;
+	QStringList m_editionTokens;
+	bool        m_computeMovieHash = false;
+	QList<StreamRecord> m_existingStreams;
 	QAtomicInt         m_cancelled{0};
 	OpenSubtitlesClient* m_client = nullptr; // valid only while run() is executing
 };
@@ -148,5 +189,35 @@ QString iso6391to6392(const QString& iso6391);
 // same ISO 639-1 code. "mul" (multiple/unknown) is never treated as missing.
 QStringList missingSubtitleLanguages(const QList<StreamRecord>& streams,
                                       const QStringList& understoodLanguages6392);
+
+// A subtitle's cue timings, measured against a file's known duration.
+struct SubtitleCoverage {
+	int    totalCues        = 0;    // total cues found; 0 = empty/unparseable subtitle
+	int    cuesPastDuration = 0;    // cues whose START time falls after fileDurationSec
+	double lastCueEndSec    = -1.0; // last cue's end time in seconds, -1 if none found
+};
+
+// Parses every SRT-style "-->" cue timestamp in srtContent and measures it against
+// fileDurationSec (pass <= 0 to skip duration-dependent scoring).
+SubtitleCoverage analyzeSubtitleCoverage(const QByteArray& srtContent, double fileDurationSec);
+
+// Checks whether a subtitle's cue timings are consistent with fileDurationSec.
+//
+// Underrun (subtitle ends well before the file does) uses a loose time-based
+// tolerance — many subtitles simply don't caption several minutes of silent
+// trailing credits, which is harmless.
+//
+// Overrun is judged differently, deliberately not by "how many seconds past the
+// end": a cue can never actually display once the file has stopped playing, so a
+// lone translator "synced by..." credit is equally invisible whether it sits 5
+// seconds or 5 minutes past the end — the seconds don't mean anything. What matters
+// is *how many* cues fall past the end: a handful is normal trailing noise, but
+// dozens means real dialogue this file's runtime doesn't reach, i.e. this subtitle
+// is timed to a longer cut.
+//
+// Only catches whole-file length mismatches, not a same-length re-edit with content
+// swapped mid-film — a coarse filter, not a sync guarantee.
+// Returns true (passes) when duration is unknown or the subtitle has no cues at all.
+bool subtitleDurationPasses(const SubtitleCoverage& coverage, double fileDurationSec);
 
 } // namespace Mc

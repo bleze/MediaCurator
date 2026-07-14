@@ -346,6 +346,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 		SubtitleManager::instance().setEnabled(m_profile->autoDownloadSubtitles());
 		SubtitleManager::instance().setUnderstoodLanguages(m_profile->understoodLanguages());
 		SubtitleManager::instance().setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
+		SubtitleManager::instance().setEditionTokens(m_profile->editionTokens());
+		SubtitleManager::instance().setComputeMovieHash(m_profile->computeSubtitleMovieHash());
 	});
 
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
@@ -590,6 +592,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	         m_profile->openSubtitlesPassword(), m_profile->autoDownloadSubtitles(),
 	         m_profile->understoodLanguages());
 	sm.setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
+	sm.setEditionTokens(m_profile->editionTokens());
+	sm.setComputeMovieHash(m_profile->computeSubtitleMovieHash());
 	connect(&sm, &SubtitleManager::subtitlesReady, this, [this](qint64 fileId, int downloaded) {
 		m_listModel->reloadFile(fileId);
 		m_jobPanel->refresh();
@@ -939,7 +943,9 @@ void McMainWindow::setupUi()
 				m_profile->openSubtitlesApiKey(),
 				m_profile->openSubtitlesUsername(),
 				m_profile->openSubtitlesPassword(),
-				imdbId, missingIso6392, filePath, movieTitle, this);
+				imdbId, missingIso6392, filePath, file.durationSec,
+				m_profile->editionTokens(), m_profile->computeSubtitleMovieHash(),
+				streams, movieTitle, this);
 			dlg->setAttribute(Qt::WA_DeleteOnClose);
 			connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
 				[this, fileId, filePath](int downloaded) {
@@ -1365,7 +1371,9 @@ void McMainWindow::setupUi()
 			m_profile->openSubtitlesApiKey(),
 			m_profile->openSubtitlesUsername(),
 			m_profile->openSubtitlesPassword(),
-			imdbId, missingIso6392, filePath, movieTitle, this);
+			imdbId, missingIso6392, filePath, file.durationSec,
+			m_profile->editionTokens(), m_profile->computeSubtitleMovieHash(),
+			streams, movieTitle, this);
 		dlg->setAttribute(Qt::WA_DeleteOnClose);
 		connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
 			[this, fileId, filePath](int downloaded) {

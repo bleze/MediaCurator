@@ -185,6 +185,44 @@ void UserProfile::setDetectSidecarSubtitleLanguage(bool v)
 	}
 }
 
+void UserProfile::setEditionTokens(const QStringList& tokens)
+{
+	if (m_editionTokens != tokens) {
+		m_editionTokens = tokens;
+		emit profileChanged();
+	}
+}
+
+void UserProfile::setComputeSubtitleMovieHash(bool v)
+{
+	if (m_computeSubtitleMovieHash != v) {
+		m_computeSubtitleMovieHash = v;
+		emit profileChanged();
+	}
+}
+
+// static
+QStringList UserProfile::defaultEditionTokens()
+{
+	// Not exhaustive — scene/P2P release naming isn't a governed standard and new
+	// per-title edition names (e.g. "Snyder Cut") appear all the time. Deliberately
+	// excludes PROPER/REPACK: those mark a corrected re-encode of the same cut, not
+	// a different edit, so treating them as edition tokens would cause false mismatches.
+	return {
+		"extended", "extended cut", "extended edition",
+		"theatrical", "theatrical cut",
+		"unrated", "uncut",
+		"directors cut", "director's cut", "dc",
+		"special edition", "se",
+		"ultimate edition", "collectors edition", "collector's edition",
+		"deluxe edition", "anniversary edition",
+		"remastered", "restored", "redux",
+		"final cut", "assembly cut", "alternate cut", "international cut",
+		"workprint", "fan edit",
+		"imax", "imax enhanced",
+	};
+}
+
 void UserProfile::setAudioFormatOrder(const QStringList& order)
 {
 	if (m_audioFormatOrder != order) {
@@ -292,6 +330,8 @@ QJsonObject UserProfile::toJson() const
 	o["opensubtitles_password"]          = m_openSubtitlesPassword;
 	o["auto_download_subtitles"]         = m_autoDownloadSubtitles;
 	o["detect_sidecar_subtitle_language"] = m_detectSidecarSubtitleLanguage;
+	o["edition_tokens"]                  = QJsonArray::fromStringList(m_editionTokens);
+	o["compute_subtitle_moviehash"]      = m_computeSubtitleMovieHash;
 	return o;
 }
 
@@ -332,6 +372,14 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_openSubtitlesPassword      = json["opensubtitles_password"].toString();
 	m_autoDownloadSubtitles      = json["auto_download_subtitles"].toBool(false);
 	m_detectSidecarSubtitleLanguage = json["detect_sidecar_subtitle_language"].toBool(false);
+	m_computeSubtitleMovieHash   = json["compute_subtitle_moviehash"].toBool(false);
+
+	if (json.contains("edition_tokens")) {
+		QStringList tokens;
+		for (const auto& v : json["edition_tokens"].toArray())
+			tokens << v.toString();
+		m_editionTokens = tokens;
+	}
 
 	if (json.contains("audio_format_order")) {
 		QStringList order;

@@ -38,6 +38,9 @@ private slots:
 	void onSubFmtUp();
 	void onSubFmtDown();
 	void onBrowseStagingDir();
+	void onAddEditionToken();
+	void onRemoveEditionToken();
+	void onResetEditionTokens();
 
 private:
 	void accept() override;
@@ -71,6 +74,9 @@ private:
 	QLineEdit*   m_editOsUsername;
 	QLineEdit*   m_editOsPassword;
 	QCheckBox*   m_chkAutoDownloadSubs;
+	QCheckBox*   m_chkComputeMovieHash;
+	QListWidget* m_editionTokenList;
+	QLineEdit*   m_editEditionToken;
 	QCheckBox*   m_chkAutoTrack;
 	QSpinBox*    m_spinScanGroups;
 	QSpinBox*    m_spinPosterWorkers;

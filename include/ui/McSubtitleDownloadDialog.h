@@ -1,14 +1,17 @@
 #pragma once
 #include <QDialog>
+#include <QList>
 #include <QMap>
 
 class QTableWidget;
+class QLabel;
 class QPushButton;
 class QThread;
 
 namespace Mc {
 
 class SubtitleDownloadWorker;
+struct StreamRecord;
 
 class McSubtitleDownloadDialog : public QDialog
 {
@@ -20,6 +23,10 @@ public:
 	                                   const QString& imdbId,
 	                                   const QStringList& iso639_2Languages,
 	                                   const QString& videoPath,
+	                                   double durationSec,
+	                                   const QStringList& editionTokens,
+	                                   bool computeMovieHash,
+	                                   const QList<StreamRecord>& existingStreams,
 	                                   const QString& movieTitle,
 	                                   QWidget* parent = nullptr);
 
@@ -40,11 +47,15 @@ private slots:
 	void onLanguageDone(const QString& lang6391, bool success, const QString& message);
 	void onAllDone(int downloaded, int failed, const QString& statusMsg, int remaining,
 	               bool quotaExceeded, int retryAfterSecs);
+	void onStatusCellClicked(int row, int column);
+	void onReferenceLookupStarted();
+	void onReferenceLookupDone(bool found, const QString& label);
 
 private:
 	static QString languageDisplayName(const QString& iso6392);
 
 	QTableWidget* m_table       = nullptr;
+	QLabel*       m_statusLabel = nullptr;
 	QPushButton*  m_downloadBtn = nullptr;
 	QPushButton*  m_closeBtn    = nullptr;
 
@@ -52,6 +63,10 @@ private:
 	QString     m_imdbId;
 	QStringList m_iso6392Languages;
 	QString     m_videoPath;
+	double      m_durationSec = 0.0;
+	QStringList m_editionTokens;
+	bool        m_computeMovieHash = false;
+	QList<StreamRecord> m_existingStreams;
 
 	QMap<QString, int>         m_rowByLang6391;
 	QThread*                   m_thread = nullptr;

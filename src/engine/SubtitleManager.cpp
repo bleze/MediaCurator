@@ -9,6 +9,7 @@
 #include <QEventLoop>
 #include <QThread>
 #include <QTimer>
+#include <QTimeZone>
 #include <utility>
 
 namespace Mc {
@@ -24,7 +25,7 @@ static constexpr int kDefaultRateLimitBackoffSecs = 15 * 60;
 static int secondsUntilNextUtcMidnight()
 {
 	const QDateTime now = QDateTime::currentDateTimeUtc();
-	const QDateTime nextMidnight(now.date().addDays(1), QTime(0, 0), Qt::UTC);
+	const QDateTime nextMidnight(now.date().addDays(1), QTime(0, 0), QTimeZone(QTimeZone::UTC));
 	return static_cast<int>(now.secsTo(nextMidnight));
 }
 
@@ -103,6 +104,16 @@ public slots:
 	void setDetectSubtitleLanguage(bool detect)
 	{
 		m_detectSubtitleLanguage = detect;
+	}
+
+	void setEditionTokens(QStringList tokens)
+	{
+		m_editionTokens = std::move(tokens);
+	}
+
+	void setComputeMovieHash(bool enabled)
+	{
+		m_computeMovieHash = enabled;
 	}
 
 	void enqueueFile(qint64 fileId)
@@ -233,7 +244,8 @@ private:
 			// documented on OpenSubtitlesClient — run() is blocking-style via
 			// QEventLoop, safe to call directly since we're already off the UI thread.
 			SubtitleDownloadWorker dl(m_apiKey, m_username, m_password,
-			                          imdbId, missing6391, file.path);
+			                          imdbId, missing6391, file.path, file.durationSec,
+			                          m_editionTokens, m_computeMovieHash, streams);
 			m_currentDl = &dl;
 			connect(&dl, &SubtitleDownloadWorker::done, &dl,
 			        [&downloaded, &remaining, &quotaHit, &retryAfterSecs]
@@ -307,8 +319,10 @@ private:
 	QList<qint64>           m_queue;
 	QString                 m_apiKey, m_username, m_password;
 	QStringList             m_understoodLanguages;
+	QStringList             m_editionTokens;
 	bool                    m_enabled         = false;
 	bool                    m_detectSubtitleLanguage = false;
+	bool                    m_computeMovieHash = false;
 	bool                    m_stopping        = false;
 	bool                    m_processing      = false;
 	bool                    m_quotaExhausted  = false;
@@ -356,6 +370,10 @@ void SubtitleManager::start(const QString& apiKey, const QString& username, cons
 	        m_worker, &SubtitleWorker::setUnderstoodLanguages, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerSetDetectSubtitleLanguage,
 	        m_worker, &SubtitleWorker::setDetectSubtitleLanguage, Qt::QueuedConnection);
+	connect(this, &SubtitleManager::workerSetEditionTokens,
+	        m_worker, &SubtitleWorker::setEditionTokens, Qt::QueuedConnection);
+	connect(this, &SubtitleManager::workerSetComputeMovieHash,
+	        m_worker, &SubtitleWorker::setComputeMovieHash, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueFile,
 	        m_worker, &SubtitleWorker::enqueueFile, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueBatch,
@@ -404,6 +422,16 @@ void SubtitleManager::setUnderstoodLanguages(const QStringList& languages)
 void SubtitleManager::setDetectSubtitleLanguage(bool detect)
 {
 	emit workerSetDetectSubtitleLanguage(detect);
+}
+
+void SubtitleManager::setEditionTokens(const QStringList& tokens)
+{
+	emit workerSetEditionTokens(tokens);
+}
+
+void SubtitleManager::setComputeMovieHash(bool enabled)
+{
+	emit workerSetComputeMovieHash(enabled);
 }
 
 void SubtitleManager::enqueue(qint64 fileId)

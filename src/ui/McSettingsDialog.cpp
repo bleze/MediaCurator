@@ -391,7 +391,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subOptLayout->addWidget(m_chkDetectSubLanguage);
 	subLeft->addWidget(subOptGroup);
 
-	// Left bottom: OpenSubtitles
+	// Right: OpenSubtitles
 	auto* osGroup  = new QGroupBox(tr("OpenSubtitles"), subPage);
 	auto* osLayout = new QVBoxLayout(osGroup);
 
@@ -433,6 +433,46 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		   "Leave off if you'd rather manage your daily OpenSubtitles quota manually."));
 	osLayout->addWidget(m_chkAutoDownloadSubs);
 
+	m_chkComputeMovieHash = new QCheckBox(
+		tr("Also send an exact-file hash (moviehash) when searching"), osGroup);
+	m_chkComputeMovieHash->setChecked(profile->computeSubtitleMovieHash());
+	m_chkComputeMovieHash->setToolTip(tr(
+		"Reads the first and last 64 KB of each file to compute OpenSubtitles' own file hash, "
+		"which — when it matches — guarantees the exact right subtitle. Only matches an\n"
+		"unmodified original release rip, so it's useless for files you've remuxed/edited "
+		"yourself, and reading every file up front slows down batch downloads. Off by default."));
+	osLayout->addWidget(m_chkComputeMovieHash);
+
+	auto* editionLabel = new QLabel(tr("Edition/cut tags:"), osGroup);
+	editionLabel->setToolTip(tr(
+		"Words that mark a distinct cut of a film (\"EXTENDED\", \"DIRECTORS CUT\", ...). Used to "
+		"penalize a subtitle whose release name claims a different edition than your filename.\n"
+		"Not exhaustive — release naming isn't standardized — add any tag you run into."));
+	osLayout->addWidget(editionLabel);
+
+	m_editionTokenList = new QListWidget(osGroup);
+	m_editionTokenList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+	m_editionTokenList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	for (const QString& tok : profile->editionTokens())
+		new QListWidgetItem(tok, m_editionTokenList);
+	osLayout->addWidget(m_editionTokenList, 1);
+
+	auto* editionRow = new QHBoxLayout;
+	m_editEditionToken = new QLineEdit(osGroup);
+	m_editEditionToken->setPlaceholderText(tr("e.g. \"open matte\""));
+	auto* editionAddBtn    = new QPushButton(tr("Add"),    osGroup);
+	auto* editionRemoveBtn = new QPushButton(tr("Remove"), osGroup);
+	auto* editionResetBtn  = new QPushButton(tr("Reset to Defaults"), osGroup);
+	editionRow->addWidget(m_editEditionToken, 1);
+	editionRow->addWidget(editionAddBtn);
+	editionRow->addWidget(editionRemoveBtn);
+	editionRow->addWidget(editionResetBtn);
+	osLayout->addLayout(editionRow);
+	connect(editionAddBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddEditionToken);
+	connect(editionRemoveBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveEditionToken);
+	connect(editionResetBtn,  &QPushButton::clicked, this, &McSettingsDialog::onResetEditionTokens);
+	connect(m_editEditionToken, &QLineEdit::returnPressed, this, &McSettingsDialog::onAddEditionToken);
+
 	auto* osHint = new QLabel(
 		tr("Without credentials, up to 100 anonymous downloads per day are available. "
 		   "Add your account for a larger personal quota.\n"
@@ -442,10 +482,10 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	osHint->setOpenExternalLinks(true);
 	osHint->setWordWrap(true);
 	osLayout->addWidget(osHint);
-	subLeft->addWidget(osGroup);
-	subLeft->addStretch();
+	osGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+	subRight->addWidget(osGroup, 1);
 
-	// Right: Subtitle Format Priority
+	// Left bottom: Subtitle Format Priority
 	auto* subFmtGroup  = new QGroupBox(tr("Format Priority"), subPage);
 	auto* subFmtLayout = new QVBoxLayout(subFmtGroup);
 	auto* subFmtHint   = new QLabel(
@@ -486,7 +526,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subFmtLayout->addWidget(m_subFormatList);
 	subFmtLayout->addLayout(subBtnRow);
 	subFmtGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	subRight->addWidget(subFmtGroup, 1);
+	subLeft->addWidget(subFmtGroup, 1);
 
 	// ═══════════════════════════════════════════════════════════════════════════
 	// Tab 3 — Performance
@@ -578,14 +618,13 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	m_langList = new QListWidget(langGroup);
 	m_langList->setSelectionMode(QAbstractItemView::SingleSelection);
-	m_langList->setFixedHeight(110);
-	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	for (const QString& code : profile->understoodLanguages()) {
 		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
 		                                 displayName(code), m_langList);
 		item->setData(Qt::UserRole, code);
 	}
-	langLayout->addWidget(m_langList);
+	langLayout->addWidget(m_langList, 1);
 
 	auto* addRow = new QHBoxLayout;
 	m_langCombo  = new QComboBox(langGroup);
@@ -601,10 +640,10 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	addRow->addWidget(addBtn);
 	addRow->addWidget(removeBtn);
 	langLayout->addLayout(addRow);
-	langGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+	langGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 	connect(addBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddLanguage);
 	connect(removeBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveLanguage);
-	genPageLo->addWidget(langGroup);
+	genPageLo->addWidget(langGroup, 1);
 
 	// The Movie Database (TMDB)
 	auto* enrichGroup  = new QGroupBox(tr("The Movie Database (TMDB)"), genPage);
@@ -733,6 +772,35 @@ void McSettingsDialog::onRemoveLanguage()
 	delete selected.first();
 }
 
+void McSettingsDialog::onAddEditionToken()
+{
+	const QString tok = m_editEditionToken->text().trimmed();
+	if (tok.isEmpty()) return;
+
+	for (int i = 0; i < m_editionTokenList->count(); ++i)
+		if (m_editionTokenList->item(i)->text().compare(tok, Qt::CaseInsensitive) == 0) {
+			m_editEditionToken->clear();
+			return;
+		}
+
+	new QListWidgetItem(tok, m_editionTokenList);
+	m_editEditionToken->clear();
+}
+
+void McSettingsDialog::onRemoveEditionToken()
+{
+	const auto selected = m_editionTokenList->selectedItems();
+	for (auto* item : selected)
+		delete item;
+}
+
+void McSettingsDialog::onResetEditionTokens()
+{
+	m_editionTokenList->clear();
+	for (const QString& tok : UserProfile::defaultEditionTokens())
+		new QListWidgetItem(tok, m_editionTokenList);
+}
+
 void McSettingsDialog::onAudioFormatUp()
 {
 	const int row = m_audioFormatList->currentRow();
@@ -822,6 +890,13 @@ void McSettingsDialog::accept()
 	m_profile->setOpenSubtitlesUsername(m_editOsUsername->text().trimmed());
 	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());
 	m_profile->setAutoDownloadSubtitles(m_chkAutoDownloadSubs->isChecked());
+	m_profile->setComputeSubtitleMovieHash(m_chkComputeMovieHash->isChecked());
+
+	QStringList editionTokens;
+	for (int i = 0; i < m_editionTokenList->count(); ++i)
+		editionTokens << m_editionTokenList->item(i)->text();
+	m_profile->setEditionTokens(editionTokens);
+
 	m_profile->save();
 
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());
