@@ -1940,24 +1940,48 @@ void McMainWindow::keyPressEvent(QKeyEvent* event)
 
 void McMainWindow::closeEvent(QCloseEvent* event)
 {
+	if (m_closeHandled) {
+		// Windows can re-deliver WM_QUERYENDSESSION/WM_CLOSE while this window is
+		// still unwinding after we already accepted the close once (a session-end
+		// broadcast can arrive here too once the "Shut Down After" path issues its
+		// own shutdown command). Re-running the teardown below on an already-torn-
+		// down window is a use-after-free, so just accept and get out.
+		event->accept();
+		return;
+	}
+
 	if (m_jobQueue->hasActiveJob()) {
 		QMessageBox msg(this);
 		msg.setWindowTitle(tr("Job Running"));
 		msg.setText(tr("A job is currently processing.\n\n"
 		               "Quiting immediately will interrupt it and may leave a temporary file on disk."));
 		auto* pauseBtn = msg.addButton(tr("Quit After"), QMessageBox::AcceptRole);
+		auto* shutdownBtn = msg.addButton(tr("Shut Down After"), QMessageBox::ActionRole);
 		auto* closeBtn = msg.addButton(tr("Quit Now"), QMessageBox::DestructiveRole);
 		/*auto* cancelBtn =*/ msg.addButton(tr("Cancel"), QMessageBox::RejectRole);
 		msg.setDefaultButton(pauseBtn);
 		msg.exec();
 
-		if (msg.clickedButton() == pauseBtn) {
+		if (msg.clickedButton() == pauseBtn || msg.clickedButton() == shutdownBtn) {
 			// Pause the queue so no new job starts, then close automatically
 			// once the current job finishes cleanly.
+			m_shutdownOnClose = (msg.clickedButton() == shutdownBtn);
 			m_jobQueue->pause();
-			connect(m_jobQueue, &JobQueue::jobFinished, this, [this]() {
-				close();
-			}, Qt::SingleShotConnection);
+			// jobFinished fires mid-stack inside JobQueue, before it runs the
+			// finished job's own post-processing (rescan, sidecar cleanup,
+			// dispatchJobs). Calling close() synchronously from here would tear
+			// down MainWindow's threads/managers — and fire the shutdown command
+			// — while JobQueue is still using them further down its call stack.
+			// Defer to the next event-loop tick instead. Guard against stacking
+			// more than one of these if the dialog is triggered again before the
+			// job finishes.
+			if (!m_closeOnJobFinishPending) {
+				m_closeOnJobFinishPending = true;
+				connect(m_jobQueue, &JobQueue::jobFinished, this, [this]() {
+					m_closeOnJobFinishPending = false;
+					QTimer::singleShot(0, this, &McMainWindow::close);
+				}, Qt::SingleShotConnection);
+			}
 			event->ignore();
 			return;
 		}
@@ -2003,6 +2027,15 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	AppSettings::instance().setValue("mainWindow/queueHidden",    m_jobPanelPinned);
 	AppSettings::instance().setValue("mainWindow/highscoreHidden", m_highscoreBandPinned);
 	AppSettings::instance().setValue("library/sortOrder",         m_filterPanel->sortCombo()->currentData().toInt());
+
+	// The actual OS shutdown command is issued from main(), after app.exec()
+	// returns and this window has been fully destroyed — not here. Firing
+	// "shutdown /t 0" from inside closeEvent starts the OS session-end sequence
+	// while we're still unwinding (threads/managers still stopping above), which
+	// can race our own teardown and deliver a second WM_QUERYENDSESSION into a
+	// half-destroyed window. shutdownRequested() reports m_shutdownOnClose so
+	// main() knows to run it once we're actually gone.
+	m_closeHandled = true;
 	event->accept();
 }
 

@@ -49,6 +49,11 @@ public:
 	// main() hands off the splash; window stays hidden until dismissSplash().
 	void attachSplash(QSplashScreen* splash, const QIcon& appIcon = {});
 
+	// Set once closeEvent() has actually accepted the close after the "Shut Down
+	// After" job-wait path. main() checks this after app.exec() returns and only
+	// then runs the OS shutdown command, so it never races our own teardown.
+	bool shutdownRequested() const { return m_shutdownOnClose; }
+
 protected:
 	void closeEvent(QCloseEvent* event) override;
 	void showEvent(QShowEvent* event) override;
@@ -184,6 +189,9 @@ private:
 	int              m_analyzeJobCount     = 0;
 	int              m_savedJobPanelHeight = 0;
 	bool             m_jobPanelPinned     = false;
+	bool             m_shutdownOnClose    = false;   // set by the "Quit && Shut Down" job-wait path
+	bool             m_closeOnJobFinishPending = false; // guards against stacking duplicate jobFinished->close() hooks
+	bool             m_closeHandled       = false;   // true once closeEvent() has run its teardown once
 	McHighscoreBand*   m_highscoreBand       = nullptr;
 	McHighscoreDialog* m_highscoreDialog     = nullptr;
 	QTimer*            m_highscoreDebounce   = nullptr;

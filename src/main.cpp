@@ -18,6 +18,7 @@
 #include <QPalette>
 #include <QPixmap>
 #include <QPixmapCache>
+#include <QProcess>
 #include <QProxyStyle>
 #include <QRandomGenerator>
 #include <QSplashScreen>
@@ -388,9 +389,28 @@ int main(int argc, char* argv[])
 	// Reset any jobs left as 'running' from a previous crash and delete their temp files
 	Mc::DatabaseManager::instance().cleanupStalledJobs();
 
-	Mc::McMainWindow window;
-	activeMainWindow = &window;
-	window.attachSplash(&splash, appIcon);
+	int  rc               = 0;
+	bool shutdownRequested = false;
+	{
+		Mc::McMainWindow window;
+		activeMainWindow = &window;
+		window.attachSplash(&splash, appIcon);
 
-	return app.exec();
+		rc = app.exec();
+		shutdownRequested = window.shutdownRequested();
+	}
+	// window is fully destroyed here — only now is it safe to tell the OS to shut
+	// down. Firing this any earlier (e.g. from closeEvent()) starts Windows'
+	// session-end sequence while our own process is still unwinding, which can
+	// deliver a second WM_QUERYENDSESSION into a half-destroyed window and crash.
+	if (shutdownRequested) {
+#ifdef Q_OS_WIN
+		QProcess::startDetached("shutdown", {"/s", "/t", "0"});
+#elif defined(Q_OS_MACOS)
+		QProcess::startDetached("osascript", {"-e", "tell app \"System Events\" to shut down"});
+#else
+		QProcess::startDetached("systemctl", {"poweroff"});
+#endif
+	}
+	return rc;
 }
