@@ -252,6 +252,9 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 	const QFileInfoList candidates = QDir(dir).entryInfoList(nameFilters, QDir::Files);
 
 	static const QRegularExpression separatorRe(QStringLiteral("[._\\-]"));
+	// Disambiguates multiple sidecars of the same language that can't share a filename,
+	// e.g. "movie.en2.srt" / "movie.en3.srt" alongside "movie.en.srt".
+	static const QRegularExpression trailingDigitsRe(QStringLiteral("^([a-z]+)([0-9]+)$"));
 
 	// Captured lazily on the first rename below — a language-detection rename touches
 	// the directory entry, which bumps the folder's Date Modified on Windows and makes
@@ -269,6 +272,7 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 		const QString remainder = subBase.mid(baseName.length()); // "" | ".en" | "-en" | ".en.forced" …
 
 		QString lang;
+		QString dupSuffix; // trailing digit stripped off the language token, e.g. "2" for "en2"
 		bool isForced = false;
 		bool isSDH    = false;
 
@@ -279,15 +283,24 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 				rest = rest.mid(1);
 			const QStringList parts = rest.split(separatorRe, Qt::SkipEmptyParts);
 			for (const QString& part : parts) {
-				const QString lower = part.toLower();
+				QString lower = part.toLower();
 				if (lower == QLatin1String("forced"))                         { isForced = true; continue; }
 				if (lower == QLatin1String("sdh") || lower == QLatin1String("hi") || lower == QLatin1String("cc")) { isSDH = true; continue; }
 				if (lang.isEmpty()) {
+					QString suffix;
+					const auto digitsMatch = trailingDigitsRe.match(lower);
+					if (digitsMatch.hasMatch()) {
+						lower  = digitsMatch.captured(1);
+						suffix = digitsMatch.captured(2);
+					}
 					const QString mapped = subtitleLangMap().value(lower);
-					if (!mapped.isEmpty())
-						lang = mapped;
-					else if (lower.length() == 3)
-						lang = lower;  // assume it's already ISO 639-2
+					if (!mapped.isEmpty()) {
+						lang      = mapped;
+						dupSuffix = suffix;
+					} else if (lower.length() == 3) {
+						lang      = lower;  // assume it's already ISO 639-2
+						dupSuffix = suffix;
+					}
 				}
 			}
 		}
@@ -341,6 +354,8 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 		s.codecType         = QStringLiteral("subtitle");
 		s.codecName         = subtitleExtToCodec().value(fi.suffix().toLower());
 		s.language          = lang;
+		if (!dupSuffix.isEmpty())
+			s.title = QStringLiteral("#%1").arg(dupSuffix);
 		s.trackType         = QStringLiteral("main");
 		s.isForced          = isForced;
 		s.isHearingImpaired = isSDH;
