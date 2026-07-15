@@ -1152,7 +1152,7 @@ bool DatabaseManager::hasActiveJobForFile(qint64 fileId) const
 std::optional<JobRecord> DatabaseManager::activeJobForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT * FROM jobs WHERE file_id=? AND status IN ('proposed','queued') ORDER BY created_at DESC LIMIT 1");
+	q.prepare("SELECT * FROM jobs WHERE file_id=? AND status IN ('proposed','queued','running') ORDER BY created_at DESC LIMIT 1");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return std::nullopt;
 	JobRecord j;
