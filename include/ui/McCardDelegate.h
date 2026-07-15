@@ -199,6 +199,11 @@ private:
 
 	CardData fetchData(const QModelIndex& index) const;
 
+	// Invalidates the size cache and asks the view to re-query sizeHint() for every
+	// row — called (debounced) once a viewport resize settles, since narrower/wider
+	// badge wrapping changes each card's required height. See m_resizeRelayoutTimer.
+	void relayoutForResize();
+
 	static QRect   playButtonRect(const QRect& contentRect);
 	static QRect   imdbButtonRect(const QRect& contentRect);
 	static QString formatDuration(double sec);
@@ -239,8 +244,22 @@ private:
 	// only needs to trigger a redraw, not advance any state itself.
 	QTimer*               m_animTimer        = nullptr;
 	QTimer*               m_artworkPrefetchTimer = nullptr;
+	// Debounces viewport resize: a live drag-resize fires many QEvent::Resize
+	// ticks, and re-querying sizeHint() for every row on each one would be janky
+	// with thousands of cards — only the width at rest, once dragging settles,
+	// triggers the size-cache invalidation + relayout.
+	QTimer*               m_resizeRelayoutTimer = nullptr;
+	// Tracks the viewport width as of the last resize tick we acted on — kept
+	// separate from m_cacheWidth, which sizeHint() also mutates independently
+	// (e.g. from incidental hover/scrollbar-driven queries mid-drag), so this
+	// decision doesn't get fooled by a coincidental match against that shared value.
+	int                   m_lastResizeWidth = -1;
 
 	mutable QHash<qint64, QSize> m_sizeCache;
+	// Width sizeHint() last computed a fresh entry with — informational only
+	// (e.g. for debugging); no longer gates cache invalidation, since eagerly
+	// clearing the whole cache on every width tick during a live drag is what
+	// made resizing sluggish. relayoutForResize() owns invalidation instead.
 	mutable int               m_cacheWidth   = 0;
 	mutable QFont             m_badgeFont;
 	mutable QFontMetrics      m_badgeFm      { QFont{} };

@@ -741,10 +741,22 @@ void McMainWindow::setupUi()
 	m_listView->viewport()->setMouseTracking(true);
 	m_listView->setUniformItemSizes(false);
 	m_listView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	// AlwaysOn, not the AsNeeded default: row heights depend on viewport width
+	// (badge wrapping), so if the scrollbar's own presence toggles with total
+	// content height, its width changes the viewport width, which triggers
+	// another resize → another relayout → possibly toggles the scrollbar again.
+	// Pinning it removes that feedback loop entirely (see McCardDelegate's
+	// resize-relayout handling).
+	m_listView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
 	m_listView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 	m_listView->setAlternatingRowColors(true);
 	m_listView->setSpacing(0);
-	m_listView->setResizeMode(QListView::Adjust);
+	// Fixed, not Adjust: with setUniformItemSizes(false), Adjust mode forces a full
+	// doItemsLayout() (re-querying every row's sizeHint) on every single resize
+	// tick during a live drag — badly janky with thousands of cards. McCardDelegate
+	// now handles post-resize relayout itself (debounced, visible-rows-only; see
+	// McCardDelegate::relayoutForResize), so Qt's own per-tick relayout is redundant.
+	m_listView->setResizeMode(QListView::Fixed);
 	m_listView->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	connect(m_listView, &QListView::customContextMenuRequested,

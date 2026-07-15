@@ -393,6 +393,11 @@ McCardDelegate::McCardDelegate(Mode mode, QObject* parent)
 		m_view = view;
 		view->viewport()->installEventFilter(this);
 
+		m_resizeRelayoutTimer = new QTimer(this);
+		m_resizeRelayoutTimer->setSingleShot(true);
+		m_resizeRelayoutTimer->setInterval(120);
+		connect(m_resizeRelayoutTimer, &QTimer::timeout, this, &McCardDelegate::relayoutForResize);
+
 		if (m_mode == Mode::Library) {
 			m_artworkPrefetchTimer = new QTimer(this);
 			m_artworkPrefetchTimer->setSingleShot(true);
@@ -1046,6 +1051,20 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 		m_view->viewport()->setCursor(Qt::ArrowCursor);
 		break;
 
+	case QEvent::Resize: {
+		// Badge wrapping (and thus each card's required height) depends on the
+		// viewport width — sizeHint() already knows how to recompute for a new
+		// width, but nothing re-queries it on a bare resize (only model changes
+		// normally trigger that), so without this the cached heights go stale and
+		// the last badge row gets clipped after narrowing the window.
+		const int w = m_view->viewport()->width();
+		if (w != m_lastResizeWidth) {
+			m_lastResizeWidth = w;
+			if (m_resizeRelayoutTimer) m_resizeRelayoutTimer->start();
+		}
+		break;
+	}
+
 	default: break;
 	}
 	return false;
@@ -1270,17 +1289,24 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const
 {
-	const int w = m_view ? m_view->viewport()->width() : option.rect.width();
-	if (m_cacheWidth == 0 || w != m_cacheWidth) {
-		m_sizeCache.clear();
-		m_cacheWidth = w;
-	}
+	// No eager "clear everything if width changed" check here anymore: during a
+	// live resize drag the width changes on nearly every tick, and Qt still makes
+	// incidental sizeHint() calls for routine bookkeeping (scrolling, hover)
+	// independent of resize mode — wiping the whole cache on each one meant every
+	// such call re-measured badge widths for whichever rows it touched, which is
+	// what made dragging feel sluggish. Serving a briefly-stale cached height
+	// during the drag is fine (paint() always draws the live, correct width
+	// regardless of what sizeHint() returns); relayoutForResize() is what clears
+	// the cache and forces a correct recompute once the resize actually settles.
 	const qint64 itemId = (m_mode == Mode::Library)
 	    ? index.data(McFileListModel::FileIdRole).toLongLong()
 	    : index.data(McJobListModel::JobIdRole).toLongLong();
 	const auto cached = m_sizeCache.constFind(itemId);
 	if (cached != m_sizeCache.constEnd())
 		return *cached;
+
+	const int w = m_view ? m_view->viewport()->width() : option.rect.width();
+	m_cacheWidth = w;   // informational only now; relayoutForResize() drives invalidation
 
 	const CardData d = fetchData(index);
 	const bool hasImdb = !d.imdbId.isEmpty();
@@ -1294,7 +1320,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 		}
 	}
 	const QFontMetrics& fm = m_badgeFm;
-	const int totalContentW = m_cacheWidth - leftContentInset() - kPadH;
+	const int totalContentW = w - leftContentInset() - kPadH;
 	const int rightReserve  = hasImdb ? kImdbBtnW + kBadgeGap : 0;
 	const int badgeAreaW    = totalContentW - rightReserve;
 
@@ -1347,7 +1373,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	const int badgeAreaH = hasImdb ? qMax(trackH, kImdbBtnW) : trackH;
 	const int h          = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + badgeAreaH + kPadBottom,
 	                             kMinRowH);
-	const QSize result{m_cacheWidth, h};
+	const QSize result{w, h};
 	m_sizeCache.insert(itemId, result);
 	return result;
 }
@@ -1365,6 +1391,46 @@ int McCardDelegate::leftContentInset() const
 {
 	const int col = posterColumnWidth();
 	return col > 0 ? col + kPosterGap : kPadH;
+}
+
+void McCardDelegate::relayoutForResize()
+{
+	// Do NOT clear the whole m_sizeCache here. With setUniformItemSizes(false),
+	// Qt's own scrollbar-range bookkeeping needs every row's height, so whenever
+	// it walks the full list after receiving even one sizeHintChanged, a wiped
+	// cache means it hits a miss (and a slow badge-width recompute) for every one
+	// of potentially thousands of rows — that full-table walk happening inside
+	// Qt's own internals, after this function returns, is what the multi-second
+	// stall after resizing actually was; limiting this function's OWN loop to
+	// visible rows never fixed it, because the blanket clear undid the benefit.
+	// Only entries for the rows we're about to explicitly relayout are removed;
+	// every other (possibly stale-width) entry stays cached so Qt's internal
+	// walk gets a fast hit for it — those far-off-screen rows still self-correct
+	// the moment they actually scroll into view (ordinary sizeHint() cache-miss).
+	if (!m_view) return;
+
+	QAbstractItemModel* model = m_view->model();
+	if (!model || model->rowCount() == 0) return;
+
+	const QRect viewportRect = m_view->viewport()->rect();
+	const QModelIndex topIdx    = m_view->indexAt(viewportRect.topLeft());
+	const QModelIndex bottomIdx = m_view->indexAt(viewportRect.bottomLeft());
+	const int topRow    = topIdx.isValid()    ? topIdx.row()    : 0;
+	const int bottomRow = bottomIdx.isValid() ? bottomIdx.row() : model->rowCount() - 1;
+
+	constexpr int kBuffer = 5;
+	const int firstRow = qMax(0, topRow - kBuffer);
+	const int lastRow  = qMin(model->rowCount() - 1, bottomRow + kBuffer);
+	for (int row = firstRow; row <= lastRow; ++row) {
+		const QModelIndex idx = model->index(row, 0);
+		const qint64 itemId = (m_mode == Mode::Library)
+		    ? idx.data(McFileListModel::FileIdRole).toLongLong()
+		    : idx.data(McJobListModel::JobIdRole).toLongLong();
+		m_sizeCache.remove(itemId);
+		emit sizeHintChanged(idx);
+	}
+
+	m_view->viewport()->update();
 }
 
 void McCardDelegate::setTmdbConfigured(bool configured)
