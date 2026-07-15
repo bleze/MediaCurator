@@ -217,6 +217,12 @@ public:
 	// only this one row — it never invalidates any pending job for the file.
 	bool updateStreamExternalInfo(qint64 fileId, int streamIndex,
 	                               const QString& language, const QString& externalPath);
+	// Persists a single default/forced/original disposition flag directly to the
+	// streams table — used by immediate (non-job) track flag edits.
+	bool updateStreamFlag(qint64 fileId, int streamIndex, const QString& flag, bool value);
+	// Persists the language of an embedded (non-sidecar) stream. For external
+	// sidecars use updateStreamExternalInfo instead (it also renames the file).
+	bool updateStreamLanguageInternal(qint64 fileId, int streamIndex, const QString& language);
 	QList<StreamRecord> streamsForFile(qint64 fileId) const;
 	QList<StreamRecord> allStreams() const;
 	QHash<qint64, QList<StreamRecord>> allStreamsGrouped() const;

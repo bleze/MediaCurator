@@ -984,6 +984,32 @@ bool DatabaseManager::updateStreamExternalInfo(qint64 fileId, int streamIndex,
 	return q.exec();
 }
 
+bool DatabaseManager::updateStreamFlag(qint64 fileId, int streamIndex, const QString& flag, bool value)
+{
+	QString column;
+	if (flag == QLatin1String("default"))       column = QStringLiteral("is_default");
+	else if (flag == QLatin1String("forced"))   column = QStringLiteral("is_forced");
+	else if (flag == QLatin1String("original")) column = QStringLiteral("is_original");
+	else return false;
+
+	QSqlQuery q(connection());
+	q.prepare(QStringLiteral("UPDATE streams SET %1=? WHERE file_id=? AND stream_index=?").arg(column));
+	q.addBindValue(value ? 1 : 0);
+	q.addBindValue(fileId);
+	q.addBindValue(streamIndex);
+	return q.exec();
+}
+
+bool DatabaseManager::updateStreamLanguageInternal(qint64 fileId, int streamIndex, const QString& language)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE streams SET language=? WHERE file_id=? AND stream_index=?");
+	q.addBindValue(language);
+	q.addBindValue(fileId);
+	q.addBindValue(streamIndex);
+	return q.exec();
+}
+
 QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 {
 	QList<StreamRecord> result;

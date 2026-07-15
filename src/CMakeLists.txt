@@ -21,6 +21,7 @@ set(MC_SOURCES
     ui/McTrackTableModel.cpp
     ui/McFileListModel.cpp
     ui/McCardDelegate.cpp
+    ui/McTrackContextMenu.cpp
     ui/McLanguageFlags.cpp
     ui/McLegendDialog.cpp
     ui/McOnboardingDialog.cpp
@@ -49,6 +50,7 @@ set(MC_SOURCES
     engine/AnalyzeWorker.cpp
     engine/SimulateWorker.cpp
     engine/JobQueue.cpp
+    engine/TrackFlagService.cpp
     engine/RemuxJob.cpp
     engine/PosterManager.cpp
     engine/SubtitleManager.cpp
@@ -88,6 +90,7 @@ set(MC_HEADERS
     ../include/engine/AnalyzeWorker.h
     ../include/engine/SimulateWorker.h
     ../include/engine/JobQueue.h
+    ../include/engine/TrackFlagService.h
     ../include/engine/RemuxJob.h
     ../include/engine/TrackDecision.h
     ../include/engine/PosterManager.h
@@ -106,6 +109,7 @@ set(MC_HEADERS
     ../include/ui/McTrackTableModel.h
     ../include/ui/McFileListModel.h
     ../include/ui/McCardDelegate.h
+    ../include/ui/McTrackContextMenu.h
     ../include/ui/McLanguageFlags.h
     ../include/ui/McLegendDialog.h
     ../include/ui/McOnboardingDialog.h

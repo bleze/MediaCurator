@@ -11,6 +11,7 @@
 #include "ui/McFileListModel.h"
 #include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
+#include "ui/McTrackContextMenu.h"
 #include "ui/McJobPanel.h"
 #include "ui/McLegendDialog.h"
 #include "ui/McOnboardingDialog.h"
@@ -19,6 +20,7 @@
 #include "ui/McSettingsDialog.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
+#include "engine/TrackFlagService.h"
 #include "engine/HighscoreClient.h"
 #include "engine/SimulateWorker.h"
 #include "ui/McWhatIfDialog.h"
@@ -770,22 +772,31 @@ void McMainWindow::setupUi()
 			for (const StreamRecord& s : streams) {
 				if (s.streamIndex == hitStreamIdx) { hitStream = &s; break; }
 			}
-			const bool unlabeledSubtitle = hitStream
-				&& hitStream->codecType == QLatin1String("subtitle")
-				&& (hitStream->language.isEmpty() || hitStream->language == QLatin1String("und"));
-			if (unlabeledSubtitle) {
-				QMenu  menu(this);
-				QMenu* langMenu = menu.addMenu(tr("Set &Language"));
+			if (hitStream) {
+				QMenu menu(this);
 				const StreamRecord streamCopy = *hitStream;
-				const qreal dpr = devicePixelRatioF();
-				for (const auto& [code, name] : McLanguageFlags::commonLanguages()) {
-					QAction* act = langMenu->addAction(name);
-					const QPixmap flag = McLanguageFlags::flag(code, McCardDelegate::kFlagH, dpr);
-					if (!flag.isNull()) act->setIcon(QIcon(flag));
-					connect(act, &QAction::triggered, this, [this, file, streamCopy, code] {
+				buildTrackFlagMenu(menu, streamCopy, file.originalLanguage, devicePixelRatioF(), /*showFlagRowsForExternal=*/false,
+					[this, file, hitStreamIdx](const QString& flag, bool value) {
+						TrackFlagService::instance().apply(file.id, hitStreamIdx, flag, value,
+							[this, file](bool ok) {
+								if (!ok) {
+									m_statusLabel->setText(
+										tr("Failed to update track flag for %1").arg(file.filename));
+									return;
+								}
+								m_listModel->reloadFile(file.id);
+								const bool created = analyzeSingleFile(file.id);
+								m_jobPanel->refresh();
+								m_listModel->refreshJobFilter();
+								if (created) {
+									updateJobPanelVisibility(/*forceShow=*/true);
+									m_jobPanel->scrollToFileJob(file.id);
+								}
+							});
+					},
+					[this, file, streamCopy](const QString& code) {
 						setSubtitleLanguage(file, streamCopy, code);
 					});
-				}
 				menu.exec(m_listView->viewport()->mapToGlobal(pos));
 				return;
 			}
@@ -2707,40 +2718,28 @@ void McMainWindow::setSubtitleLanguage(const FileRecord& file, const StreamRecor
 		return;
 	}
 
-	// Embedded track: queue a language change for the next time this file is processed.
-	QJsonObject change;
-	change["streamIndex"] = stream.streamIndex;
-	change["flag"]        = QStringLiteral("language");
-	change["value"]       = langCode;
-
-	if (const auto existing = db.activeJobForFile(file.id)) {
-		QJsonArray updated;
-		for (const QJsonValue& v : QJsonDocument::fromJson(existing->flagChangesJson.toUtf8()).array()) {
-			const QJsonObject o = v.toObject();
-			if (o["streamIndex"].toInt() == stream.streamIndex
-			        && o["flag"].toString() == QLatin1String("language"))
-				continue; // superseded by the new pick below
-			updated.append(o);
-		}
-		updated.append(change);
-		db.updateJobFlagChanges(existing->id, QJsonDocument(updated).toJson(QJsonDocument::Compact));
-	} else {
-		JobRecord job;
-		job.fileId          = file.id;
-		job.status          = QStringLiteral("proposed");
-		job.jobType         = QStringLiteral("tag_edit");
-		job.commandArgsJson = QStringLiteral("[]");
-		job.summary         = tr("Set subtitle language");
-		job.flagChangesJson = QJsonDocument(QJsonArray{ change }).toJson(QJsonDocument::Compact);
-		(void)db.insertJob(job);
-	}
-
-	m_jobPanel->refresh();
-	m_listModel->refreshJobFilter();
-	updateJobPanelVisibility(/*forceShow=*/true);
-	m_jobPanel->scrollToFileJob(file.id);
-	m_statusLabel->setText(tr("Queued language change (%1) for %2")
-		.arg(McLanguageFlags::displayName(langCode), file.filename));
+	// Embedded track: apply immediately (mkvpropedit + DB), then re-analyze — the
+	// user isn't watching a proposed job's decisions the way they are in the Queue.
+	const qint64 fileId      = file.id;
+	const QString filename   = file.filename;
+	const int    streamIndex = stream.streamIndex;
+	TrackFlagService::instance().apply(fileId, streamIndex, QStringLiteral("language"), langCode,
+		[this, fileId, filename, langCode](bool ok) {
+			if (!ok) {
+				m_statusLabel->setText(tr("Failed to set subtitle language for %1").arg(filename));
+				return;
+			}
+			m_listModel->reloadFile(fileId);
+			const bool created = analyzeSingleFile(fileId);
+			m_jobPanel->refresh();
+			m_listModel->refreshJobFilter();
+			if (created) {
+				updateJobPanelVisibility(/*forceShow=*/true);
+				m_jobPanel->scrollToFileJob(fileId);
+			}
+			m_statusLabel->setText(tr("Set subtitle language to %1 for %2")
+				.arg(McLanguageFlags::displayName(langCode), filename));
+		});
 }
 
 void McMainWindow::onAnalyzeLibrary()

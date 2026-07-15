@@ -7,6 +7,7 @@
 #include "ui/McJobCardDelegate.h"
 #include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
+#include "ui/McTrackContextMenu.h"
 #include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
 #include "engine/ActionEngine.h"
@@ -61,8 +62,6 @@
 #include <QToolBar>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QWidgetAction>
-#include "ui/McFlagRowWidget.h"
 
 // ── Status pill helpers ───────────────────────────────────────────────────────
 namespace {
@@ -722,86 +721,29 @@ void McJobPanel::setupUi()
 				if (s.streamIndex == hitStreamIdx) { hitStream = &s; break; }
 			}
 			if (hitStream) {
-				const bool isOrigLang = (hitStream->codecType == QLatin1String("audio"))
-					&& !origLang.isEmpty()
-					&& hitStream->language.compare(origLang, Qt::CaseInsensitive) == 0;
-				const QColor trackColor = [&] {
-					if (hitStream->codecType == QLatin1String("audio"))    return QColor(0x10, 0x6a, 0xc0);
-					if (hitStream->codecType == QLatin1String("subtitle")) return QColor(0x1a, 0x86, 0x4a);
-					return QColor(0x60, 0x60, 0x60);
-				}();
-
-				// Build effective flag state: start from DB values, then overlay pending changes.
-				QMap<QString, bool> effectiveFlags;
-				effectiveFlags[QStringLiteral("default")]  = hitStream->isDefault;
-				effectiveFlags[QStringLiteral("forced")]   = hitStream->isForced;
-				effectiveFlags[QStringLiteral("original")] = hitStream->isOriginal || isOrigLang;
-				const QString fcJson = idx.data(McJobListModel::FlagChangesRole).toString();
-				if (!fcJson.isEmpty()) {
-					const QJsonArray arr = QJsonDocument::fromJson(fcJson.toUtf8()).array();
-					for (const QJsonValue& v : arr) {
-						const QJsonObject o = v.toObject();
-						if (o[QLatin1String("streamIndex")].toInt() == hitStreamIdx)
-							effectiveFlags[o[QLatin1String("flag")].toString()] =
-								o[QLatin1String("value")].toBool();
-					}
-				}
-
-				struct FlagItem { QString flag; const char* badgeChar; bool current; QString label; };
-				const bool isAudio = hitStream->codecType == QLatin1String("audio");
-				const QList<FlagItem> flagItems = {
-					{ QStringLiteral("default"),  "\xe2\x98\x85", effectiveFlags[QStringLiteral("default")],  tr("Default") },
-					{ QStringLiteral("forced"),   "\xe2\x97\x8f", effectiveFlags[QStringLiteral("forced")],   tr("Forced") },
-					{ QStringLiteral("original"), "\xe2\x97\x8e", effectiveFlags[QStringLiteral("original")], tr("Original") },
-				};
-				// "Original" is only meaningful for audio tracks — skip it for subtitles/video.
-				for (const FlagItem& fi : flagItems) {
-					if (fi.flag == QLatin1String("original") && !isAudio) continue;
-					auto* wa  = new QWidgetAction(&menu);
-					auto* row = new McFlagRowWidget(
-						QString::fromUtf8(fi.badgeChar), trackColor, fi.label, fi.current);
-					const QString flagName = fi.flag;
-					const int     sIdx     = hitStreamIdx;
-					row->onToggled = [this, &menu, idx, sIdx, flagName](bool newVal) {
-						m_model->setStreamFlag(idx, sIdx, flagName, newVal);
-						menu.close();
-					};
-					wa->setDefaultWidget(row);
-					menu.addAction(wa);
-				}
-
-				const bool unlabeledSubtitle = hitStream->codecType == QLatin1String("subtitle")
-					&& (hitStream->language.isEmpty() || hitStream->language == QLatin1String("und"));
-				if (unlabeledSubtitle) {
-					menu.addSeparator();
-					QMenu* langMenu = menu.addMenu(tr("Set &Language"));
-					const StreamRecord streamCopy = *hitStream;
-					const qreal dpr = devicePixelRatioF();
-					for (const auto& [code, name] : McLanguageFlags::commonLanguages()) {
-						QAction* act = langMenu->addAction(name);
-						const QPixmap flag = McLanguageFlags::flag(code, McCardDelegate::kFlagH, dpr);
-						if (!flag.isNull()) act->setIcon(QIcon(flag));
-						connect(act, &QAction::triggered, this,
-						        [this, idx, streamCopy, fileId, filePath, code] {
-							if (streamCopy.isExternal) {
-								if (streamCopy.externalPath.isEmpty()) return;
-								const QString videoBaseName = QFileInfo(filePath).completeBaseName();
-								const QString newPath = ActionEngine::insertLanguageIntoSidecarPath(
-									streamCopy.externalPath, videoBaseName, code);
-								if (!QFile::rename(streamCopy.externalPath, newPath)) return;
-								// Patch the DB row directly instead of a full rescan — a rescan
-								// unconditionally deletes any proposed/queued job for this file
-								// (JobQueue::rescanFile), which would destroy the very job
-								// whose badge we're trying to update.
-								DatabaseManager::instance().updateStreamExternalInfo(
-									fileId, streamCopy.streamIndex, code, newPath);
-								m_model->updateExternalStreamInfo(fileId, streamCopy.streamIndex, code, newPath);
-							} else {
-								m_model->setStreamLanguage(idx, streamCopy.streamIndex, code);
-							}
-						});
-					}
-				}
+				const StreamRecord streamCopy = *hitStream;
+				buildTrackFlagMenu(menu, streamCopy, origLang, devicePixelRatioF(), /*showFlagRowsForExternal=*/true,
+					[this, idx, hitStreamIdx](const QString& flag, bool value) {
+						m_model->setStreamFlag(idx, hitStreamIdx, flag, value);
+					},
+					[this, idx, streamCopy, fileId, filePath](const QString& code) {
+						if (streamCopy.isExternal) {
+							if (streamCopy.externalPath.isEmpty()) return;
+							const QString videoBaseName = QFileInfo(filePath).completeBaseName();
+							const QString newPath = ActionEngine::insertLanguageIntoSidecarPath(
+								streamCopy.externalPath, videoBaseName, code);
+							if (!QFile::rename(streamCopy.externalPath, newPath)) return;
+							// Patch the DB row directly instead of a full rescan — a rescan
+							// unconditionally deletes any proposed/queued job for this file
+							// (JobQueue::rescanFile), which would destroy the very job
+							// whose badge we're trying to update.
+							DatabaseManager::instance().updateStreamExternalInfo(
+								fileId, streamCopy.streamIndex, code, newPath);
+							m_model->updateExternalStreamInfo(fileId, streamCopy.streamIndex, code, newPath);
+						} else {
+							m_model->setStreamLanguage(idx, streamCopy.streamIndex, code);
+						}
+					});
 			}
 			menu.exec(m_listView->viewport()->mapToGlobal(pos));
 			return;

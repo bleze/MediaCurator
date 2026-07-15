@@ -86,13 +86,14 @@ public:
 	void toggleStream(const QModelIndex& index, int streamIndex);
 
 	// Set or clear a disposition flag on a specific stream of a Proposed or Queued job.
-	// Updates the in-memory stream record and persists flag_changes_json to DB.
+	// Updates the in-memory stream record immediately (optimistic) and applies the change
+	// to the file on disk + DB via TrackFlagService — no job/flag_changes_json involved.
 	void setStreamFlag(const QModelIndex& index, int streamIndex,
 	                   const QString& flag, bool value);
 
 	// Sets the language of an embedded (non-external) stream on a Proposed or Queued job.
-	// Updates the in-memory stream record and persists flag_changes_json to DB — applied
-	// by mkvpropedit/mkvmerge when the job actually runs.
+	// Updates the in-memory stream record immediately (optimistic) and applies the change
+	// to the file on disk + DB via TrackFlagService.
 	void setStreamLanguage(const QModelIndex& index, int streamIndex, const QString& langCode);
 
 	// Updates the in-memory language/path of an external sidecar stream after it was
@@ -124,6 +125,12 @@ public slots:
 	void updateImdbId(qint64 fileId, const QString& imdbId);
 
 private:
+	// Reverts an optimistic setStreamFlag/setStreamLanguage update after TrackFlagService
+	// reports the on-disk edit failed. Looked up by fileId — the row may have moved (or
+	// the model may have reloaded) between the click and the async mkvpropedit result.
+	void revertStreamFlag(qint64 fileId, int streamIndex, const QString& flag, bool oldValue);
+	void revertStreamLanguage(qint64 fileId, int streamIndex, const QString& oldLanguage);
+
 	[[nodiscard]] bool ensureJobInMasterList(qint64 jobId);
 	[[nodiscard]] JobCardEntry buildCardEntry(const JobDisplayRecord& djr,
 	                                          const QHash<qint64, QList<StreamRecord>>& streamsMap) const;

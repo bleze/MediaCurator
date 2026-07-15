@@ -1,5 +1,6 @@
 ﻿#include "scanner/FfprobeScanner.h"
 #include "core/ExternalTools.h"
+#include "scanner/OriginalLanguageDetector.h"
 
 #include <QProcess>
 #include <QJsonDocument>
@@ -155,7 +156,6 @@ FfprobeScanner::ScanResult FfprobeScanner::parseJsonOutput(
 
 	// ── Build StreamRecords ───────────────────────────────────────────────────
 	QList<StreamRecord> streamList;
-	QString detectedOriginalLang;
 
 	for (const QJsonValue& sv : streams) {
 		const QJsonObject so = sv.toObject();
@@ -166,13 +166,9 @@ FfprobeScanner::ScanResult FfprobeScanner::parseJsonOutput(
 			continue;
 
 		streamList.append(s);
-
-		// Heuristic: first audio track is often original language
-		if (s.codecType == "audio" && detectedOriginalLang.isEmpty() && !s.language.isEmpty())
-			detectedOriginalLang = s.language;
 	}
 
-	file.originalLanguage = detectedOriginalLang;
+	file.originalLanguage = OriginalLanguageDetector::detect(file, streamList);
 
 	ScanResult result;
 	result.file    = file;

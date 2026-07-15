@@ -3,6 +3,7 @@
 #include "ui/McCardDelegate.h"
 #include "engine/ActionEngine.h"
 #include "engine/TrackDecision.h"
+#include "engine/TrackFlagService.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -964,9 +965,19 @@ void McJobListModel::setStreamFlag(const QModelIndex& index, int streamIndex,
 	JobCardEntry& filt = m_entries[index.row()];
 	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
 
-	const qint64 jobId = filt.job.jobId;
+	const qint64 jobId  = filt.job.jobId;
+	const qint64 fileId = filt.job.fileId;
 
-	// Update the in-memory stream record so badges reflect the desired state immediately
+	bool oldValue = false;
+	for (const auto& s : filt.allStreams) {
+		if (s.streamIndex != streamIndex) continue;
+		oldValue = (flag == QLatin1String("default")) ? s.isDefault
+		         : (flag == QLatin1String("forced"))  ? s.isForced : s.isOriginal;
+		break;
+	}
+
+	// Update the in-memory stream record so badges reflect the desired state immediately —
+	// the actual file+DB write happens asynchronously via TrackFlagService below.
 	auto applyFlag = [&](StreamRecord& s) {
 		if (s.streamIndex != streamIndex) return;
 		if (flag == QLatin1String("default"))      s.isDefault  = value;
@@ -981,40 +992,12 @@ void McJobListModel::setStreamFlag(const QModelIndex& index, int streamIndex,
 		for (auto& s : ae.keptStreams) applyFlag(s);
 		break;
 	}
+	emit dataChanged(index, index, { AllStreamsRole, KeptStreamsRole });
 
-	// Load current flag_changes_json, add/update the entry for this stream+flag
-	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
-	QJsonArray changes = jobOpt
-		? QJsonDocument::fromJson(jobOpt->flagChangesJson.toUtf8()).array()
-		: QJsonArray{};
-
-	// Replace existing entry for this (streamIndex, flag) pair or append a new one
-	bool found = false;
-	for (int i = 0; i < changes.size(); ++i) {
-		QJsonObject o = changes[i].toObject();
-		if (o["streamIndex"].toInt() == streamIndex && o["flag"].toString() == flag) {
-			o["value"] = value;
-			changes[i] = o;
-			found = true;
-			break;
-		}
-	}
-	if (!found) {
-		QJsonObject o;
-		o["streamIndex"] = streamIndex;
-		o["flag"]        = flag;
-		o["value"]       = value;
-		changes.append(o);
-	}
-
-	const QString newJson = QString::fromUtf8(
-		QJsonDocument(changes).toJson(QJsonDocument::Compact));
-	filt.flagChangesJson = newJson;
-	for (auto& ae : m_allEntries)
-		if (ae.job.jobId == jobId) { ae.flagChangesJson = newJson; break; }
-	DatabaseManager::instance().updateJobFlagChanges(jobId, newJson);
-
-	emit dataChanged(index, index, { AllStreamsRole, KeptStreamsRole, FlagChangesRole });
+	TrackFlagService::instance().apply(fileId, streamIndex, flag, value,
+		[this, fileId, streamIndex, flag, oldValue](bool ok) {
+			if (!ok) revertStreamFlag(fileId, streamIndex, flag, oldValue);
+		});
 }
 
 void McJobListModel::setStreamLanguage(const QModelIndex& index, int streamIndex,
@@ -1025,7 +1008,13 @@ void McJobListModel::setStreamLanguage(const QModelIndex& index, int streamIndex
 	JobCardEntry& filt = m_entries[index.row()];
 	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
 
-	const qint64 jobId = filt.job.jobId;
+	const qint64 jobId  = filt.job.jobId;
+	const qint64 fileId = filt.job.fileId;
+
+	QString oldLanguage;
+	for (const auto& s : filt.allStreams) {
+		if (s.streamIndex == streamIndex) { oldLanguage = s.language; break; }
+	}
 
 	// Update the in-memory stream record so the badge reflects the new language immediately.
 	auto applyLang = [&](StreamRecord& s) {
@@ -1039,40 +1028,53 @@ void McJobListModel::setStreamLanguage(const QModelIndex& index, int streamIndex
 		for (auto& s : ae.keptStreams) applyLang(s);
 		break;
 	}
+	emit dataChanged(index, index, { AllStreamsRole, KeptStreamsRole });
 
-	// Load current flag_changes_json, add/update the language entry for this stream
-	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
-	QJsonArray changes = jobOpt
-		? QJsonDocument::fromJson(jobOpt->flagChangesJson.toUtf8()).array()
-		: QJsonArray{};
+	TrackFlagService::instance().apply(fileId, streamIndex, QStringLiteral("language"), langCode,
+		[this, fileId, streamIndex, oldLanguage](bool ok) {
+			if (!ok) revertStreamLanguage(fileId, streamIndex, oldLanguage);
+		});
+}
 
-	bool found = false;
-	for (int i = 0; i < changes.size(); ++i) {
-		QJsonObject o = changes[i].toObject();
-		if (o["streamIndex"].toInt() == streamIndex
-		        && o["flag"].toString() == QLatin1String("language")) {
-			o["value"] = langCode;
-			changes[i] = o;
-			found = true;
-			break;
-		}
+void McJobListModel::revertStreamFlag(qint64 fileId, int streamIndex, const QString& flag, bool oldValue)
+{
+	auto revert = [&](StreamRecord& s) {
+		if (s.streamIndex != streamIndex) return;
+		if (flag == QLatin1String("default"))      s.isDefault  = oldValue;
+		else if (flag == QLatin1String("forced"))   s.isForced   = oldValue;
+		else if (flag == QLatin1String("original")) s.isOriginal = oldValue;
+	};
+	for (auto& ae : m_allEntries) {
+		if (ae.job.fileId != fileId) continue;
+		for (auto& s : ae.allStreams)  revert(s);
+		for (auto& s : ae.keptStreams) revert(s);
 	}
-	if (!found) {
-		QJsonObject o;
-		o["streamIndex"] = streamIndex;
-		o["flag"]        = QStringLiteral("language");
-		o["value"]       = langCode;
-		changes.append(o);
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId != fileId) continue;
+		for (auto& s : m_entries[i].allStreams)  revert(s);
+		for (auto& s : m_entries[i].keptStreams) revert(s);
+		const QModelIndex idx = index(i);
+		emit dataChanged(idx, idx, { AllStreamsRole, KeptStreamsRole });
 	}
+}
 
-	const QString newJson = QString::fromUtf8(
-		QJsonDocument(changes).toJson(QJsonDocument::Compact));
-	filt.flagChangesJson = newJson;
-	for (auto& ae : m_allEntries)
-		if (ae.job.jobId == jobId) { ae.flagChangesJson = newJson; break; }
-	DatabaseManager::instance().updateJobFlagChanges(jobId, newJson);
-
-	emit dataChanged(index, index, { AllStreamsRole, KeptStreamsRole, FlagChangesRole });
+void McJobListModel::revertStreamLanguage(qint64 fileId, int streamIndex, const QString& oldLanguage)
+{
+	auto revert = [&](StreamRecord& s) {
+		if (s.streamIndex == streamIndex) s.language = oldLanguage;
+	};
+	for (auto& ae : m_allEntries) {
+		if (ae.job.fileId != fileId) continue;
+		for (auto& s : ae.allStreams)  revert(s);
+		for (auto& s : ae.keptStreams) revert(s);
+	}
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId != fileId) continue;
+		for (auto& s : m_entries[i].allStreams)  revert(s);
+		for (auto& s : m_entries[i].keptStreams) revert(s);
+		const QModelIndex idx = index(i);
+		emit dataChanged(idx, idx, { AllStreamsRole, KeptStreamsRole });
+	}
 }
 
 void McJobListModel::updateExternalStreamInfo(qint64 fileId, int streamIndex,
