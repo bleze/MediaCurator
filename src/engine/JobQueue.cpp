@@ -86,16 +86,18 @@ namespace Mc {
 static constexpr int kSubtitlePrefetchTimeoutMs = 6000;
 
 // A queued job's DB-frozen estimated_saved_bytes was computed at proposal time —
-// if the estimate formula has changed since (see calibration/estimate tuning), that
-// value goes stale while the job panel keeps showing a freshly recomputed number
-// (McJobListModel::sortEntriesByDisplaySavings). Recomputing the same live estimate
-// here keeps the queue's actual pick order matching what "Largest savings first"
-// shows on screen, instead of drifting apart whenever the formula moves on.
-// Live-recomputed estimate for a single job — shared by the sort below and by
-// startJob() (which needs the current job's estimate for goal-progress tracking).
-static qint64 estimateJobSavingBytesFromData(const FileRecord& file,
-                                              const QList<StreamRecord>& allStreams,
-                                              const QString& commandArgsJson)
+// if the estimate formula has changed since (see calibration/estimate tuning), or
+// the file was rescanned while it sat in the queue, that value goes stale while the
+// job panel keeps showing a freshly recomputed number (McJobListModel's card badge,
+// which always recomputes live). Recomputing the same live estimate here keeps the
+// queue's actual pick order matching what "Largest savings first" shows on screen,
+// instead of drifting apart whenever the formula (or the file's stream data) moves on.
+// tryStartJob() also re-freezes this same recomputed value into the DB right before
+// the job actually runs (see estimateJobSavingWithBreakdown() below), so the "View
+// Log" dialog's "Estimated" figure reflects the data/formula at run time rather than
+// whatever was true back when the job was first proposed — that's the number "Actual"
+// is meaningfully being compared against.
+static QSet<int> removedStreamIndices(const QList<StreamRecord>& allStreams, const QString& commandArgsJson)
 {
 	const QList<StreamRecord> keptStreams =
 		ActionEngine::computeKeptStreams(allStreams, commandArgsJson);
@@ -104,17 +106,42 @@ static qint64 estimateJobSavingBytesFromData(const FileRecord& file,
 	QSet<int> removed;
 	for (const auto& s : allStreams)
 		if (!keptIdx.contains(s.streamIndex)) removed.insert(s.streamIndex);
+	return removed;
+}
 
+// Live-recomputed estimate for a single job — shared by the sort below and by
+// startJob() (which needs the current job's estimate for goal-progress tracking).
+static qint64 estimateJobSavingBytesFromData(const FileRecord& file,
+                                              const QList<StreamRecord>& allStreams,
+                                              const QString& commandArgsJson)
+{
+	const QSet<int> removed = removedStreamIndices(allStreams, commandArgsJson);
 	return estimateSavingBytes(allStreams, removed, file.sizeBytes, file.durationSec);
 }
 
-static qint64 estimateJobSavingBytes(const JobRecord& job)
+// Bytes + per-track breakdown together, for the one call site (tryStartJob) that
+// persists both back into the DB — kept separate from the bytes-only helper above
+// so the sort path (called on every dispatchJobs() pass) doesn't pay for building a
+// JSON breakdown it never uses.
+struct FreshJobEstimate {
+	qint64  bytes = 0;
+	QString streamEstimatesJson;
+};
+
+static FreshJobEstimate estimateJobSavingWithBreakdown(const JobRecord& job)
 {
 	auto& db = DatabaseManager::instance();
 	const auto fileOpt = db.fileById(job.fileId);
-	if (!fileOpt) return 0;
+	if (!fileOpt) return {};
 
-	return estimateJobSavingBytesFromData(*fileOpt, db.streamsForFile(job.fileId), job.commandArgsJson);
+	const QList<StreamRecord> allStreams = db.streamsForFile(job.fileId);
+	const QSet<int> removed = removedStreamIndices(allStreams, job.commandArgsJson);
+
+	FreshJobEstimate result;
+	result.bytes = estimateSavingBytes(allStreams, removed, fileOpt->sizeBytes, fileOpt->durationSec);
+	result.streamEstimatesJson =
+		buildStreamEstimatesJson(allStreams, removed, fileOpt->sizeBytes, fileOpt->durationSec);
+	return result;
 }
 
 // Called on every dispatchJobs() pass while sorting by live savings (or while a
@@ -404,7 +431,8 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	if (isGroupBusy(storageGroup))
 		return false;
 
-	const qint64 estimatedSavings = estimateJobSavingBytes(job);
+	const FreshJobEstimate freshEstimate = estimateJobSavingWithBreakdown(job);
+	const qint64 estimatedSavings        = freshEstimate.bytes;
 
 	// tag_edit jobs have no commandArgsJson — that's expected; other types must have it.
 	const bool isTagEdit = (jobType == QLatin1String("tag_edit"));
@@ -562,6 +590,12 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	// during that wait can insert a new key into m_runningByGroup and rehash,
 	// invalidating any reference taken beforehand. Every access here is its own
 	// fresh operator[] lookup instead.
+	// Re-freeze the estimate (and its per-track breakdown) using the data available
+	// right now, immediately before the mux actually runs — replaces whatever was
+	// frozen at proposal time, which can be stale by the time a queued job's turn
+	// comes up. This is the number "Actual" is compared against in the job log.
+	db.updateJobEstimate(jobId, estimatedSavings, freshEstimate.streamEstimatesJson);
+
 	occupySlot(storageGroup, jobId, fileId, estimatedSavings);
 	m_runningByGroup[storageGroup].finishBusy = true;
 #ifdef Q_OS_WIN
