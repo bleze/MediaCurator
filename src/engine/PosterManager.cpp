@@ -235,26 +235,9 @@ private:
 		if (!fileOpt) return;
 
 		const QString filePath = fileOpt->path;
-		QString       imdbId   = findNfoImdbId(filePath);
 		const QString baseStem = QFileInfo(filePath).completeBaseName();
 
 		const auto existing = DatabaseManager::instance().posterForFile(fileId);
-
-		// Fall back to the DB-stored IMDb ID if the NFO file doesn't have one.
-		if (imdbId.isEmpty() && existing && !existing->imdbId.isEmpty())
-			imdbId = existing->imdbId;
-
-		// A "<basename>-poster.<ext>" / "<basename>-fanart.<ext>" file next to the
-		// video takes priority over TMDB — seed the cache from it before the
-		// disk-cache-reuse checks below run, so they pick it up and skip the network
-		// entirely. Fanart caching needs a known imdbId (same requirement the rest
-		// of this class already has for fanart, e.g. the lazy re-check just below).
-		const LocalArt localArt = findLocalArt(filePath);
-		cacheLocalImage(localArt.posterPath,
-		                imdbId.isEmpty() ? (m_cacheDir + "/" + baseStem + ".jpg")
-		                                 : (m_cacheDir + "/" + imdbId + ".jpg"));
-		if (!imdbId.isEmpty())
-			cacheLocalImage(localArt.fanartPath, m_fanartDir + "/" + imdbId + ".jpg");
 
 		// Helper: persist TMDB data from a TmdbInfo result, writing .nfo for durability.
 		// Also emits tmdbDataReady so the UI updates immediately without a DB round-trip.
@@ -285,7 +268,9 @@ private:
 		};
 
 		// Skip files that are already fully done (poster + rating + title).
-		// If any piece is still missing and we have an imdbId, fall through to fetch it.
+		// Checked BEFORE the NFO/local-art directory scans below — a fully-cached
+		// file needs neither, and those scans are what make this a per-file NAS
+		// stat/listing on every launch instead of a cheap DB read.
 		if (existing && existing->status == "done"
 		    && !existing->imagePath.isEmpty()
 		    && QFile::exists(existing->imagePath)) {
@@ -294,6 +279,8 @@ private:
 			const bool needsNfo    = m_writeNfoFiles && !QFile::exists(NfoParser::nfoPathFor(filePath));
 			bool needsFanart       = existing->fanartPath.isEmpty()
 			                         || !QFile::exists(existing->fanartPath);
+
+			QString imdbId = existing->imdbId;
 
 			// Fast path: fanart file already on disk — no API call needed.
 			if (needsFanart && !imdbId.isEmpty()) {
@@ -313,6 +300,11 @@ private:
 			}
 
 			if (!needsRating && !needsTitle && !needsNfo && !needsFanart) return;
+
+			// Something is still missing — only now fall back to the NFO file
+			// for an imdbId the DB doesn't already have.
+			if (imdbId.isEmpty())
+				imdbId = findNfoImdbId(filePath);
 			if (imdbId.isEmpty() || m_tmdbApiKey.isEmpty()) return;
 			const TmdbInfo info = fetchTmdbInfo(imdbId);
 			if (needsRating && info.voteAverage > 0.0) {
@@ -349,6 +341,25 @@ private:
 			applyTmdbInfo(info, imdbId);
 			return;
 		}
+
+		// Not fully done — resolve the imdbId (NFO first, DB fallback) and seed
+		// the poster/fanart cache from any local sidecar art before the
+		// disk-cache-reuse checks below run, so they can skip the network entirely.
+		QString imdbId = findNfoImdbId(filePath);
+		if (imdbId.isEmpty() && existing && !existing->imdbId.isEmpty())
+			imdbId = existing->imdbId;
+
+		// A "<basename>-poster.<ext>" / "<basename>-fanart.<ext>" file next to the
+		// video takes priority over TMDB — seed the cache from it before the
+		// disk-cache-reuse checks below run, so they pick it up and skip the network
+		// entirely. Fanart caching needs a known imdbId (same requirement the rest
+		// of this class already has for fanart, e.g. the lazy re-check just above).
+		const LocalArt localArt = findLocalArt(filePath);
+		cacheLocalImage(localArt.posterPath,
+		                imdbId.isEmpty() ? (m_cacheDir + "/" + baseStem + ".jpg")
+		                                 : (m_cacheDir + "/" + imdbId + ".jpg"));
+		if (!imdbId.isEmpty())
+			cacheLocalImage(localArt.fanartPath, m_fanartDir + "/" + imdbId + ".jpg");
 
 		PosterRecord rec;
 		rec.fileId    = fileId;
