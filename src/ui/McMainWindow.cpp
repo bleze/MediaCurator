@@ -723,8 +723,17 @@ void McMainWindow::setupUi()
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
-				if (m_profile->writeNfoFiles())
-					NfoParser::writeMovieNfo(file.path, id);
+				if (m_profile->writeNfoFiles()) {
+					NfoMovieMeta meta;
+					meta.tmdbId        = dlg.selectedTmdbId();
+					meta.title         = dlg.selectedTitle();
+					meta.originalTitle = dlg.selectedOriginalTitle();
+					meta.year          = dlg.selectedYear();
+					meta.premiered     = dlg.selectedReleaseDate();
+					meta.voteAverage   = dlg.selectedVoteAverage();
+					meta.voteCount     = dlg.selectedVoteCount();
+					NfoParser::writeMovieNfo(file.path, id, meta);
+				}
 				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
@@ -736,8 +745,11 @@ void McMainWindow::setupUi()
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(file.id, origLang);
 				const QString title = dlg.selectedTitle();
-				if (!title.isEmpty())
+				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(file.id, title, dlg.selectedYear());
+					m_listModel->setDisplayTitleForFile(file.id, title, dlg.selectedYear());
+					m_jobPanel->setTitleForFile(file.id, title, dlg.selectedYear());
+				}
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -1041,8 +1053,17 @@ void McMainWindow::setupUi()
 				if (result != QDialog::Accepted) continue;
 				const QString imdbId = dlg.selectedImdbId();
 				if (imdbId.isEmpty()) continue;
-				if (m_profile->writeNfoFiles())
-					NfoParser::writeMovieNfo(f.path, imdbId);
+				if (m_profile->writeNfoFiles()) {
+					NfoMovieMeta meta;
+					meta.tmdbId        = dlg.selectedTmdbId();
+					meta.title         = dlg.selectedTitle();
+					meta.originalTitle = dlg.selectedOriginalTitle();
+					meta.year          = dlg.selectedYear();
+					meta.premiered     = dlg.selectedReleaseDate();
+					meta.voteAverage   = dlg.selectedVoteAverage();
+					meta.voteCount     = dlg.selectedVoteCount();
+					NfoParser::writeMovieNfo(f.path, imdbId, meta);
+				}
 				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
@@ -1054,8 +1075,11 @@ void McMainWindow::setupUi()
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(f.id, origLang);
 				const QString title = dlg.selectedTitle();
-				if (!title.isEmpty())
+				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(f.id, title, dlg.selectedYear());
+					m_listModel->setDisplayTitleForFile(f.id, title, dlg.selectedYear());
+					m_jobPanel->setTitleForFile(f.id, title, dlg.selectedYear());
+				}
 			}
 			m_listView->viewport()->repaint();
 			// onPosterReady() calls applyFilter() (beginResetModel) synchronously when
@@ -1271,8 +1295,17 @@ void McMainWindow::setupUi()
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
-				if (m_profile->writeNfoFiles())
-					NfoParser::writeMovieNfo(fileOpt->path, id);
+				if (m_profile->writeNfoFiles()) {
+					NfoMovieMeta meta;
+					meta.tmdbId        = dlg.selectedTmdbId();
+					meta.title         = dlg.selectedTitle();
+					meta.originalTitle = dlg.selectedOriginalTitle();
+					meta.year          = dlg.selectedYear();
+					meta.premiered     = dlg.selectedReleaseDate();
+					meta.voteAverage   = dlg.selectedVoteAverage();
+					meta.voteCount     = dlg.selectedVoteCount();
+					NfoParser::writeMovieNfo(fileOpt->path, id, meta);
+				}
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
@@ -1284,8 +1317,11 @@ void McMainWindow::setupUi()
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
 				const QString title = dlg.selectedTitle();
-				if (!title.isEmpty())
+				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(fileId, title, dlg.selectedYear());
+					m_listModel->setDisplayTitleForFile(fileId, title, dlg.selectedYear());
+					m_jobPanel->setTitleForFile(fileId, title, dlg.selectedYear());
+				}
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -1327,8 +1363,17 @@ void McMainWindow::setupUi()
 
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
-				if (m_profile->writeNfoFiles())
-					NfoParser::writeMovieNfo(fileOpt->path, id);
+				if (m_profile->writeNfoFiles()) {
+					NfoMovieMeta meta;
+					meta.tmdbId        = dlg.selectedTmdbId();
+					meta.title         = dlg.selectedTitle();
+					meta.originalTitle = dlg.selectedOriginalTitle();
+					meta.year          = dlg.selectedYear();
+					meta.premiered     = dlg.selectedReleaseDate();
+					meta.voteAverage   = dlg.selectedVoteAverage();
+					meta.voteCount     = dlg.selectedVoteCount();
+					NfoParser::writeMovieNfo(fileOpt->path, id, meta);
+				}
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
@@ -1340,8 +1385,11 @@ void McMainWindow::setupUi()
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
 				const QString title = dlg.selectedTitle();
-				if (!title.isEmpty())
+				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(fileId, title, dlg.selectedYear());
+					m_listModel->setDisplayTitleForFile(fileId, title, dlg.selectedYear());
+					m_jobPanel->setTitleForFile(fileId, title, dlg.selectedYear());
+				}
 			}
 		}
 		m_listView->viewport()->repaint();

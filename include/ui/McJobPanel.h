@@ -71,6 +71,7 @@ public slots:
 	void onJobStatusChanged(qint64 jobId, const QString& status);
 	void repaintCards();
 	void setRatingForFile(qint64 fileId, double rating);
+	void setTitleForFile(qint64 fileId, const QString& title, int year);
 
 signals:
 	void jobsChanged(int count);   // emitted after any load/remove; count = total visible rows

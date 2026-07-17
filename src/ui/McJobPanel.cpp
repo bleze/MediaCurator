@@ -1556,6 +1556,11 @@ void McJobPanel::setRatingForFile(qint64 fileId, double rating)
 	m_model->setRatingForFile(fileId, rating);
 }
 
+void McJobPanel::setTitleForFile(qint64 fileId, const QString& title, int year)
+{
+	m_model->setDisplayTitleForFile(fileId, title, year);
+}
+
 void McJobPanel::onQueueSelected()
 {
 	// Promote selected proposed jobs to queued

@@ -45,6 +45,9 @@ public:
 	QString    selectedOriginalLanguage() const;  // ISO 639-1 from TMDB; empty if not available
 	double     selectedVoteAverage()      const;
 	int        selectedVoteCount()        const;
+	int        selectedTmdbId()           const;  // TMDB movie id; 0 if none selected
+	QString    selectedOriginalTitle()    const;  // TMDB original_title; empty if not available
+	QString    selectedReleaseDate()      const;  // TMDB release_date, YYYY-MM-DD; empty if not available
 
 	// When set, auto-accepts if the search returns exactly one result with a valid
 	// IMDb ID. Shows the dialog normally if the result is ambiguous or the fetch fails.

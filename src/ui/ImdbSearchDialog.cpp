@@ -632,6 +632,27 @@ int ImdbSearchDialog::selectedVoteCount() const
 	return item ? item->data(Qt::UserRole + 7).toInt() : 0;
 }
 
+int ImdbSearchDialog::selectedTmdbId() const
+{
+	if (!m_resultsList) return 0;
+	const QListWidgetItem* item = m_resultsList->currentItem();
+	return item ? item->data(Qt::UserRole).toInt() : 0;
+}
+
+QString ImdbSearchDialog::selectedOriginalTitle() const
+{
+	if (!m_resultsList) return {};
+	const QListWidgetItem* item = m_resultsList->currentItem();
+	return item ? item->data(Qt::UserRole + 10).toString() : QString{};
+}
+
+QString ImdbSearchDialog::selectedReleaseDate() const
+{
+	if (!m_resultsList) return {};
+	const QListWidgetItem* item = m_resultsList->currentItem();
+	return item ? item->data(Qt::UserRole + 11).toString() : QString{};
+}
+
 
 void ImdbSearchDialog::onSearch()
 {
@@ -764,7 +785,9 @@ void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QR
 	for (const auto& v : results) {
 		const QJsonObject obj         = v.toObject();
 		const QString     title       = obj["title"].toString();
-		const int         year        = obj["release_date"].toString().left(4).toInt();
+		const QString     originalTitle = obj["original_title"].toString();
+		const QString     releaseDate = obj["release_date"].toString();
+		const int         year        = releaseDate.left(4).toInt();
 		const int         tmdbId      = obj["id"].toInt();
 		const QString     posterPath   = obj["poster_path"].toString();
 		const QString     backdropPath = obj["backdrop_path"].toString();
@@ -785,6 +808,8 @@ void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QR
 		item->setData(Qt::UserRole + 6, voteAvg);
 		item->setData(Qt::UserRole + 7, voteCount);
 		item->setData(Qt::UserRole + 8, backdropPath);
+		item->setData(Qt::UserRole + 10, originalTitle);
+		item->setData(Qt::UserRole + 11, releaseDate);
 
 		// Fetch poster thumbnail asynchronously
 		if (!posterPath.isEmpty()) {

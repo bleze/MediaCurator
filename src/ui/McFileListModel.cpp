@@ -489,6 +489,27 @@ void McFileListModel::setRatingForFile(qint64 fileId, double rating)
 	if (m_ratingMin > 0.0 || m_ratingMax < 10.0) applyFilter();
 }
 
+void McFileListModel::setDisplayTitleForFile(qint64 fileId, const QString& title, int year)
+{
+	if (title.isEmpty()) return;
+
+	for (auto& e : m_allEntries) {
+		if (e.file.id != fileId) continue;
+		e.file.displayTitle = title;
+		e.file.displayYear  = year;
+		break;
+	}
+
+	for (int row = 0; row < m_entries.size(); ++row) {
+		if (m_entries.at(row).file.id != fileId) continue;
+		m_entries[row].file.displayTitle = title;
+		m_entries[row].file.displayYear  = year;
+		const QModelIndex idx = index(row);
+		emit dataChanged(idx, idx, { DisplayTitleRole, DisplayYearRole });
+		break;
+	}
+}
+
 // ── QAbstractListModel ────────────────────────────────────────────────────────
 
 int McFileListModel::rowCount(const QModelIndex& parent) const

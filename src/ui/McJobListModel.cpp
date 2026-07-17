@@ -407,6 +407,22 @@ void McJobListModel::setRatingForFile(qint64 fileId, double rating)
 	}
 }
 
+void McJobListModel::setDisplayTitleForFile(qint64 fileId, const QString& title, int year)
+{
+	if (title.isEmpty()) return;
+
+	for (auto& e : m_allEntries)
+		if (e.job.fileId == fileId) { e.job.displayTitle = title; e.job.displayYear = year; break; }
+
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId != fileId) continue;
+		m_entries[i].job.displayTitle = title;
+		m_entries[i].job.displayYear  = year;
+		emit dataChanged(index(i), index(i), { DisplayTitleRole, DisplayYearRole });
+		break;
+	}
+}
+
 QHash<QString, int> McJobListModel::countsByStatus() const
 {
 	QHash<QString, int> counts;

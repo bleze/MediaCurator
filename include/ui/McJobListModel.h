@@ -118,6 +118,7 @@ public slots:
 	void setStorageGroupFilter(quint32 groupMask); // bit (1<<group) per StorageGroupSettings group; 0 = show all
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
+	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
 	void updateProgress(qint64 jobId, int percent);
 	void updateOutputSize(qint64 jobId, qint64 bytes);
 	void updatePhase(qint64 jobId, const QString& label);

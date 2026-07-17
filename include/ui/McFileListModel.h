@@ -118,6 +118,7 @@ public slots:
 	void setSortOrder(int order);
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
+	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void onImdbIdSaved(qint64 fileId, const QString& imdbId);

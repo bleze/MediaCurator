@@ -16,12 +16,13 @@ static FILETIME toFileTime(const QDateTime& dt)
 	ft.dwHighDateTime = static_cast<DWORD>((ns100 >> 32) & 0xFFFFFFFF);
 	return ft;
 }
-// Restore the folder's creation/modified timestamps after writing an .nfo file into
-// it, so saving metadata doesn't bubble the folder up as "newest" in media libraries
-// that sort by Date Modified. Mirrors preserveDirTimestamps() in OpenSubtitlesClient.cpp.
-static void preserveDirTimestamps(const QString& dirPath, const QDateTime& origCreated, const QDateTime& origModified)
+// Restore a folder's or file's creation/modified timestamps after writing an .nfo
+// file, so saving metadata doesn't bubble the folder up as "newest" in media libraries
+// that sort by Date Modified — and doesn't make an existing .nfo look freshly edited
+// either. Mirrors preserveDirTimestamps() in OpenSubtitlesClient.cpp.
+static void preservePathTimestamps(const QString& path, const QDateTime& origCreated, const QDateTime& origModified)
 {
-	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(dirPath.utf16()),
+	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(path.utf16()),
 	                       FILE_WRITE_ATTRIBUTES,
 	                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 	                       nullptr, OPEN_EXISTING,
@@ -92,6 +93,14 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
 	const QDateTime dirOrigCreated  = dirFi.birthTime();
 	const QDateTime dirOrigModified = dirFi.lastModified();
 	const QString   dirPath         = dirFi.absoluteFilePath();
+
+	// Capture the .nfo file's own timestamps too (if it already exists) — updating
+	// metadata shouldn't make an existing .nfo look freshly created/edited, same
+	// reasoning as preserving the folder's timestamps above.
+	const QFileInfo nfoFi(nfoPath);
+	const bool      nfoExisted    = nfoFi.exists();
+	const QDateTime nfoOrigCreated  = nfoFi.birthTime();
+	const QDateTime nfoOrigModified = nfoFi.lastModified();
 
 	const QString imdbUniqueIdTag =
 		QStringLiteral("<uniqueid type=\"imdb\" default=\"true\">%1</uniqueid>").arg(imdbId);
@@ -180,7 +189,8 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
 			if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
 				file.write(content.toUtf8());
 #ifdef Q_OS_WIN
-				preserveDirTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+				preservePathTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+				if (nfoExisted) preservePathTimestamps(nfoPath, nfoOrigCreated, nfoOrigModified);
 #endif
 				return true;
 			}
@@ -205,7 +215,8 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
 		if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
 			file.write(content.toUtf8());
 #ifdef Q_OS_WIN
-			preserveDirTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+			preservePathTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+			if (nfoExisted) preservePathTimestamps(nfoPath, nfoOrigCreated, nfoOrigModified);
 #endif
 			return true;
 		}
@@ -233,7 +244,7 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
 		return false;
 	file.write(xml.toUtf8());
 #ifdef Q_OS_WIN
-	preserveDirTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+	preservePathTimestamps(dirPath, dirOrigCreated, dirOrigModified);
 #endif
 	return true;
 }
