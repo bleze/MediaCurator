@@ -192,7 +192,17 @@ bool UpdateChecker::launchInstaller(const QString& path)
 	sei.lpVerb = L"runas";
 	const std::wstring filePath = path.toStdWString();
 	sei.lpFile       = filePath.c_str();
-	sei.lpParameters = L"/S"; // fully silent NSIS install — no wizard UI
+	// Deliberately NOT /S. ShellExecuteExW returns as soon as the elevated
+	// installer process exists, racing this process's own closeEvent teardown
+	// (job-queue drain, thread shutdown) for the lock on MediaCurator.exe/its
+	// DLLs — the old uninstaller (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL)
+	// runs against those files first. A silent install can't prompt when a
+	// file is still locked, so it silently skips/no-ops and reports success,
+	// leaving the old version in place with no visible error. The normal
+	// wizard UI shows real progress and, if it does hit the lock, a blocking
+	// "close the application and click Retry" prompt instead of a silent
+	// partial install.
+	sei.lpParameters = nullptr;
 	sei.nShow        = SW_SHOWNORMAL;
 
 	if (!ShellExecuteExW(&sei)) {

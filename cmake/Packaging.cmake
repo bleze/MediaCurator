@@ -65,19 +65,19 @@ if(WIN32)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 
     # Default-on "Run MediaCurator" checkbox on the finish page of an interactive
-    # install. NSIS skips the finish page entirely during a silent (/S) install,
-    # so this alone does NOT cover the auto-update path below.
+    # install. This is what resumes the app after UpdateChecker's self-update flow
+    # (download installer -> run it elevated, wizard UI -> close this process),
+    # since that install is no longer silent (see UpdateChecker::launchInstaller).
     set(CPACK_NSIS_MUI_FINISHPAGE_RUN "MediaCurator.exe")
 
     # Explicit NSIS script commands — more reliable than CPACK_PACKAGE_EXECUTABLES
     # when the exe lives in the install root rather than a bin/ subdirectory.
     #
-    # The IfSilent branch relaunches the app after a silent install. This is what
-    # makes UpdateChecker's self-update flow (download installer -> run it with
-    # /S -> close this process) resume the app afterward instead of leaving the
-    # user with nothing running. Interactive installs skip this branch and rely
-    # on the MUI_FINISHPAGE_RUN checkbox above instead, so the app isn't launched
-    # twice.
+    # The IfSilent branch only matters for a manual `installer.exe /S` run (e.g. a
+    # scripted deployment) — NSIS skips the finish page (and its checkbox above)
+    # entirely during a silent install, so without this branch a silent install
+    # would leave the user with nothing running. UpdateChecker's own self-update
+    # no longer goes through this branch, since it launches the wizard UI instead.
     set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
       CreateDirectory '$SMPROGRAMS\\\\MediaCurator'
       CreateShortCut  '$SMPROGRAMS\\\\MediaCurator\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'

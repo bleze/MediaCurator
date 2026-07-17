@@ -37,8 +37,9 @@ public:
 	void skipVersion(const QString& tagName);
 
 	// Download installerUrl (a release asset from updateAvailable's installerUrl
-	// param) and, once complete, launch it elevated with the silent NSIS switch
-	// (/S). Emits installerLaunched() on success — the caller must close the app
+	// param) and, once complete, launch it elevated (normal NSIS wizard UI, not
+	// silent — see the comment on the /S removal in launchInstaller() for why).
+	// Emits installerLaunched() on success — the caller must close the app
 	// immediately afterward so the elevated installer isn't blocked by files this
 	// process still has open. Windows-only; no-op elsewhere.
 	void downloadAndInstall(const QString& installerUrl);
