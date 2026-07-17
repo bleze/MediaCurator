@@ -43,6 +43,31 @@ static void preserveTimestamps(const QString& target, const QDateTime& origCreat
 	            origModified.isValid() ? &ftModified : nullptr);
 	CloseHandle(h);
 }
+// Same, but for the containing folder: the rename/replace below is a directory-
+// entry change (old name removed, new one added even when the filename is
+// unchanged — it's still a fresh inode/entry via std::filesystem::rename), which
+// bumps the parent directory's own mtime on NTFS. Left uncorrected, every folder
+// a job ever completes in would look "changed" to Quick Scan's known-folder
+// mtime check (ScanWorker.cpp) forever after, forcing it to re-walk folders that
+// didn't actually gain or lose a file — this restores the pre-job mtime so a
+// completed job doesn't look like an external change. Mirrors preserveDirTimestamps()
+// in NfoParser.cpp / OpenSubtitlesClient.cpp.
+static void preserveDirTimestamps(const QString& dirPath, const QDateTime& origCreated, const QDateTime& origModified)
+{
+	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(dirPath.utf16()),
+	                       FILE_WRITE_ATTRIBUTES,
+	                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                       nullptr, OPEN_EXISTING,
+	                       FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	FILETIME ftCreated  = origCreated.isValid()  ? toFileTime(origCreated)  : FILETIME{};
+	FILETIME ftModified = origModified.isValid() ? toFileTime(origModified) : FILETIME{};
+	SetFileTime(h,
+	            origCreated.isValid()  ? &ftCreated  : nullptr,
+	            nullptr,
+	            origModified.isValid() ? &ftModified : nullptr);
+	CloseHandle(h);
+}
 #endif
 
 namespace Mc {
@@ -291,6 +316,11 @@ void RemuxJob::onProcessFinished(int exitCode)
 			const QDateTime origCreated  = origFi.birthTime();
 			const QDateTime origModified = origFi.lastModified();
 
+			// Same for the containing folder — see preserveDirTimestamps() above.
+			const QFileInfo dirFi(origFi.absolutePath());
+			const QDateTime dirOrigCreated  = dirFi.birthTime();
+			const QDateTime dirOrigModified = dirFi.lastModified();
+
 			const bool isInPlace = (finalOutputPath == inputPath);
 			if (stagedLocally) {
 				// outputPath is a local staging file — it lives on a different
@@ -320,6 +350,7 @@ void RemuxJob::onProcessFinished(int exitCode)
 						                        finalOutputPath.toStdWString());
 #ifdef Q_OS_WIN
 						preserveTimestamps(finalOutputPath, origCreated, origModified);
+						preserveDirTimestamps(QFileInfo(finalOutputPath).absolutePath(), dirOrigCreated, dirOrigModified);
 #endif
 						QFile::remove(outputPath); // drop the local staged tmp
 						if (!isInPlace)
@@ -356,6 +387,7 @@ void RemuxJob::onProcessFinished(int exitCode)
 				// Restore the original file's timestamps on the new output
 #ifdef Q_OS_WIN
 				preserveTimestamps(finalOutputPath, origCreated, origModified);
+				preserveDirTimestamps(QFileInfo(finalOutputPath).absolutePath(), dirOrigCreated, dirOrigModified);
 #endif
 				if (!isInPlace) {
 					// Non-MKV conversion (mp4/avi/iso → mkv): delete the original

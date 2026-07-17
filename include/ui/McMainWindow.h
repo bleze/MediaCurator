@@ -110,7 +110,7 @@ private:
 	void stopAllScanWorkers(bool waitForThreads);
 	void updateScanStatusLabel();
 	[[nodiscard]] bool isScanning() const;
-	void setScanningState(bool scanning);
+	void setScanningState(bool scanning, bool quickScan = false);
 	void updateSavedLabel();
 	void updateActionStates();         // enable/disable scan-lib and analyze based on roots + file count
 	void updateJobPanelVisibility(bool forceShow = false);   // show/hide job panel based on whether any jobs exist

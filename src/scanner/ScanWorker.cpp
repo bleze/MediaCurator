@@ -391,7 +391,7 @@ void ScanWorker::run()
 	FfprobeScanner scanner(m_ffprobePath);
 	const QStringList& exts = videoExtensions();
 
-	int added = 0, updated = 0, failed = 0, skipped = 0, index = 0;
+	int added = 0, updated = 0, failed = 0, skipped = 0, removed = 0, index = 0;
 	QSet<QString> foundPaths;
 	QStringList newFiles;
 
@@ -503,8 +503,26 @@ void ScanWorker::run()
 		// added movies) get walked, which is what makes this fast: no per-file mtime/
 		// size round-trips across the existing library, just directory listings down
 		// to the first already-known folder in each branch.
-		QSet<QString> knownDirs;
+		//
+		// Exception: a known folder whose own mtime has moved past its recorded
+		// baseline (dir_scan_state, refreshed at the end of every scan and
+		// immediately after MediaCurator itself writes a sidecar .nfo/.srt into a
+		// folder — see DatabaseManager::touchDirBaseline()) gets walked anyway —
+		// that signals a directory-entry change (a file added, removed, or
+		// renamed) since the baseline was last set, e.g. a file replaced under a
+		// different filename. This is still just one stat() per known folder
+		// (already paid for by the parent's own directory listing, not an extra
+		// one), so the fast path — the overwhelming majority of known folders,
+		// unchanged — is untouched. It does NOT catch a same-filename in-place
+		// content overwrite — NTFS generally doesn't bump a directory's own mtime
+		// for that, only for filename/entry changes — that narrower case needs a
+		// real per-file mtime check and is a known limitation, not something
+		// this covers. A folder with no baseline yet (first quick scan after
+		// upgrading to this feature) is conservatively treated as changed, once,
+		// to establish one.
+		const QHash<QString, qint64> knownDirBaseline = db.allDirBaselineMtimes();
 		const auto knownFiles = db.filesUnderPath(m_rootPath);
+		QSet<QString> knownDirs;
 		for (const auto& f : knownFiles)
 			knownDirs.insert(QFileInfo(f.path).absolutePath());
 
@@ -530,6 +548,7 @@ void ScanWorker::run()
 		}
 
 		QSet<QString> visitedDirs;
+		QSet<QString> changedKnownDirs;   // known dirs re-walked this run — see prune below
 		const auto dirFilters = QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks;
 		std::function<void(const QString&)> walkNewFolders = [&](const QString& dir) {
 			if (m_cancelled.loadRelaxed()) return;
@@ -540,8 +559,15 @@ void ScanWorker::run()
 			for (const QFileInfo& fi : entries) {
 				if (m_cancelled.loadRelaxed()) return;
 				if (fi.isDir()) {
-					if (knownDirs.contains(fi.absoluteFilePath())) continue;
-					walkNewFolders(fi.absoluteFilePath());
+					const QString subDir = fi.absoluteFilePath();
+					if (knownDirs.contains(subDir)) {
+						const auto baselineIt = knownDirBaseline.constFind(QDir::cleanPath(subDir));
+						const bool hasBaseline = baselineIt != knownDirBaseline.constEnd();
+						if (hasBaseline && fi.lastModified().toMSecsSinceEpoch() <= *baselineIt)
+							continue;   // unchanged since baseline — fast path, skip entirely
+						changedKnownDirs.insert(QDir::cleanPath(subDir));
+					}
+					walkNewFolders(subDir);
 				} else if (exts.contains(fi.suffix().toLower())
 				           && !kExtrasFolders.contains(fi.dir().dirName().toLower())) {
 					processCandidate(fi.absoluteFilePath());
@@ -549,6 +575,30 @@ void ScanWorker::run()
 			}
 		};
 		walkNewFolders(m_rootPath);
+
+		// A changed known folder may have lost a file (e.g. replaced under a new
+		// filename) — prune stale DB rows for files directly inside it that weren't
+		// found this walk. Scoped to direct children only, not the whole subtree:
+		// an unchanged nested subfolder was deliberately not re-walked above (its
+		// mtime didn't move), so its files must not be treated as "missing" just
+		// because this run never visited it.
+		for (const QString& dir : changedKnownDirs) {
+			for (const auto& dbFile : db.filesUnderPath(dir)) {
+				if (QDir::cleanPath(QFileInfo(dbFile.path).absolutePath()) != dir) continue;
+				if (foundPaths.contains(dbFile.path)) continue;
+				db.deleteFile(dbFile.id);
+				emit fileRemoved(dbFile.id);
+				++removed;
+			}
+		}
+
+		// Re-stamp the baseline for every folder actually listed this run (both
+		// newly-discovered and re-walked-because-changed) to its current mtime, so
+		// the next quick scan's comparison starts from a fresh, accurate point.
+		// Folders that stayed on the fast (skip-without-listing) path never had
+		// their baseline invalidated, so they're deliberately left untouched here.
+		for (const QString& dir : visitedDirs)
+			db.touchDirBaseline(dir);
 	} else {
 		// Discover and scan in a single pass — no pre-collection phase.
 		// FollowSymlinks is intentionally omitted to avoid infinite loops on cyclic junctions.
@@ -570,9 +620,8 @@ void ScanWorker::run()
 
 	// Prune DB entries for files that no longer exist under this root.
 	// Only run on a complete, non-quick scan: quick scans deliberately skip
-	// already-known folders, so anything not in foundPaths there would be wrongly
-	// treated as deleted.
-	int removed = 0;
+	// unchanged known folders, so anything not in foundPaths there would be wrongly
+	// treated as deleted. (Changed known folders were already scoped-pruned above.)
 	if (!m_cancelled.loadRelaxed() && !m_quickScan) {
 		const auto dbFiles = db.filesUnderPath(m_rootPath);
 		for (const auto& dbFile : dbFiles) {
@@ -582,6 +631,15 @@ void ScanWorker::run()
 				++removed;
 			}
 		}
+
+		// A full scan visits everything, so it's the definitive moment to
+		// (re-)establish Quick Scan's per-folder baselines — including for
+		// folders that predate this feature and never had one.
+		QSet<QString> scannedDirs;
+		for (const QString& p : foundPaths)
+			scannedDirs.insert(QFileInfo(p).absolutePath());
+		for (const QString& dir : scannedDirs)
+			db.touchDirBaseline(dir);
 	}
 
 	db.endScanRun(scanRunId, added, updated, removed);

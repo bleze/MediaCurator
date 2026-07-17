@@ -47,6 +47,9 @@ public:
 	// as setCredentials/setUnderstoodLanguages above.
 	void setEditionTokens(const QStringList& tokens);
 	void setComputeMovieHash(bool enabled);
+	// UserProfile::subtitleRetryCooldownDays() — days to wait before re-attempting
+	// a file that's still missing a subtitle after a prior attempt found nothing.
+	void setRetryCooldownDays(int days);
 
 	// Enqueue a newly-scanned (or rescanned) file for subtitle lookup.
 	// No-op if disabled, no API key configured, or the file is already fully covered.
@@ -98,6 +101,7 @@ signals:
 	void workerSetDetectSubtitleLanguage(bool detect);
 	void workerSetEditionTokens(QStringList tokens);
 	void workerSetComputeMovieHash(bool enabled);
+	void workerSetRetryCooldownDays(int days);
 	void workerEnqueueFile(qint64 fileId);
 	void workerEnqueueBatch(QList<qint64> fileIds);
 	void workerCancelAll();

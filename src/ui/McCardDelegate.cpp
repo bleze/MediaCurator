@@ -1301,11 +1301,15 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	const qint64 itemId = (m_mode == Mode::Library)
 	    ? index.data(McFileListModel::FileIdRole).toLongLong()
 	    : index.data(McJobListModel::JobIdRole).toLongLong();
-	const auto cached = m_sizeCache.constFind(itemId);
-	if (cached != m_sizeCache.constEnd())
-		return *cached;
-
 	const int w = m_view ? m_view->viewport()->width() : option.rect.width();
+	const auto cached = m_sizeCache.constFind(itemId);
+	// A cache hit only counts if it was computed for the current width — a row
+	// that cached a size for some earlier (possibly transient mid-drag) width
+	// and was never revisited by relayoutForResize() (e.g. it was off-screen
+	// when a resize settled) would otherwise keep that height forever.
+	if (cached != m_sizeCache.constEnd() && cached->width == w)
+		return cached->size;
+
 	m_cacheWidth = w;   // informational only now; relayoutForResize() drives invalidation
 
 	const CardData d = fetchData(index);
@@ -1374,7 +1378,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	const int h          = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + badgeAreaH + kPadBottom,
 	                             kMinRowH);
 	const QSize result{w, h};
-	m_sizeCache.insert(itemId, result);
+	m_sizeCache.insert(itemId, {w, result});
 	return result;
 }
 

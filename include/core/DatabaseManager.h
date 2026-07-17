@@ -33,6 +33,7 @@ struct FileRecord {
 	QString     displayTitle;     // TMDB/user-assigned override; preferred over all others
 	int         displayYear  = 0; // release year from TMDB (0 = unknown)
 	bool        ignored = false;  // user-hidden; excluded from library view by default
+	qint64      subtitleAttemptedMs = 0; // last time an OpenSubtitles lookup was attempted (0 = never)
 };
 
 // Mirrors the 'streams' table row
@@ -208,6 +209,19 @@ public:
 	int removeFilesUnderPath(const QString& rootPath);
 	bool deleteFile(qint64 fileId);
 	void updateFilePath(qint64 fileId, const QString& newPath, const QString& newFilename);
+
+	// ── Quick Scan directory baselines ──────────────────────────────────────
+	// A known folder's own mtime moving past its recorded baseline means an entry
+	// changed there (file added/removed/renamed) since the baseline was last set —
+	// see ScanWorker's quick-scan walk. Baselines must be re-touched immediately
+	// after MediaCurator itself writes a sidecar file (.nfo, downloaded .srt) into
+	// a folder — otherwise that self-inflicted mtime bump would look like an
+	// external change on the next scan and defeat Quick Scan's whole point.
+	QHash<QString, qint64> allDirBaselineMtimes() const;
+	void touchDirBaseline(const QString& dirPath);
+
+	// ── Subtitle retry cooldown ──────────────────────────────────────────────
+	void updateSubtitleAttempted(qint64 fileId, qint64 epochMs);
 
 	// ── Streams ──────────────────────────────────────────────────────────────
 	bool insertStreams(qint64 fileId, const QList<StreamRecord>& streams);

@@ -79,7 +79,8 @@ bool NfoParser::checkAndClearOwnWrite(const QString& nfoPath)
 	return ownWrites().remove(nfoPath);
 }
 
-bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId)
+bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
+                              const NfoMovieMeta& meta)
 {
 	const QString nfoPath = nfoPathFor(videoPath);
 	// Register before the write so the watcher callback (if any) can skip it.
@@ -92,9 +93,35 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId)
 	const QDateTime dirOrigModified = dirFi.lastModified();
 	const QString   dirPath         = dirFi.absoluteFilePath();
 
-	const QString uniqueIdTag =
+	const QString imdbUniqueIdTag =
 		QStringLiteral("<uniqueid type=\"imdb\" default=\"true\">%1</uniqueid>").arg(imdbId);
 	const QString idTag = QStringLiteral("<id>%1</id>").arg(imdbId);
+	const QString tmdbUniqueIdTag = meta.tmdbId > 0
+		? QStringLiteral("<uniqueid type=\"tmdb\">%1</uniqueid>").arg(meta.tmdbId)
+		: QString();
+	const QString titleTag = !meta.title.isEmpty()
+		? QStringLiteral("<title>%1</title>").arg(meta.title.toHtmlEscaped())
+		: QString();
+	const QString originalTitleTag = !meta.originalTitle.isEmpty()
+		? QStringLiteral("<originaltitle>%1</originaltitle>").arg(meta.originalTitle.toHtmlEscaped())
+		: QString();
+	const QString yearTag = meta.year > 0
+		? QStringLiteral("<year>%1</year>").arg(meta.year)
+		: QString();
+	const QString premieredTag = !meta.premiered.isEmpty()
+		? QStringLiteral("<premiered>%1</premiered>").arg(meta.premiered)
+		: QString();
+	const QString ratingsTag = meta.voteAverage > 0.0
+		? QStringLiteral(
+		      "<ratings>\n"
+		      "    <rating name=\"themoviedb\" max=\"10\" default=\"true\">\n"
+		      "      <value>%1</value>\n"
+		      "      <votes>%2</votes>\n"
+		      "    </rating>\n"
+		      "  </ratings>")
+		      .arg(meta.voteAverage, 0, 'f', 1)
+		      .arg(meta.voteCount)
+		: QString();
 
 	if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
 		QString content = QString::fromUtf8(file.readAll());
@@ -106,12 +133,30 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId)
 				R"(\s*<imdbid>.*?</imdbid>)", QRegularExpression::CaseInsensitiveOption);
 			content.remove(legacyImdbTagRe);
 
-			static const QRegularExpression uniqueIdTagRe(
-				R"(<uniqueid\b[^>]*>.*?</uniqueid>)", QRegularExpression::CaseInsensitiveOption);
+			// Type-specific — a Kodi-scraped NFO may carry both an imdb and a tmdb
+			// <uniqueid>; a type-agnostic pattern would collapse both into one.
+			static const QRegularExpression imdbUniqueIdTagRe(
+				R"(<uniqueid\s+type="imdb"[^>]*>.*?</uniqueid>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression tmdbUniqueIdTagRe(
+				R"(<uniqueid\s+type="tmdb"[^>]*>.*?</uniqueid>)", QRegularExpression::CaseInsensitiveOption);
 			static const QRegularExpression idTagRe(
 				R"(<id>.*?</id>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression titleTagRe(
+				R"(<title>.*?</title>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression originalTitleTagRe(
+				R"(<originaltitle>.*?</originaltitle>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression yearTagRe(
+				R"(<year>.*?</year>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression premieredTagRe(
+				R"(<premiered>.*?</premiered>)", QRegularExpression::CaseInsensitiveOption);
+			static const QRegularExpression ratingsTagRe(
+				R"(<ratings>.*?</ratings>)",
+				QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
 
 			auto upsertTag = [&](const QRegularExpression& tagRe, const QString& newTag) {
+				// Empty newTag means "caller didn't supply this piece" — leave
+				// whatever is already in the file (or absence) untouched.
+				if (newTag.isEmpty()) return;
 				if (content.contains(tagRe)) {
 					content.replace(tagRe, newTag);
 				} else {
@@ -123,8 +168,14 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId)
 				}
 			};
 
-			upsertTag(uniqueIdTagRe, uniqueIdTag);
+			upsertTag(imdbUniqueIdTagRe, imdbUniqueIdTag);
 			upsertTag(idTagRe, idTag);
+			upsertTag(tmdbUniqueIdTagRe, tmdbUniqueIdTag);
+			upsertTag(titleTagRe, titleTag);
+			upsertTag(originalTitleTagRe, originalTitleTag);
+			upsertTag(yearTagRe, yearTag);
+			upsertTag(premieredTagRe, premieredTag);
+			upsertTag(ratingsTagRe, ratingsTag);
 
 			if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
 				file.write(content.toUtf8());
@@ -161,14 +212,21 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId)
 		return false;
 	}
 
-	// Create a fresh minimal Kodi-format NFO — id tags only. No title/year:
-	// Kodi (or any other scraper) matches by id and fills those in itself, in
+	// Create a fresh minimal Kodi-format NFO. Every meta field is included only
+	// when the caller has it (TMDB-backed callers do); otherwise this stays
+	// id-only and Kodi (or any other scraper) fills the rest in itself, in
 	// whatever language the user's own media center is configured for.
 	QString xml = QStringLiteral(
 		"<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
 		"<movie>\n");
-	xml += "  " + uniqueIdTag + "\n";
+	if (!titleTag.isEmpty())         xml += "  " + titleTag + "\n";
+	if (!originalTitleTag.isEmpty()) xml += "  " + originalTitleTag + "\n";
+	if (!ratingsTag.isEmpty())       xml += "  " + ratingsTag + "\n";
+	if (!yearTag.isEmpty())          xml += "  " + yearTag + "\n";
+	if (!premieredTag.isEmpty())     xml += "  " + premieredTag + "\n";
+	xml += "  " + imdbUniqueIdTag + "\n";
 	xml += "  " + idTag + "\n";
+	if (!tmdbUniqueIdTag.isEmpty())  xml += "  " + tmdbUniqueIdTag + "\n";
 	xml += QStringLiteral("</movie>\n");
 
 	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))

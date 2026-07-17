@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 class QNetworkAccessManager;
 class QThread;
@@ -46,6 +47,12 @@ public:
 	// the resolved IMDb id to a .nfo file next to the media file. Off by default
 	// (see UserProfile::writeNfoFiles) — mirrors the user's Settings choice.
 	void setWriteNfoFiles(bool enabled);
+
+	// Ordered (ISO 639-2) language preference used to pick which localized TMDB
+	// title gets written as <title> in the .nfo — mirrors UserProfile's
+	// understood-languages list. <originaltitle> is always TMDB's original_title
+	// regardless of this setting.
+	void setUnderstoodLanguages(const QStringList& languages);
 
 	// Enqueue a newly-scanned file for poster lookup without resetting existing data.
 	// No-op if the file already has a poster or the TMDB key is not set.
@@ -89,6 +96,7 @@ signals:
 	// Internal — cross-thread commands to workers.
 	void workerTmdbKeyChanged(QString key);
 	void workerWriteNfoChanged(bool enabled);
+	void workerUnderstoodLanguagesChanged(QStringList languages);
 	void workerStop();
 
 private:
@@ -106,6 +114,7 @@ private:
 	QNetworkAccessManager* m_nam           = nullptr;   // main-thread NAM for fast direct fetches
 	QString                m_tmdbApiKey;
 	bool                   m_writeNfoFiles = false;
+	QStringList            m_understoodLanguages;
 
 	QSet<qint64>           m_batchIds;
 	int                    m_batchTotal  = 0;

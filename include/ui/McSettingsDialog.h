@@ -33,6 +33,8 @@ protected:
 private slots:
 	void onAddLanguage();
 	void onRemoveLanguage();
+	void onLanguageUp();
+	void onLanguageDown();
 	void onAudioFormatUp();
 	void onAudioFormatDown();
 	void onSubFmtUp();
@@ -49,6 +51,8 @@ private:
 
 	QListWidget* m_langList;
 	QComboBox*   m_langCombo;
+	QPushButton* m_btnLangUp;
+	QPushButton* m_btnLangDown;
 	QCheckBox*   m_chkKeepOriginalAudio;
 	QCheckBox*   m_chkKeepCommentary;
 	QCheckBox*   m_chkStereoCommentary;
@@ -76,6 +80,7 @@ private:
 	QLineEdit*   m_editOsPassword;
 	QCheckBox*   m_chkAutoDownloadSubs;
 	QCheckBox*   m_chkComputeMovieHash;
+	QSpinBox*    m_spinSubtitleRetryCooldown;
 	QListWidget* m_editionTokenList;
 	QLineEdit*   m_editEditionToken;
 	QCheckBox*   m_chkAutoTrack;

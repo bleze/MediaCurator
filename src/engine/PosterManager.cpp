@@ -3,6 +3,7 @@
 #include "core/DatabaseManager.h"
 #include "scanner/NfoParser.h"
 #include "scanner/ScanWorker.h"
+#include "ui/McLanguageFlags.h"
 
 #include <QDateTime>
 #include <QUrl>
@@ -139,11 +140,13 @@ class PosterWorker : public QObject
 	Q_OBJECT
 public:
 	explicit PosterWorker(PosterWorkQueue* queue, const QString& tmdbApiKey,
-	                      bool writeNfoFiles, QObject* parent = nullptr)
+	                      bool writeNfoFiles, const QStringList& understoodLanguages,
+	                      QObject* parent = nullptr)
 	    : QObject(parent)
 	    , m_queue(queue)
 	    , m_tmdbApiKey(tmdbApiKey)
 	    , m_writeNfoFiles(writeNfoFiles)
+	    , m_understoodLanguages(understoodLanguages)
 	{
 		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 		m_cacheDir  = dataDir + "/posters";
@@ -184,6 +187,7 @@ public slots:
 
 	void setTmdbApiKey(const QString& key) { m_tmdbApiKey = key; }
 	void setWriteNfoFiles(bool enabled) { m_writeNfoFiles = enabled; }
+	void setUnderstoodLanguages(QStringList languages) { m_understoodLanguages = std::move(languages); }
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
@@ -260,10 +264,20 @@ private:
 					DatabaseManager::instance().updateDisplayTitle(fileId, info.title, info.year);
 				emit tmdbDataReady(fileId, info.title, info.year, info.voteAverage);
 			}
-			// Write .nfo (id only) so imdbId survives future DB deletions — opt-in.
+			// Write .nfo so imdbId (plus whatever TMDB metadata we have) survives
+			// future DB deletions — opt-in, and only for a not-yet-existing .nfo.
 			if (m_writeNfoFiles && !resolvedImdbId.isEmpty()
-			    && !QFile::exists(NfoParser::nfoPathFor(filePath)))
-				NfoParser::writeMovieNfo(filePath, resolvedImdbId);
+			    && !QFile::exists(NfoParser::nfoPathFor(filePath))) {
+				NfoMovieMeta meta;
+				meta.tmdbId        = info.tmdbId;
+				meta.title         = info.title;
+				meta.originalTitle = info.originalTitle;
+				meta.year          = info.year;
+				meta.premiered     = info.releaseDate;
+				meta.voteAverage   = info.voteAverage;
+				meta.voteCount     = info.voteCount;
+				NfoParser::writeMovieNfo(filePath, resolvedImdbId, meta);
+			}
 			// Newly-discovered imdbId (title-search recovery) needs to reach the live
 			// UI models too -- upsertPosterRecord() alone only updates the DB.
 			if (!resolvedImdbId.isEmpty())
@@ -566,12 +580,72 @@ private:
 		QString backdropPath;  // best backdrop for use as card fanart
 		double  voteAverage = 0.0;
 		int     voteCount   = 0;
-		QString title;
+		QString title;          // localized per m_understoodLanguages' top resolvable entry, else unlocalized
 		int     year        = 0;
 		QString imdbId;     // populated by fetchTmdbInfoByTitle; caller already has it for fetchTmdbInfo
+		int     tmdbId        = 0;
+		QString originalTitle; // TMDB's original_title — language-independent
+		QString releaseDate;   // full YYYY-MM-DD, for <premiered>
 	};
 
-	// Look up by known IMDb ID — single API call.
+	// UserProfile::understoodLanguages(), in priority order, converted to the
+	// ISO 639-1 codes TMDB's `language` query param expects. Unmapped/duplicate
+	// codes are dropped.
+	QStringList preferredIso1Languages() const
+	{
+		QStringList out;
+		for (const QString& code : m_understoodLanguages) {
+			const QString iso1 = McLanguageFlags::toIso1(code);
+			if (!iso1.isEmpty() && !out.contains(iso1))
+				out << iso1;
+		}
+		return out;
+	}
+
+	static TmdbInfo tmdbInfoFromJson(const QJsonObject& obj, const QString& imdbId)
+	{
+		const int year = obj["release_date"].toString().left(4).toInt();
+		return { obj["poster_path"].toString(),
+		         obj["backdrop_path"].toString(),
+		         obj["vote_average"].toDouble(),
+		         obj["vote_count"].toInt(),
+		         obj["title"].toString(),
+		         year,
+		         imdbId,
+		         obj["id"].toInt(),
+		         obj["original_title"].toString(),
+		         obj["release_date"].toString() };
+	}
+
+	// Localized <title> lookup, kept strictly separate from art/rating/id
+	// resolution: TMDB's /movie/{id} (and /find, /search) endpoints can return a
+	// NULL poster_path/backdrop_path when a `language` param is attached and no
+	// image happens to be tagged for that language — it does not silently fall
+	// back to the generic art. Fetching this from a dedicated call, by tmdbId
+	// (so it's guaranteed to be the same movie, unlike re-running /search/movie
+	// per language), means a missing translation can never cost us the poster.
+	// Tries each understood language in priority order, stopping at the first
+	// one that returns anything at all — not the first one that "looks
+	// translated" (TMDB already falls back to the original title internally
+	// when it has no translation, so that's a legitimate result for the
+	// higher-priority language, not a reason to keep searching).
+	QString fetchLocalizedTitle(int tmdbId, const QStringList& langs)
+	{
+		for (const QString& lang : langs) {
+			QByteArray data;
+			if (!fetchHttp(QUrl(QStringLiteral(
+			        "https://api.themoviedb.org/3/movie/%1?api_key=%2&language=%3")
+			        .arg(tmdbId).arg(m_tmdbApiKey, lang)), data))
+				continue;
+			const QString localizedTitle = QJsonDocument::fromJson(data).object()["title"].toString();
+			if (!localizedTitle.isEmpty())
+				return localizedTitle;
+		}
+		return {};
+	}
+
+	// Look up by known IMDb ID — single unlocalized call for art/rating/ids,
+	// then an optional localized-title refinement (see fetchLocalizedTitle()).
 	TmdbInfo fetchTmdbInfo(const QString& imdbId)
 	{
 		const QUrl url(QStringLiteral(
@@ -583,15 +657,12 @@ private:
 
 		const QJsonArray results = QJsonDocument::fromJson(data)["movie_results"].toArray();
 		if (results.isEmpty()) return {};
-		const QJsonObject obj = results.first().toObject();
-		const int year = obj["release_date"].toString().left(4).toInt();
-		return { obj["poster_path"].toString(),
-		         obj["backdrop_path"].toString(),
-		         obj["vote_average"].toDouble(),
-		         obj["vote_count"].toInt(),
-		         obj["title"].toString(),
-		         year,
-		         imdbId };
+
+		TmdbInfo info = tmdbInfoFromJson(results.first().toObject(), imdbId);
+		const QString localizedTitle = fetchLocalizedTitle(info.tmdbId, preferredIso1Languages());
+		if (!localizedTitle.isEmpty())
+			info.title = localizedTitle;
+		return info;
 	}
 
 	// Search TMDB by movie title.
@@ -627,10 +698,9 @@ private:
 			if (obj.isEmpty())
 				obj = results.first().toObject();
 
-			const int resultYear = obj["release_date"].toString().left(4).toInt();
-			const int tmdbId     = obj["id"].toInt();
+			const int tmdbId = obj["id"].toInt();
 
-			// Resolve IMDb ID via external_ids (second lightweight call).
+			// Resolve IMDb ID via external_ids (second lightweight call, language-independent).
 			QString imdbId;
 			{
 				QByteArray extData;
@@ -641,21 +711,20 @@ private:
 			}
 			if (imdbId.isEmpty()) return {};
 
-			return { obj["poster_path"].toString(),
-			         obj["backdrop_path"].toString(),
-			         obj["vote_average"].toDouble(),
-			         obj["vote_count"].toInt(),
-			         obj["title"].toString(),
-			         resultYear,
-			         imdbId };
+			return tmdbInfoFromJson(obj, imdbId);
 		};
 
 		// Try with year hint first; fall back to year-less search only if no hint.
-		if (yearHint > 0) {
-			const TmdbInfo info = trySearch(yearHint);
-			if (!info.imdbId.isEmpty()) return info;
-		}
-		return trySearch(0);
+		TmdbInfo info = yearHint > 0 ? trySearch(yearHint) : TmdbInfo{};
+		if (info.imdbId.isEmpty())
+			info = trySearch(0);
+		if (info.imdbId.isEmpty())
+			return info;
+
+		const QString localizedTitle = fetchLocalizedTitle(info.tmdbId, preferredIso1Languages());
+		if (!localizedTitle.isEmpty())
+			info.title = localizedTitle;
+		return info;
 	}
 
 	// Derive the best human-readable search title and an optional year hint from
@@ -744,6 +813,7 @@ private:
 	QNetworkReply*         m_currentReply = nullptr;
 	QString                m_tmdbApiKey;
 	bool                   m_writeNfoFiles = false;
+	QStringList            m_understoodLanguages;
 	QString                m_cacheDir;
 	QString                m_fanartDir;
 	bool                   m_stopping   = false;
@@ -792,7 +862,7 @@ void PosterManager::startWorkerPool()
 {
 	while (m_workers.size() < m_parallelWorkers) {
 		auto* thread = new QThread(this);
-		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey, m_writeNfoFiles);
+		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey, m_writeNfoFiles, m_understoodLanguages);
 		worker->moveToThread(thread);
 
 		connect(thread, &QThread::started,  worker, &PosterWorker::startProcessing);
@@ -822,6 +892,9 @@ void PosterManager::startWorkerPool()
 		        Qt::QueuedConnection);
 		connect(this, &PosterManager::workerWriteNfoChanged,
 		        worker, &PosterWorker::setWriteNfoFiles,
+		        Qt::QueuedConnection);
+		connect(this, &PosterManager::workerUnderstoodLanguagesChanged,
+		        worker, &PosterWorker::setUnderstoodLanguages,
 		        Qt::QueuedConnection);
 		connect(this, &PosterManager::workerStop,
 		        worker, &PosterWorker::stop,
@@ -907,6 +980,13 @@ void PosterManager::setWriteNfoFiles(bool enabled)
 	if (enabled == m_writeNfoFiles) return;
 	m_writeNfoFiles = enabled;
 	emit workerWriteNfoChanged(enabled);
+}
+
+void PosterManager::setUnderstoodLanguages(const QStringList& languages)
+{
+	if (languages == m_understoodLanguages) return;
+	m_understoodLanguages = languages;
+	emit workerUnderstoodLanguagesChanged(languages);
 }
 
 void PosterManager::enqueue(qint64 fileId)

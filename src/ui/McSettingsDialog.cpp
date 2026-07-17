@@ -11,6 +11,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -21,6 +22,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
@@ -212,7 +214,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	: QDialog(parent), m_profile(profile)
 {
 	setWindowTitle(tr("Settings"));
-	setMinimumSize(760, 622);
+	setMinimumSize(760, 701);
 
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty())
@@ -443,6 +445,21 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		"yourself, and reading every file up front slows down batch downloads. Off by default."));
 	osLayout->addWidget(m_chkComputeMovieHash);
 
+	auto* subRetryRow   = new QHBoxLayout;
+	auto* subRetryLabel = new QLabel(tr("Retry cooldown (days):"), osGroup);
+	m_spinSubtitleRetryCooldown = new QSpinBox(osGroup);
+	m_spinSubtitleRetryCooldown->setRange(0, 365);
+	m_spinSubtitleRetryCooldown->setSpecialValueText(tr("Off (always retry)"));
+	m_spinSubtitleRetryCooldown->setValue(profile->subtitleRetryCooldownDays());
+	m_spinSubtitleRetryCooldown->setToolTip(tr(
+		"How long to wait before re-searching a file that's still missing a subtitle after "
+		"a previous attempt found nothing. Without this, every scan re-searches the same\n"
+		"files OpenSubtitles has no match for. 0 disables the cooldown."));
+	subRetryRow->addWidget(subRetryLabel);
+	subRetryRow->addWidget(m_spinSubtitleRetryCooldown);
+	subRetryRow->addStretch();
+	osLayout->addLayout(subRetryRow);
+
 	auto* editionLabel = new QLabel(tr("Edition/cut tags:"), osGroup);
 	editionLabel->setToolTip(tr(
 		"Words that mark a distinct cut of a film (\"EXTENDED\", \"DIRECTORS CUT\", ...). Used to "
@@ -607,7 +624,15 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	auto* genPageLo = new QVBoxLayout(genPage);
 	genPageLo->setSpacing(8);
 	genPageLo->setContentsMargins(8, 8, 8, 8);
-	tabs->addTab(genPage, tr("Other"));
+
+	// Scrollable: this tab has grown to five stacked groups and counting — without
+	// this, every new setting added here permanently raises the whole dialog's
+	// forced minimum height instead of just needing a scroll within the tab.
+	auto* genScroll = new QScrollArea;
+	genScroll->setWidget(genPage);
+	genScroll->setWidgetResizable(true);
+	genScroll->setFrameShape(QFrame::NoFrame);
+	tabs->addTab(genScroll, tr("Other"));
 	tabs->setTabColor(4, QColor(0x55, 0x55, 0x65));
 
 	// Understood Languages
@@ -616,15 +641,39 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	langLayout->setContentsMargins(4, 4, 4, 4);
 	langLayout->setSpacing(4);
 
+	auto* langHint = new QLabel(
+		tr("Drag or use buttons to reorder. Topmost is used as the preferred TMDB "
+		   "display-title language when writing .nfo files."),
+		langGroup);
+	langHint->setWordWrap(true);
+	langLayout->addWidget(langHint);
+
 	m_langList = new QListWidget(langGroup);
+	m_langList->setDragDropMode(QAbstractItemView::InternalMove);
+	m_langList->setDefaultDropAction(Qt::MoveAction);
 	m_langList->setSelectionMode(QAbstractItemView::SingleSelection);
-	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	// Fixed-ish, not Expanding: "Other" packs five groups into one tab (unlike
+	// Audio/Subtitles, which each devote most of their tab to one such list), so
+	// letting this one claim leftover vertical space blew up the whole tab's —
+	// and therefore the dialog's — minimum height.
+	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	m_langList->setMaximumHeight(120);
 	for (const QString& code : profile->understoodLanguages()) {
 		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
 		                                 displayName(code), m_langList);
 		item->setData(Qt::UserRole, code);
 	}
 	langLayout->addWidget(m_langList, 1);
+
+	auto* langBtnRow = new QHBoxLayout;
+	m_btnLangUp      = new QPushButton(tr("▲  Up"),   langGroup);
+	m_btnLangDown    = new QPushButton(tr("▼  Down"), langGroup);
+	langBtnRow->addWidget(m_btnLangUp);
+	langBtnRow->addWidget(m_btnLangDown);
+	langBtnRow->addStretch();
+	connect(m_btnLangUp,   &QPushButton::clicked, this, &McSettingsDialog::onLanguageUp);
+	connect(m_btnLangDown, &QPushButton::clicked, this, &McSettingsDialog::onLanguageDown);
+	langLayout->addLayout(langBtnRow);
 
 	auto* addRow = new QHBoxLayout;
 	m_langCombo  = new QComboBox(langGroup);
@@ -640,10 +689,9 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	addRow->addWidget(addBtn);
 	addRow->addWidget(removeBtn);
 	langLayout->addLayout(addRow);
-	langGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 	connect(addBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddLanguage);
 	connect(removeBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveLanguage);
-	genPageLo->addWidget(langGroup, 1);
+	genPageLo->addWidget(langGroup);
 
 	// The Movie Database (TMDB)
 	auto* enrichGroup  = new QGroupBox(tr("The Movie Database (TMDB)"), genPage);
@@ -659,13 +707,17 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	tmdbRow->addWidget(m_editTmdbKey, 1);
 	enrichLayout->addLayout(tmdbRow);
 
-	m_chkWriteNfo = new QCheckBox(tr("Write .nfo files (IMDb id only)"), enrichGroup);
+	m_chkWriteNfo = new QCheckBox(tr("Write .nfo files"), enrichGroup);
 	m_chkWriteNfo->setToolTip(tr(
-		"Writes a Kodi-style .nfo file next to each matched video, containing only its "
-		"IMDb id. If an .nfo already exists, only the id is updated — everything else is "
-		"left untouched. Title, plot, and artwork are deliberately not written here; Kodi "
-		"(or any other scraper) fills those in itself once it matches by id, in whatever "
-		"language your media center is configured for. Off by default."));
+		"Writes a Kodi-style .nfo file next to each matched video, containing its IMDb and "
+		"TMDB ids, title, original title, year, and TMDB rating. Title is picked from your "
+		"Understood Languages list, above — the first one TMDB actually has a translation "
+		"for; original title is always included too, so Kodi's own \"Show original titles "
+		"for movies\" setting can prefer it on this machine without affecting other viewers "
+		"of a shared library. If an .nfo already exists, only these specific tags are added "
+		"or updated — everything else in the file is left untouched, and a scene-release "
+		"NFO's free-form text only ever has its id corrected in place, never replaced. "
+		"Off by default."));
 	m_chkWriteNfo->setChecked(profile->writeNfoFiles());
 	enrichLayout->addWidget(m_chkWriteNfo);
 
@@ -780,6 +832,24 @@ void McSettingsDialog::onRemoveLanguage()
 	const auto selected = m_langList->selectedItems();
 	if (selected.isEmpty()) return;
 	delete selected.first();
+}
+
+void McSettingsDialog::onLanguageUp()
+{
+	const int row = m_langList->currentRow();
+	if (row <= 0) return;
+	auto* item = m_langList->takeItem(row);
+	m_langList->insertItem(row - 1, item);
+	m_langList->setCurrentRow(row - 1);
+}
+
+void McSettingsDialog::onLanguageDown()
+{
+	const int row = m_langList->currentRow();
+	if (row < 0 || row >= m_langList->count() - 1) return;
+	auto* item = m_langList->takeItem(row);
+	m_langList->insertItem(row + 1, item);
+	m_langList->setCurrentRow(row + 1);
 }
 
 void McSettingsDialog::onAddEditionToken()
@@ -902,6 +972,7 @@ void McSettingsDialog::accept()
 	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());
 	m_profile->setAutoDownloadSubtitles(m_chkAutoDownloadSubs->isChecked());
 	m_profile->setComputeSubtitleMovieHash(m_chkComputeMovieHash->isChecked());
+	m_profile->setSubtitleRetryCooldownDays(m_spinSubtitleRetryCooldown->value());
 
 	QStringList editionTokens;
 	for (int i = 0; i < m_editionTokenList->count(); ++i)

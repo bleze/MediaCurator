@@ -255,7 +255,17 @@ private:
 	// decision doesn't get fooled by a coincidental match against that shared value.
 	int                   m_lastResizeWidth = -1;
 
-	mutable QHash<qint64, QSize> m_sizeCache;
+	// Cached sizeHint() result plus the viewport width it was computed for. The
+	// width is checked on every lookup (see sizeHint()) so an off-screen row that
+	// cached a height for some transient mid-drag width — and was never touched
+	// by relayoutForResize() because it wasn't visible when a resize settled —
+	// self-corrects the next time it's actually queried at the current width,
+	// instead of keeping a stale (sometimes wildly oversized) height forever.
+	// This is a per-entry check, not an eager whole-cache clear, so it doesn't
+	// reintroduce the live-drag sluggishness relayoutForResize()'s design note
+	// below describes.
+	struct CachedSize { int width; QSize size; };
+	mutable QHash<qint64, CachedSize> m_sizeCache;
 	// Width sizeHint() last computed a fresh entry with — informational only
 	// (e.g. for debugging); no longer gates cache invalidation, since eagerly
 	// clearing the whole cache on every width tick during a live drag is what

@@ -339,6 +339,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_jobQueue->setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 		PosterManager::instance().setWriteNfoFiles(m_profile->writeNfoFiles());
+		PosterManager::instance().setUnderstoodLanguages(m_profile->understoodLanguages());
 		const bool tmdbConfigured = !m_profile->tmdbApiKey().isEmpty();
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			d->setTmdbConfigured(tmdbConfigured);
@@ -351,6 +352,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		SubtitleManager::instance().setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 		SubtitleManager::instance().setEditionTokens(m_profile->editionTokens());
 		SubtitleManager::instance().setComputeMovieHash(m_profile->computeSubtitleMovieHash());
+		SubtitleManager::instance().setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
 	});
 
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
@@ -557,6 +559,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	auto& pm = PosterManager::instance();
 	pm.start(m_profile->tmdbApiKey());
 	pm.setWriteNfoFiles(m_profile->writeNfoFiles());
+	pm.setUnderstoodLanguages(m_profile->understoodLanguages());
 	connect(&pm, &PosterManager::posterReady,
 	        m_listModel, &McFileListModel::onPosterReady);
 	connect(&pm, &PosterManager::fanartReady,
@@ -598,6 +601,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	sm.setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 	sm.setEditionTokens(m_profile->editionTokens());
 	sm.setComputeMovieHash(m_profile->computeSubtitleMovieHash());
+	sm.setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
 	connect(&sm, &SubtitleManager::subtitlesReady, this, [this](qint64 fileId, int downloaded) {
 		m_listModel->reloadFile(fileId);
 		m_jobPanel->refresh();
@@ -2277,7 +2281,7 @@ void McMainWindow::createScanWorkerForGroup(int groupId, const QString& folderPa
 	        [](const Mc::FileIdList& ids) { SubtitleManager::instance().enqueueBatch(ids); },
 	        Qt::QueuedConnection);
 
-	setScanningState(true);
+	setScanningState(true, quickScan);
 	thread->start();
 	updateScanStatusLabel();
 }
@@ -2848,7 +2852,7 @@ void McMainWindow::onQuickAnalyze()
 	m_actAnalyze->setEnabled(false);
 	m_actQuickAnalyze->setEnabled(false);
 	m_btnCancelAnalyze->setEnabled(true);
-	m_btnCancelAnalyze->setText(tr("Cancel Analyze"));
+	m_btnCancelAnalyze->setText(tr("Cancel Quick Analyze"));
 	m_btnCancelAnalyze->setVisible(true);
 
 	m_analyzeThread = new QThread(this);
@@ -2972,13 +2976,13 @@ void McMainWindow::onSimulateFinished(int /*analyzed*/, int /*filesAffected*/)
 	updateActionStates();
 }
 
-void McMainWindow::setScanningState(bool scanning)
+void McMainWindow::setScanningState(bool scanning, bool quickScan)
 {
 	m_progressBar->setVisible(scanning);
 	m_btnCancelScan->setVisible(scanning);
 	if (scanning) {
 		m_btnCancelScan->setEnabled(true);
-		m_btnCancelScan->setText(tr("Cancel Scan"));
+		m_btnCancelScan->setText(quickScan ? tr("Cancel Quick Scan") : tr("Cancel Scan"));
 	} else {
 		m_progressBar->setValue(0);
 	}

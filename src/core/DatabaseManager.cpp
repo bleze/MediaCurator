@@ -2,6 +2,7 @@
 #include "engine/TrackDecision.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -411,6 +412,26 @@ bool DatabaseManager::initSchema()
 		m.exec("CREATE INDEX IF NOT EXISTS idx_poster_cache_status ON poster_cache(status)");
 	}
 
+	// Migration: per-folder mtime baseline for Quick Scan's known-folder-changed
+	// detection. Kept separate from `files` since it's one row per directory, not
+	// per file — see touchDirBaseline()/allDirBaselineMtimes().
+	{
+		QSqlQuery m(connection());
+		m.exec(R"(
+			CREATE TABLE IF NOT EXISTS dir_scan_state (
+				path      TEXT PRIMARY KEY,
+				mtime_ms  INTEGER NOT NULL DEFAULT 0
+			)
+		)");
+	}
+
+	// Migration: last subtitle-download-attempt timestamp, so a file OpenSubtitles
+	// has nothing for isn't re-searched on every single scan.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN subtitle_attempted_ms INTEGER DEFAULT 0");
+	}
+
 	return true;
 }
 
@@ -530,6 +551,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.displayTitle     = q.value("display_title").toString();
 	r.displayYear      = q.value("display_year").toInt();
 	r.ignored          = q.value("ignored").toInt() != 0;
+	r.subtitleAttemptedMs = q.value("subtitle_attempted_ms").toLongLong();
 	return r;
 }
 
@@ -786,16 +808,50 @@ QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
 	QSqlQuery q(connection());
 	const QString norm   = QDir::fromNativeSeparators(rootPath);
 	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
-	q.prepare("SELECT id, path FROM files WHERE path LIKE ?");
+	q.prepare("SELECT id, path, mtime_ms FROM files WHERE path LIKE ?");
 	q.addBindValue(prefix);
 	if (!q.exec()) return result;
 	while (q.next()) {
 		FileRecord r;
-		r.id   = q.value("id").toLongLong();
-		r.path = q.value("path").toString();
+		r.id      = q.value("id").toLongLong();
+		r.path    = q.value("path").toString();
+		r.mtimeMs = q.value("mtime_ms").toLongLong();
 		result.append(r);
 	}
 	return result;
+}
+
+QHash<QString, qint64> DatabaseManager::allDirBaselineMtimes() const
+{
+	QHash<QString, qint64> result;
+	QSqlQuery q(connection());
+	if (!q.exec("SELECT path, mtime_ms FROM dir_scan_state")) return result;
+	while (q.next())
+		result.insert(q.value("path").toString(), q.value("mtime_ms").toLongLong());
+	return result;
+}
+
+void DatabaseManager::touchDirBaseline(const QString& dirPath)
+{
+	const QString norm = QDir::cleanPath(dirPath);
+	const QFileInfo fi(norm);
+	QSqlQuery q(connection());
+	q.prepare("INSERT INTO dir_scan_state(path, mtime_ms) VALUES(?, ?) "
+	          "ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms");
+	q.addBindValue(norm);
+	q.addBindValue(fi.exists() ? fi.lastModified().toMSecsSinceEpoch() : 0);
+	if (!q.exec())
+		qWarning() << "touchDirBaseline failed:" << q.lastError().text();
+}
+
+void DatabaseManager::updateSubtitleAttempted(qint64 fileId, qint64 epochMs)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET subtitle_attempted_ms=? WHERE id=?");
+	q.addBindValue(epochMs);
+	q.addBindValue(fileId);
+	if (!q.exec())
+		qWarning() << "updateSubtitleAttempted failed:" << q.lastError().text();
 }
 
 int DatabaseManager::fileCount() const

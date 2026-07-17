@@ -209,6 +209,15 @@ void UserProfile::setComputeSubtitleMovieHash(bool v)
 	}
 }
 
+void UserProfile::setSubtitleRetryCooldownDays(int days)
+{
+	days = qMax(0, days);
+	if (m_subtitleRetryCooldownDays != days) {
+		m_subtitleRetryCooldownDays = days;
+		emit profileChanged();
+	}
+}
+
 // static
 QStringList UserProfile::defaultEditionTokens()
 {
@@ -341,6 +350,7 @@ QJsonObject UserProfile::toJson() const
 	o["detect_sidecar_subtitle_language"] = m_detectSidecarSubtitleLanguage;
 	o["edition_tokens"]                  = QJsonArray::fromStringList(m_editionTokens);
 	o["compute_subtitle_moviehash"]      = m_computeSubtitleMovieHash;
+	o["subtitle_retry_cooldown_days"]    = m_subtitleRetryCooldownDays;
 	return o;
 }
 
@@ -383,6 +393,7 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_autoDownloadSubtitles      = json["auto_download_subtitles"].toBool(false);
 	m_detectSidecarSubtitleLanguage = json["detect_sidecar_subtitle_language"].toBool(false);
 	m_computeSubtitleMovieHash   = json["compute_subtitle_moviehash"].toBool(false);
+	m_subtitleRetryCooldownDays  = qMax(0, json["subtitle_retry_cooldown_days"].toInt(7));
 
 	if (json.contains("edition_tokens")) {
 		QStringList tokens;

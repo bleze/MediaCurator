@@ -132,6 +132,13 @@ public:
 	bool computeSubtitleMovieHash() const { return m_computeSubtitleMovieHash; }
 	void setComputeSubtitleMovieHash(bool v);
 
+	// Days to wait before re-attempting an OpenSubtitles lookup for a file that's
+	// still missing a subtitle in an understood language, after an attempt found
+	// nothing — otherwise every scan re-searches the same files OpenSubtitles has
+	// nothing for. 0 disables the cooldown (always retry). Default 7.
+	int subtitleRetryCooldownDays() const { return m_subtitleRetryCooldownDays; }
+	void setSubtitleRetryCooldownDays(int days);
+
 	// Audio format priority — ordered list of format IDs, best first.
 	// Each ID corresponds to a specific codec variant (e.g. "atmos", "dtshdma").
 	// When multiple tracks of the same language exist, the highest-priority one is kept.
@@ -195,6 +202,7 @@ private:
 	bool        m_detectSidecarSubtitleLanguage = false;
 	QStringList m_editionTokens          = defaultEditionTokens();
 	bool        m_computeSubtitleMovieHash = false;
+	int         m_subtitleRetryCooldownDays = 7;
 	QStringList m_audioFormatOrder      = defaultAudioFormatOrder();
 	QStringList m_disabledAudioFormats  = {};
 	QStringList m_subtitleFormatOrder   = defaultSubtitleFormatOrder();

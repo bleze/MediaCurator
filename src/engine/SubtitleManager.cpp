@@ -56,9 +56,26 @@ public slots:
 
 	void stop()
 	{
+		// Mirrors PosterWorker::stop(): QThread::quit()/exit() called from another
+		// thread (SubtitleManager::stop() does exactly that) only affects whichever
+		// event loop is currently innermost for the target thread. If this worker
+		// is nested inside SubtitleDownloadWorker::run()'s own blocking QEventLoop
+		// (its blocking-style HTTP calls), that cross-thread quit() would hit the
+		// nested loop instead of this thread's real one, leaving the real loop
+		// running forever — SubtitleManager::stop()'s wait() then times out and
+		// falls back to QThread::terminate(), forcibly killing the thread mid
+		// network I/O, which is what crashed. cancel() synchronously aborts the
+		// in-flight request, which unwinds run()'s nested loop on its own;
+		// processNext() then notices m_stopping once back on the real loop and
+		// quits it from there. Only safe to quit directly here when genuinely
+		// idle (not nested, not mid-processFile).
 		m_stopping = true;
-		if (m_currentDl) m_currentDl->cancel();
-		if (m_timer) m_timer->stop();
+		if (m_currentDl) {
+			m_currentDl->cancel();
+		} else if (!m_processing) {
+			if (m_timer) m_timer->stop();
+			QThread::currentThread()->quit();
+		}
 	}
 
 	void cancelAll()
@@ -114,6 +131,11 @@ public slots:
 	void setComputeMovieHash(bool enabled)
 	{
 		m_computeMovieHash = enabled;
+	}
+
+	void setRetryCooldownDays(int days)
+	{
+		m_retryCooldownDays = qMax(0, days);
 	}
 
 	void enqueueFile(qint64 fileId)
@@ -173,11 +195,18 @@ signals:
 private slots:
 	void processNext()
 	{
-		if (m_stopping) { m_timer->stop(); return; }
 		// Guard against re-entry: SubtitleDownloadWorker::run() blocks on QEventLoop
 		// while the 0ms timer keeps firing — see PosterWorker::processNext() for the
-		// identical concern with TMDB's HTTP calls.
+		// identical concern with TMDB's HTTP calls. A reentrant call while
+		// m_processing is true means we're nested inside that loop — never safe to
+		// quit the real event loop from here.
 		if (m_processing) return;
+
+		if (m_stopping) {
+			if (m_timer) m_timer->stop();
+			QThread::currentThread()->quit();
+			return;
+		}
 
 		if (!canRun() || m_queue.isEmpty()) {
 			m_timer->stop();
@@ -190,8 +219,12 @@ private slots:
 		const qint64 fileId = m_queue.takeFirst();
 		processFile(fileId);
 		m_processing = false;
-		if (!m_stopping)
-			startTimerIfWork();
+
+		if (m_stopping) {
+			QThread::currentThread()->quit();
+			return;
+		}
+		startTimerIfWork();
 		if (m_queue.isEmpty()) emit queueActiveChanged(false);
 	}
 
@@ -237,6 +270,15 @@ private:
 		}
 		if (missing6391.isEmpty()) return;
 
+		// Something is genuinely missing, but if we already tried this file
+		// recently and OpenSubtitles had nothing, don't hammer the same search
+		// every scan — wait out the cooldown. 0 disables this (always retry).
+		if (m_retryCooldownDays > 0 && file.subtitleAttemptedMs > 0) {
+			const qint64 cooldownMs = qint64(m_retryCooldownDays) * 24 * 60 * 60 * 1000;
+			if (QDateTime::currentMSecsSinceEpoch() - file.subtitleAttemptedMs < cooldownMs)
+				return;
+		}
+
 		int downloaded = 0, remaining = -1, retryAfterSecs = -1;
 		bool quotaHit = false;
 		{
@@ -258,6 +300,10 @@ private:
 			dl.run();
 			m_currentDl = nullptr;
 		}
+
+		// Stamp regardless of outcome — even "found nothing" is a resolved
+		// attempt that should hold off the next one until the cooldown elapses.
+		DatabaseManager::instance().updateSubtitleAttempted(fileId, QDateTime::currentMSecsSinceEpoch());
 
 		if (downloaded > 0) {
 			QList<StreamRecord> containerStreams;
@@ -323,6 +369,7 @@ private:
 	bool                    m_enabled         = false;
 	bool                    m_detectSubtitleLanguage = false;
 	bool                    m_computeMovieHash = false;
+	int                     m_retryCooldownDays = 7;
 	bool                    m_stopping        = false;
 	bool                    m_processing      = false;
 	bool                    m_quotaExhausted  = false;
@@ -374,6 +421,8 @@ void SubtitleManager::start(const QString& apiKey, const QString& username, cons
 	        m_worker, &SubtitleWorker::setEditionTokens, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerSetComputeMovieHash,
 	        m_worker, &SubtitleWorker::setComputeMovieHash, Qt::QueuedConnection);
+	connect(this, &SubtitleManager::workerSetRetryCooldownDays,
+	        m_worker, &SubtitleWorker::setRetryCooldownDays, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueFile,
 	        m_worker, &SubtitleWorker::enqueueFile, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueBatch,
@@ -432,6 +481,11 @@ void SubtitleManager::setEditionTokens(const QStringList& tokens)
 void SubtitleManager::setComputeMovieHash(bool enabled)
 {
 	emit workerSetComputeMovieHash(enabled);
+}
+
+void SubtitleManager::setRetryCooldownDays(int days)
+{
+	emit workerSetRetryCooldownDays(days);
 }
 
 void SubtitleManager::enqueue(qint64 fileId)
