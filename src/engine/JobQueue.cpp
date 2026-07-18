@@ -9,6 +9,7 @@
 #include "scanner/FfprobeScanner.h"
 #include "scanner/ScanWorker.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -20,6 +21,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
@@ -1220,9 +1222,12 @@ void JobQueue::commitReview(qint64 jobId)
 
 	// Rename/delete + the DB status update are filesystem/SQL work with no bearing
 	// on this object's own state — run them off the UI thread, same pattern as the
-	// remux-completion path in RemuxJob::onProcessFinished().
+	// remux-completion path in RemuxJob::onProcessFinished(). No raw `this`: the
+	// task can outlive this object on app shutdown mid NAS copy, so results are
+	// marshaled through qApp with a QPointer guard checked on the main thread.
 	QThreadPool::globalInstance()->start(
-	    [this, jobId, fileId, tmpPath, finalPath, srcPath, origSize, exitCode, wasStaged, storageGroup]() {
+	    [self = QPointer<JobQueue>(this), jobId, fileId, tmpPath, finalPath, srcPath,
+	     origSize, exitCode, wasStaged, storageGroup]() {
 		auto& db = DatabaseManager::instance();
 
 		const bool isInPlace = (finalPath == srcPath);
@@ -1242,16 +1247,17 @@ void JobQueue::commitReview(qint64 jobId)
 			const QString remoteTmp = finalFi.absolutePath() + QLatin1Char('/')
 			                          + finalFi.fileName() + QStringLiteral(".tmp");
 
-			QMetaObject::invokeMethod(this, [this, jobId] {
-				emit phaseChanged(jobId, tr("Copying to NAS"));
+			QMetaObject::invokeMethod(qApp, [self, jobId] {
+				if (self) emit self->phaseChanged(jobId, tr("Copying to NAS"));
 			}, Qt::QueuedConnection);
 
 			const bool copyOk = RemuxJob::copyFileWithProgress(
 			    tmpPath, remoteTmp, outputSize,
-			    [this, jobId](int pct, qint64 bytes) {
-				QMetaObject::invokeMethod(this, [this, jobId, pct, bytes] {
-					emit progressChanged(jobId, pct);
-					emit outputSizeChanged(jobId, bytes);
+			    [self, jobId](int pct, qint64 bytes) {
+				QMetaObject::invokeMethod(qApp, [self, jobId, pct, bytes] {
+					if (!self) return;
+					emit self->progressChanged(jobId, pct);
+					emit self->outputSizeChanged(jobId, bytes);
 				}, Qt::QueuedConnection);
 			    });
 
@@ -1293,9 +1299,10 @@ void JobQueue::commitReview(qint64 jobId)
 		}
 
 		if (renameFailed) {
-			QMetaObject::invokeMethod(this, [this, storageGroup, jobId] {
-				releaseSlot(storageGroup);
-				emit jobFinished(jobId, false, 0);
+			QMetaObject::invokeMethod(qApp, [self, storageGroup, jobId] {
+				if (!self) return;
+				self->releaseSlot(storageGroup);
+				emit self->jobFinished(jobId, false, 0);
 			}, Qt::QueuedConnection);
 			return;
 		}
@@ -1306,27 +1313,28 @@ void JobQueue::commitReview(qint64 jobId)
 			db.updateCalibrationFromJob(jobId);
 		}
 
-		QMetaObject::invokeMethod(this, [this, storageGroup, jobId, fileId, finalPath, isInPlace, savedBytes] {
-			releaseSlot(storageGroup);
+		QMetaObject::invokeMethod(qApp, [self, storageGroup, jobId, fileId, finalPath, isInPlace, savedBytes] {
+			if (!self) return;
+			self->releaseSlot(storageGroup);
 
 			if (savedBytes > 0) {
 				AppSettings::instance().addReclaimedBytes(savedBytes);
 			}
 
-			emit jobFinished(jobId, true, savedBytes);
+			emit self->jobFinished(jobId, true, savedBytes);
 
 			if (fileId > 0) {
-				deleteMergedSidecars(jobId);
-				restoreDirTimestampForJob(jobId, fileId);
+				self->deleteMergedSidecars(jobId);
+				self->restoreDirTimestampForJob(jobId, fileId);
 				if (!isInPlace) {
 					const QFileInfo fi(finalPath);
 					DatabaseManager::instance().updateFilePath(fileId, finalPath, fi.fileName());
 				}
-				rescanFile(fileId, {});
+				self->rescanFile(fileId, {});
 			}
 
-			if (m_running)
-				dispatchJobs();
+			if (self->m_running)
+				self->dispatchJobs();
 		}, Qt::QueuedConnection);
 	});
 }

@@ -1602,12 +1602,20 @@ void McJobPanel::onQueueSelected()
 
 void McJobPanel::onQueueAll()
 {
-	const QList<qint64> ids = m_model->jobIdsByStatus("proposed");
+	// DB-wide, not m_model->jobIdsByStatus(): the model only knows the currently
+	// filtered/paged subset (e.g. status filter on "Done", or the startup page
+	// before the full library has loaded), which previously made "Queue All"
+	// promote only a fraction of what its enabled state (DB-wide proposed count)
+	// and tooltip promised. updateJob() below pulls each job into the model's
+	// master list on demand, so entries outside today's filter/page still get
+	// their in-memory state (and this panel's view of it) updated correctly.
+	auto& db = DatabaseManager::instance();
+	const QList<qint64> ids = db.jobIdsByStatus("proposed");
 	if (ids.isEmpty()) return;
 
-	// Fetch file IDs before promoting — fileIdsByStatus filters on "proposed".
-	const QList<qint64> fileIds = m_model->fileIdsByStatus("proposed");
-	DatabaseManager::instance().promoteJobsToQueued(ids);
+	const QSet<qint64> fileIdSet = db.proposedJobFileIds();
+	const QList<qint64> fileIds(fileIdSet.begin(), fileIdSet.end());
+	db.promoteJobsToQueued(ids);
 	SubtitleManager::instance().enqueueBatch(fileIds);
 
 	for (qint64 id : ids)

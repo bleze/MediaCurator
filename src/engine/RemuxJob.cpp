@@ -3,11 +3,13 @@
 #include "engine/ActionEngine.h"
 #include "scanner/FfprobeScanner.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
 #include <QRegularExpression>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTextStream>
@@ -194,7 +196,7 @@ void RemuxJob::cancel()
 {
 	// Also observed by the staged copy-back loop in the background finalize
 	// thread, so Cancel takes effect even after mkvmerge itself has exited.
-	m_cancelRequested = true;
+	m_cancelRequested->store(true);
 	if (m_process && m_process->state() != QProcess::NotRunning)
 		m_process->kill();
 }
@@ -230,7 +232,7 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 	// and MKV headers are written first so even a truncated output can pass the
 	// stream-diff verification. Force the failure path instead.
 	if (status != QProcess::NormalExit) {
-		if (!m_cancelRequested)
+		if (!m_cancelRequested->load())
 			m_log += QStringLiteral("mkvmerge terminated abnormally — treating as failed.\n");
 		exitCode = 2;
 	}
@@ -274,8 +276,13 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 		const QString     ffprobePath     = m_ffprobePath;
 		const QList<StreamRecord> expectedStreams = m_expectedStreams;
 
+		// No raw `this` in the task: it can outlive this object (app shutdown mid
+		// NAS copy-back). Results are marshaled through qApp with a QPointer guard
+		// — checked on the main thread, where this object lives and dies — and
+		// cancellation goes through the shared token.
 		QThreadPool::globalInstance()->start(
-		    [this, outputPath, finalOutputPath, inputPath, originalSize, log,
+		    [self = QPointer<RemuxJob>(this), cancelToken = m_cancelRequested,
+		     outputPath, finalOutputPath, inputPath, originalSize, log,
 		     writeLog, stagedLocally, mkvmergePath, args, descriptionText, exitCode,
 		     regexMismatch, ffprobePath, expectedStreams]() mutable {
 
@@ -317,11 +324,12 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 			if (regexMismatch || diffMismatch) {
 				// Leave .tmp and the source on disk — JobQueue will show the
 				// mismatch and let the user accept, re-analyze, or discard.
-				QMetaObject::invokeMethod(this, [this, exitCode, finishLog, tmpStreams, diff] {
-					m_tmpStreams       = tmpStreams;
-					m_streamDiff       = diff;
-					m_hasTrackMismatch = true;
-					emit finished(exitCode, finishLog, 0);
+				QMetaObject::invokeMethod(qApp, [self, exitCode, finishLog, tmpStreams, diff] {
+					if (!self) return;
+					self->m_tmpStreams       = tmpStreams;
+					self->m_streamDiff       = diff;
+					self->m_hasTrackMismatch = true;
+					emit self->finished(exitCode, finishLog, 0);
 				}, Qt::QueuedConnection);
 				return;
 			}
@@ -351,17 +359,17 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 				const QString remoteTmp = finalFi.absolutePath() + QLatin1Char('/')
 				                          + finalFi.fileName() + QStringLiteral(".tmp");
 
-				QMetaObject::invokeMethod(this, [this] {
-					emit phaseChanged(tr("Copying to NAS"));
+				QMetaObject::invokeMethod(qApp, [self] {
+					if (self) emit self->phaseChanged(tr("Copying to NAS"));
 				}, Qt::QueuedConnection);
 
 				const bool copyOk = RemuxJob::copyFileWithProgress(
 				    outputPath, remoteTmp, outputSize,
-				    [this](int pct, qint64 bytes) {
-					QMetaObject::invokeMethod(this, [this, pct, bytes] {
-						emit progressChanged(pct, bytes);
+				    [self](int pct, qint64 bytes) {
+					QMetaObject::invokeMethod(qApp, [self, pct, bytes] {
+						if (self) emit self->progressChanged(pct, bytes);
 					}, Qt::QueuedConnection);
-				    }, &m_cancelRequested);
+				    }, cancelToken.get());
 
 				if (copyOk) {
 					try {
@@ -392,7 +400,7 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 					}
 				} else {
 					QFile::remove(remoteTmp); // best-effort cleanup of a partial copy
-					finishLog += m_cancelRequested
+					finishLog += cancelToken->load()
 					    ? QStringLiteral("\nCancelled while copying staged output back to %1.").arg(finalOutputPath)
 					    : QStringLiteral("\nCopying staged output to %1 failed. Muxed output retained locally at %2.")
 					          .arg(finalOutputPath, outputPath);
@@ -473,9 +481,10 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 				}
 			}
 
-			QMetaObject::invokeMethod(this, [this, exitCode, finishLog, savedBytes, tmpStreams] {
-				m_tmpStreams = tmpStreams;
-				emit finished(exitCode, finishLog, savedBytes);
+			QMetaObject::invokeMethod(qApp, [self, exitCode, finishLog, savedBytes, tmpStreams] {
+				if (!self) return;
+				self->m_tmpStreams = tmpStreams;
+				emit self->finished(exitCode, finishLog, savedBytes);
 			}, Qt::QueuedConnection);
 		});
 		return;
@@ -484,10 +493,10 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 	if (exitCode != 0 && !m_outputPath.isEmpty()) {
 		const QString outputPath = m_outputPath;
 		const QString log        = m_log;
-		QThreadPool::globalInstance()->start([this, outputPath, log, exitCode]() {
+		QThreadPool::globalInstance()->start([self = QPointer<RemuxJob>(this), outputPath, log, exitCode]() {
 			QFile::remove(outputPath);
-			QMetaObject::invokeMethod(this, [this, exitCode, log] {
-				emit finished(exitCode, log, 0);
+			QMetaObject::invokeMethod(qApp, [self, exitCode, log] {
+				if (self) emit self->finished(exitCode, log, 0);
 			}, Qt::QueuedConnection);
 		});
 		return;

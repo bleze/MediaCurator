@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 
 namespace Mc {
 
@@ -87,7 +88,9 @@ private:
 	bool        m_writeLog          = false;
 	bool        m_hasTrackMismatch  = false;
 	bool        m_stagedLocally     = false;
-	std::atomic<bool> m_cancelRequested{false};
+	// Heap-shared so background finalize tasks can hold their own reference —
+	// they may outlive this object (app shutdown mid NAS copy-back).
+	std::shared_ptr<std::atomic<bool>> m_cancelRequested = std::make_shared<std::atomic<bool>>(false);
 	QProcess*   m_process           = nullptr;
 
 	QString                 m_ffprobePath;

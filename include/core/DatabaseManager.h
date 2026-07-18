@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <QMutex>
 #include <QHash>
 #include <QObject>
 #include <QSqlDatabase>
@@ -291,6 +290,7 @@ public:
 	int                     queuedJobCount() const;
 	QHash<QString, int>     jobStatusCounts() const;
 	QSet<qint64>            proposedJobFileIds() const;
+	QList<qint64>           jobIdsByStatus(const QString& status) const;
 
 	// ── Poster cache ─────────────────────────────────────────────────────────
 	void                        upsertPosterRecord(const PosterRecord& rec);
@@ -346,7 +346,6 @@ private:
 	QSqlDatabase     m_db;
 	QString          m_dbPath;
 	Qt::HANDLE       m_mainThreadId = {};
-	mutable QMutex   m_connMutex;
 };
 
 } // namespace Mc

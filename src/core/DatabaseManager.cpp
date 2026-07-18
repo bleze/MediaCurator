@@ -12,11 +12,35 @@
 #include <QDir>
 #include <QDateTime>
 #include <QDebug>
-#include <QMutexLocker>
 #include <QThread>
+#include <QThreadStorage>
 #include <QVariant>
 
 namespace Mc {
+
+namespace {
+// Per-thread SQLite connection, closed and unregistered when its thread exits
+// (QThreadStorage deletes this on thread teardown, on the owning thread).
+// Keyed by thread *lifetime* rather than OS thread id: the OS recycles ids, so
+// a new worker could otherwise inherit a connection created by a dead thread —
+// which Qt's SQL layer does not support — and connections were never removed,
+// leaking one open SQLite handle per thread that ever touched the DB.
+struct ThreadDbConnection {
+	QString name;
+	explicit ThreadDbConnection(const QString& n) : name(n) {}
+	~ThreadDbConnection()
+	{
+		{
+			// Handle must go out of scope before removeDatabase().
+			QSqlDatabase db = QSqlDatabase::database(name, false);
+			if (db.isValid() && db.isOpen())
+				db.close();
+		}
+		QSqlDatabase::removeDatabase(name);
+	}
+	Q_DISABLE_COPY(ThreadDbConnection)
+};
+} // namespace
 
 // ── Singleton ─────────────────────────────────────────────────────────────────
 
@@ -98,16 +122,24 @@ QSqlDatabase DatabaseManager::connection() const
 	if (QThread::currentThreadId() == m_mainThreadId)
 		return m_db;
 
-	// Worker thread — create a named connection the first time, reuse thereafter.
-	const QString name = QStringLiteral("mc_thread_%1")
-						 .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
-
-	QMutexLocker lock(&m_connMutex);
-	if (!QSqlDatabase::contains(name)) {
+	// Worker thread — one connection per thread lifetime, created on first use
+	// and dropped automatically when the thread exits (see ThreadDbConnection).
+	// Names come from a monotonic counter, never the OS thread id, so a recycled
+	// id can't resurrect a dead thread's registry entry. Qt's connection registry
+	// itself is internally synchronized, and each name is only ever touched by
+	// its own thread, so no external mutex is needed.
+	static QThreadStorage<ThreadDbConnection*> s_threadConn;
+	if (!s_threadConn.hasLocalData()) {
+		static QAtomicInteger<quint64> s_nextConnId(1);
+		const QString name = QStringLiteral("mc_thread_%1")
+							 .arg(s_nextConnId.fetchAndAddRelaxed(1));
 		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", name);
 		db.setDatabaseName(m_dbPath);
 		if (!db.open()) {
 			qCritical() << "DatabaseManager: failed to open worker thread connection:" << db.lastError().text();
+			// Unregister immediately — leaving the never-opened connection in the
+			// registry would silently fail every later query from this thread.
+			QSqlDatabase::removeDatabase(name);
 			return QSqlDatabase();
 		}
 		QSqlQuery q(db);
@@ -115,8 +147,9 @@ QSqlDatabase DatabaseManager::connection() const
 		q.exec("PRAGMA synchronous=NORMAL");
 		q.exec("PRAGMA foreign_keys=ON");
 		q.exec("PRAGMA busy_timeout=5000");
+		s_threadConn.setLocalData(new ThreadDbConnection(name));
 	}
-	return QSqlDatabase::database(name, false);
+	return QSqlDatabase::database(s_threadConn.localData()->name, false);
 }
 
 // ── Schema ────────────────────────────────────────────────────────────────────
@@ -1930,6 +1963,23 @@ QSet<qint64> DatabaseManager::proposedJobFileIds() const
 	while (q.next())
 		result.insert(q.value(0).toLongLong());
 	return result;
+}
+
+// DB-wide, unlike McJobListModel::jobIdsByStatus() which only sees whatever
+// subset the panel currently has filtered/paged into memory — callers that
+// need to act on "every job with this status" (e.g. Queue All) must go through
+// here instead, or a status filter/lazy-load gap silently limits the action to
+// a fraction of what the button claims to do.
+QList<qint64> DatabaseManager::jobIdsByStatus(const QString& status) const
+{
+	QList<qint64> ids;
+	QSqlQuery q(connection());
+	q.prepare("SELECT id FROM jobs WHERE status=?");
+	q.addBindValue(status);
+	if (q.exec())
+		while (q.next())
+			ids << q.value(0).toLongLong();
+	return ids;
 }
 
 // ── Preferences ───────────────────────────────────────────────────────────────
