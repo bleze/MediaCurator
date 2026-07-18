@@ -49,6 +49,7 @@ public:
 		DisplayTitleRole      = Qt::UserRole + 24,  // QString TMDB/user-assigned override; preferred over all others
 		DisplayYearRole       = Qt::UserRole + 25,  // int release year from TMDB (0 = unknown)
 		StorageGroupRole      = Qt::UserRole + 26,  // int 1-4 — see StorageGroupSettings
+		FinishedAtRole        = Qt::UserRole + 27,  // qint64 epoch seconds job last left "running"; 0 if never
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);

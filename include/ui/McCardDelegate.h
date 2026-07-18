@@ -178,6 +178,7 @@ private:
 		QString             phaseLabel;             // sub-phase label (e.g. "Copying to NAS"), empty = default "Running"
 		bool                checked        = false;
 		bool                toggleable     = false;  // true for proposed jobs
+		qint64              finishedAt     = 0;      // epoch seconds job last left "running"; 0 if never (status pill tooltip)
 	};
 
 	// Animation state for the live size bar, keyed by jobId. Two independent bars, both

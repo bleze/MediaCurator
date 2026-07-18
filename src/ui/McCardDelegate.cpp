@@ -20,6 +20,7 @@
 #include <QFontMetrics>
 #include <QFile>
 #include <QHelpEvent>
+#include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QRegularExpression>
@@ -493,6 +494,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		for (const auto& s : d.allStreams)
 			if (!keptIdx.contains(s.streamIndex)) d.removedIndices.insert(s.streamIndex);
 		d.flagChangesJson   = index.data(McJobListModel::FlagChangesRole).toString();
+		d.finishedAt        = index.data(McJobListModel::FinishedAtRole).toLongLong();
 	}
 	return d;
 }
@@ -1141,6 +1143,69 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 		                     hdr.top() + (hdr.height() - kBadgeH) / 2, chipW, kBadgeH);
 		if (chipRect.contains(event->pos())) {
 			QToolTip::showText(event->globalPos(), tr("Storage group %1").arg(d.storageGroup), view);
+			return true;
+		}
+	}
+
+	// Status pill tooltip (Job Queue only) — shows when the job last left
+	// "running": Done → completed time, Failed/Cancelled → when that happened,
+	// needs_review → when it was flagged. Proposed/Queued/Running have no
+	// terminal timestamp yet, so they fall through with no tooltip.
+	// Geometry mirrors the pill's position/size in paint() exactly, since
+	// that's the only place it's otherwise computed.
+	if (m_mode == Mode::JobQueue) {
+		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
+		                content.width(), kHeaderH);
+		const QRect playBtn = playButtonRect(content);
+		int rightEdgeForFilename = playBtn.left() - kBadgeGap;
+		if (m_showGroupBadge)
+			rightEdgeForFilename -= groupChipWidth(d.storageGroup, option.font) + kBadgeGap;
+
+		QFont pillFont = option.font;
+		pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+		QString pillText = statusLabel(d.status);
+		if (d.status == QLatin1String("running") && d.progress > 0) {
+			const QString phase = d.phaseLabel.isEmpty() ? tr("Running") : d.phaseLabel;
+			pillText = QStringLiteral("%1 %2%\xE2\x80\xA6").arg(phase).arg(d.progress);
+		}
+		const bool isPending = (d.status == QLatin1String("proposed")
+		                     || d.status == QLatin1String("queued")
+		                     || d.status == QLatin1String("source")
+		                     || d.status == QLatin1String("running"));
+		const qint64 displaySavedBytes = isPending && d.sizeBytes > 0
+			? estimateSavingBytes(d.allStreams, d.removedIndices, d.sizeBytes, d.durationSec)
+			: d.status == QLatin1String("done") ? d.savedBytes : 0;
+		if (displaySavedBytes > 0) {
+			const QString prefix = isPending ? QStringLiteral("~-") : QStringLiteral("-");
+			const double  gb     = displaySavedBytes / 1073741824.0;
+			const QString saved  = gb >= 1.0
+				? QStringLiteral("%1%2 GB").arg(prefix).arg(gb, 0, 'f', 2)
+				: QStringLiteral("%1%2 MB").arg(prefix).arg(displaySavedBytes / 1048576.0, 0, 'f', 1);
+			pillText += QStringLiteral("  %1").arg(saved);
+		}
+		const int  pillW = QFontMetrics(pillFont).horizontalAdvance(pillText) + 2 * kBadgePad;
+		const int  pillX = rightEdgeForFilename - pillW;
+		const int  pillY = hdr.top() + (hdr.height() - kBadgeH) / 2;
+		const QRect pillRect(pillX, pillY, pillW, kBadgeH);
+
+		if (pillRect.contains(event->pos())) {
+			QString tip;
+			if (d.finishedAt > 0) {
+				const QString when = QLocale().toString(
+					QDateTime::fromSecsSinceEpoch(d.finishedAt), QLocale::ShortFormat);
+				if (d.status == QLatin1String("done"))
+					tip = tr("Completed %1").arg(when);
+				else if (d.status == QLatin1String("failed"))
+					tip = tr("Failed %1").arg(when);
+				else if (d.status == QLatin1String("cancelled"))
+					tip = tr("Cancelled %1").arg(when);
+				else if (d.status == QLatin1String("needs_review"))
+					tip = tr("Flagged for review %1").arg(when);
+			}
+			if (!tip.isEmpty())
+				QToolTip::showText(event->globalPos(), tip, view);
+			else
+				QToolTip::hideText();
 			return true;
 		}
 	}

@@ -759,6 +759,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case DisplayTitleRole:   return e.job.displayTitle;
 	case DisplayYearRole:    return e.job.displayYear;
 	case StorageGroupRole:   return e.storageGroup;
+	case FinishedAtRole:     return e.job.finishedAt;
 	default:                   return {};
 	}
 }
