@@ -70,6 +70,11 @@ private:
 	// Preferred over a title search whenever an ID is already on file, since a
 	// folder-name search can match the wrong movie (sequels, remakes, shared titles).
 	void searchByExistingImdbId();
+
+	// Cancels the in-flight search/thumbnail/prefetch requests safely: handlers
+	// are detached before abort() so their synchronous finished() can't mutate
+	// the reply hashes mid-iteration.
+	void abortResultRequests();
 	void populateSearchResults(const QJsonArray& results, const QRegularExpressionMatch& yearMatch);
 
 protected:

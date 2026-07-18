@@ -10,6 +10,8 @@
 #include <QMessageAuthenticationCode>
 #include <QStandardPaths>
 
+#include <limits>
+
 namespace Mc {
 
 namespace {
@@ -65,8 +67,17 @@ static QVariant jsonToVariant(const QJsonValue& jv, const QVariant& def)
 		// Preserve int/string semantics from the default value's type.
 		if (def.typeId() == QMetaType::LongLong || def.typeId() == QMetaType::ULongLong)
 			return static_cast<qint64>(jv.toDouble());
-		if (def.typeId() == QMetaType::Int || def.typeId() == QMetaType::UInt)
-			return static_cast<int>(jv.toDouble());
+		if (def.typeId() == QMetaType::Int || def.typeId() == QMetaType::UInt) {
+			// A stored value outside int range (e.g. an ms-epoch written as qint64
+			// but read back with an int default) must not go through the narrowing
+			// cast — that's UB. Fall back to qint64 so the caller's toLongLong()
+			// still sees the real value.
+			const double d = jv.toDouble();
+			if (d < static_cast<double>(std::numeric_limits<int>::min())
+			        || d > static_cast<double>(std::numeric_limits<int>::max()))
+				return static_cast<qint64>(d);
+			return static_cast<int>(d);
+		}
 		return jv.toDouble();
 	case QJsonValue::String:
 		return jv.toString();

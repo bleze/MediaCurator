@@ -1,4 +1,5 @@
 ﻿#include "scanner/NfoParser.h"
+#include "scanner/ScanWorker.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -62,6 +63,23 @@ QString NfoParser::readImdbId(const QString& videoPath)
 	if (!id.isEmpty()) return id;
 
 	const QDir dir(QFileInfo(videoPath).absolutePath());
+
+	// Kodi's folder-level convention — unambiguous regardless of library layout.
+	if (dir.exists(QStringLiteral("movie.nfo"))) {
+		const QString found = scanFile(dir.filePath(QStringLiteral("movie.nfo")));
+		if (!found.isEmpty()) return found;
+	}
+
+	// The any-.nfo fallback assumes the movie-per-folder layout, where every .nfo
+	// in the folder describes this movie. In a flat library folder it would hand
+	// this file a *sibling movie's* identity (wrong poster/title/NFO from then on)
+	// — so only allow it when this video is the folder's sole video file.
+	int videoCount = 0;
+	for (const QFileInfo& fi : dir.entryInfoList(QDir::Files)) {
+		if (ScanWorker::videoExtensions().contains(fi.suffix().toLower()) && ++videoCount > 1)
+			return {};
+	}
+
 	for (const QString& name : dir.entryList({"*.nfo"}, QDir::Files)) {
 		const QString found = scanFile(dir.filePath(name));
 		if (!found.isEmpty()) return found;

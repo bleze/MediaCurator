@@ -2858,8 +2858,16 @@ void McMainWindow::onAnalyzeLibrary()
 
 	connect(m_analyzeThread, &QThread::started,                m_analyzeWorker, &AnalyzeWorker::run);
 	connect(m_analyzeWorker, &AnalyzeWorker::finished, m_analyzeThread,         &QThread::quit);
-	connect(m_analyzeWorker, &AnalyzeWorker::finished, m_analyzeWorker,         &QObject::deleteLater);
+	// Worker deleted from QThread::finished, NOT via self-deleteLater on
+	// AnalyzeWorker::finished — that would be a direct connection on the worker
+	// thread, freeing the object before the queued onAnalyzeFinished (or a Cancel
+	// click dereferencing m_analyzeWorker) runs on the main thread. Same pattern
+	// as SimulateWorker in onSimulate().
 	connect(m_analyzeThread, &QThread::finished, this, [this] {
+		if (m_analyzeWorker) {
+			m_analyzeWorker->deleteLater();
+			m_analyzeWorker = nullptr;
+		}
 		m_analyzeThread->deleteLater();
 		m_analyzeThread = nullptr;
 	});
@@ -2911,8 +2919,12 @@ void McMainWindow::onQuickAnalyze()
 
 	connect(m_analyzeThread, &QThread::started,                m_analyzeWorker, &AnalyzeWorker::run);
 	connect(m_analyzeWorker, &AnalyzeWorker::finished, m_analyzeThread,         &QThread::quit);
-	connect(m_analyzeWorker, &AnalyzeWorker::finished, m_analyzeWorker,         &QObject::deleteLater);
+	// See onAnalyzeLibrary(): worker cleanup belongs to QThread::finished.
 	connect(m_analyzeThread, &QThread::finished, this, [this] {
+		if (m_analyzeWorker) {
+			m_analyzeWorker->deleteLater();
+			m_analyzeWorker = nullptr;
+		}
 		m_analyzeThread->deleteLater();
 		m_analyzeThread = nullptr;
 	});
@@ -2947,7 +2959,7 @@ void McMainWindow::onAnalyzeJobProposed(qint64 /*fileId*/)
 
 void McMainWindow::onAnalyzeFinished(int /*analyzed*/, int created)
 {
-	m_analyzeWorker = nullptr;
+	// m_analyzeWorker is intentionally not nulled here — QThread::finished owns cleanup.
 	m_progressBar->setVisible(false);
 	m_btnCancelAnalyze->setVisible(false);
 	m_actScanFolder->setEnabled(true);

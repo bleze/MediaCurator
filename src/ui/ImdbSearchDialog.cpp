@@ -654,6 +654,27 @@ QString ImdbSearchDialog::selectedReleaseDate() const
 }
 
 
+// abort() emits finished() synchronously, and every per-row handler starts by
+// removing itself from the hash it lives in — aborting while iterating those
+// members directly is iterator-invalidation UB. Detach the handlers and empty
+// the members first, then abort local copies; the reply → deleteLater
+// self-cleanup connections survive the disconnect(this).
+void ImdbSearchDialog::abortResultRequests()
+{
+	if (m_searchReply) { m_searchReply->abort(); m_searchReply = nullptr; }
+	if (m_extIdsReply) { m_extIdsReply->abort(); m_extIdsReply = nullptr; }
+
+	const auto thumbs    = m_thumbReplyByRow;    m_thumbReplyByRow.clear();
+	const auto backdrops = m_backdropReplyByRow; m_backdropReplyByRow.clear();
+	const auto prefetch  = m_prefetchByRow;      m_prefetchByRow.clear();
+	for (QNetworkReply* r : thumbs)    { r->disconnect(this); r->abort(); }
+	for (QNetworkReply* r : backdrops) { r->disconnect(this); r->abort(); }
+	for (QNetworkReply* r : prefetch)  { r->disconnect(this); r->abort(); }
+
+	m_thumbDataByRow.clear();
+	m_imdbIdByRow.clear();
+}
+
 void ImdbSearchDialog::onSearch()
 {
 	if (m_tmdbApiKey.isEmpty()) return;
@@ -661,16 +682,7 @@ void ImdbSearchDialog::onSearch()
 	const QString query = m_searchEdit->text().trimmed();
 	if (query.isEmpty()) return;
 
-	if (m_searchReply) { m_searchReply->abort(); m_searchReply = nullptr; }
-	if (m_extIdsReply) { m_extIdsReply->abort(); m_extIdsReply = nullptr; }
-	for (QNetworkReply* r : m_thumbReplyByRow) r->abort();
-	m_thumbReplyByRow.clear();
-	m_thumbDataByRow.clear();
-	for (QNetworkReply* r : m_backdropReplyByRow) r->abort();
-	m_backdropReplyByRow.clear();
-	for (QNetworkReply* r : m_prefetchByRow) r->abort();
-	m_prefetchByRow.clear();
-	m_imdbIdByRow.clear();
+	abortResultRequests();
 
 	m_resultsList->clear();
 	m_btnSearch->setEnabled(false);
@@ -731,16 +743,7 @@ void ImdbSearchDialog::searchByExistingImdbId()
 {
 	if (m_tmdbApiKey.isEmpty() || m_existingImdbId.isEmpty()) return;
 
-	if (m_searchReply) { m_searchReply->abort(); m_searchReply = nullptr; }
-	if (m_extIdsReply) { m_extIdsReply->abort(); m_extIdsReply = nullptr; }
-	for (QNetworkReply* r : m_thumbReplyByRow) r->abort();
-	m_thumbReplyByRow.clear();
-	m_thumbDataByRow.clear();
-	for (QNetworkReply* r : m_backdropReplyByRow) r->abort();
-	m_backdropReplyByRow.clear();
-	for (QNetworkReply* r : m_prefetchByRow) r->abort();
-	m_prefetchByRow.clear();
-	m_imdbIdByRow.clear();
+	abortResultRequests();
 
 	m_resultsList->clear();
 	m_btnSearch->setEnabled(false);
@@ -1046,6 +1049,12 @@ bool ImdbSearchDialog::eventFilter(QObject* obj, QEvent* ev)
 
 void ImdbSearchDialog::onResultSelectionChanged()
 {
+	// A pending accept-on-fetch was armed for the previously selected row —
+	// moving to another row must disarm it, or that row's prefetch landing
+	// would silently accept() a movie the user never confirmed. (The batch
+	// auto-select flow arms only after setCurrentRow(), so it is unaffected.)
+	m_acceptAfterFetch = false;
+
 	const int row = m_resultsList->currentRow();
 	const QListWidgetItem* item = m_resultsList->currentItem();
 	if (!item) return;

@@ -273,8 +273,11 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 
 		QString lang;
 		QString dupSuffix; // trailing digit stripped off the language token, e.g. "2" for "en2"
-		bool isForced = false;
-		bool isSDH    = false;
+		bool isForced     = false;
+		bool isSDH        = false;
+		bool unknownToken = false;
+
+		static const QRegularExpression iso3Re(QStringLiteral("^[a-z]{3}$"));
 
 		if (!remainder.isEmpty()) {
 			// Strip leading separator, then split further parts
@@ -285,6 +288,7 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 			for (const QString& part : parts) {
 				QString lower = part.toLower();
 				if (lower == QLatin1String("forced"))                         { isForced = true; continue; }
+				if (lower == QLatin1String("default"))                        continue;
 				if (lower == QLatin1String("sdh") || lower == QLatin1String("hi") || lower == QLatin1String("cc")) { isSDH = true; continue; }
 				if (lang.isEmpty()) {
 					QString suffix;
@@ -297,13 +301,22 @@ QList<StreamRecord> ScanWorker::scanSidecarSubtitles(const QString& videoPath, i
 					if (!mapped.isEmpty()) {
 						lang      = mapped;
 						dupSuffix = suffix;
-					} else if (lower.length() == 3) {
+						continue;
+					}
+					if (iso3Re.match(lower).hasMatch()) {
 						lang      = lower;  // assume it's already ISO 639-2
 						dupSuffix = suffix;
+						continue;
 					}
 				}
+				// Kodi's convention: the remainder holds only flag/language tokens.
+				// Anything else means this file belongs to a different, prefix-sharing
+				// video — "Rocky II.en.srt" must not attach to "Rocky.mkv".
+				unknownToken = true;
+				break;
 			}
 		}
+		if (unknownToken) continue;
 
 		QString finalPath = fi.absoluteFilePath();
 

@@ -424,7 +424,11 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 					savedBytes = qMax(0LL, originalSize - outputSize);
 					finishLog += QStringLiteral("\nNote: rename reported a network error but the file is in the correct state (%1)").arg(e.what());
 				} else {
-					finishLog += QStringLiteral("\nRename failed: %1").arg(e.what());
+					// Typically the source is held open (Plex/Kodi/player) on Windows.
+					// Delete the completed .tmp — it's movie-sized and nothing ever
+					// reclaims or retries it; the job is failed and can be re-analyzed.
+					QFile::remove(outputPath);
+					finishLog += QStringLiteral("\nRename failed: %1\nTemporary output removed — re-run the job once the file is no longer in use.").arg(e.what());
 					exitCode = -2;
 				}
 			}

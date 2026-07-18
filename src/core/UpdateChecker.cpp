@@ -67,7 +67,9 @@ void UpdateChecker::check(bool silent)
 		return;
 
 	if (silent) {
-		const qint64 lastCheckMs = AppSettings::instance().value("update/lastCheckMs", 0).toLongLong();
+		// Default must be qint64: jsonToVariant() casts the stored value to the
+		// default's type, and static_cast<int> of an ms-epoch overflows.
+		const qint64 lastCheckMs = AppSettings::instance().value("update/lastCheckMs", 0LL).toLongLong();
 		if (QDateTime::currentMSecsSinceEpoch() - lastCheckMs < kMinIntervalMs)
 			return;
 	}

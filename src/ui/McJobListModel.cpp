@@ -673,9 +673,17 @@ void McJobListModel::applyFilter(bool forceFullReset)
 			endInsertRows();
 			++i; ++j;
 		} else {
-			// Unreachable given the subsequence invariant above — guard against an
-			// infinite loop rather than risk one.
-			break;
+			// The subsequence invariant broke: both lists contain the ids at i/j but
+			// in different relative order. Reachable when something changed a sort
+			// key in place without resorting (e.g. toggleStream() adjusting a job's
+			// savings) and a later reload() rebuilt newEntries freshly sorted.
+			// Bailing out here would leave every remaining row stale — fall back to
+			// a full reset so the view matches what was just read from the DB.
+			beginResetModel();
+			m_entries     = std::move(newEntries);
+			m_checkStates = std::move(newChecks);
+			endResetModel();
+			return;
 		}
 	}
 }

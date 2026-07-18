@@ -642,7 +642,7 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 QList<FileRecord> DatabaseManager::allFiles() const
 {
 	QList<FileRecord> result;
-	QSqlQuery q("SELECT * FROM files ORDER BY filename", m_db);
+	QSqlQuery q("SELECT * FROM files ORDER BY filename", connection());
 	while (q.next()) {
 		FileRecord r;
 		r.id               = q.value("id").toLongLong();
@@ -671,7 +671,7 @@ QList<FileRecord> DatabaseManager::filesWithoutAnyJob() const
 	QList<FileRecord> result;
 	QSqlQuery q("SELECT f.* FROM files f "
 	            "WHERE NOT EXISTS (SELECT 1 FROM jobs j WHERE j.file_id = f.id) "
-	            "ORDER BY f.filename", m_db);
+	            "ORDER BY f.filename", connection());
 	while (q.next()) {
 		FileRecord r;
 		r.id               = q.value("id").toLongLong();
