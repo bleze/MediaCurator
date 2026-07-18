@@ -466,6 +466,16 @@ void DatabaseManager::endScanRun(qint64 scanRunId, int added, int updated, int r
 
 std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 {
+	// Checked up front so the insert-vs-update outcome doesn't have to be inferred
+	// from lastInsertId() below, which can't distinguish the two (see there).
+	bool existedBefore = false;
+	{
+		QSqlQuery pre(connection());
+		pre.prepare("SELECT 1 FROM files WHERE path=?");
+		pre.addBindValue(rec.path);
+		existedBefore = pre.exec() && pre.next();
+	}
+
 	QSqlQuery q(connection());
 	q.prepare(R"(
 		INSERT INTO files(path, filename, size_bytes, mtime_ms, created_ms, container, duration_s,
@@ -505,24 +515,22 @@ std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 		return std::nullopt;
 	}
 
-	// INSERT returns a new rowid; UPDATE returns 0 for lastInsertId
-	const qint64 insertedId = q.lastInsertId().toLongLong();
-	if (insertedId > 0) {
-		emit fileAdded(insertedId);
-		return insertedId;
-	}
-
-	// Was an update — fetch the existing id
+	// lastInsertId() cannot identify the row here: Qt's SQLite driver maps it to
+	// sqlite3_last_insert_rowid(), which is connection-scoped and still holds the
+	// rowid of the last genuine INSERT on this connection (scan_runs, streams, …)
+	// whenever the upsert takes the DO UPDATE branch. Resolve the id by path.
 	QSqlQuery sel(connection());
 	sel.prepare("SELECT id FROM files WHERE path=?");
 	sel.addBindValue(rec.path);
-	if (sel.exec() && sel.next()) {
-		const qint64 existingId = sel.value(0).toLongLong();
-		emit fileUpdated(existingId);
-		return existingId;
-	}
+	if (!sel.exec() || !sel.next())
+		return std::nullopt;
 
-	return std::nullopt;
+	const qint64 id = sel.value(0).toLongLong();
+	if (existedBefore)
+		emit fileUpdated(id);
+	else
+		emit fileAdded(id);
+	return id;
 }
 
 std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
@@ -802,13 +810,26 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 	return result;
 }
 
+// LIKE treats % and _ as wildcards, so a folder name containing either (e.g.
+// "Media_A") would also match sibling folders ("MediaXA"). Escape them — and
+// the escape character itself — and pair every use with ESCAPE '\'.
+static QString likeDirPrefix(const QString& rootPath)
+{
+	QString norm = QDir::fromNativeSeparators(rootPath);
+	norm.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+	norm.replace(QLatin1Char('%'),  QLatin1String("\\%"));
+	norm.replace(QLatin1Char('_'),  QLatin1String("\\_"));
+	if (!norm.endsWith(QLatin1Char('/')))
+		norm += QLatin1Char('/');
+	return norm + QLatin1Char('%');
+}
+
 QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
 {
 	QList<FileRecord> result;
 	QSqlQuery q(connection());
-	const QString norm   = QDir::fromNativeSeparators(rootPath);
-	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
-	q.prepare("SELECT id, path, mtime_ms FROM files WHERE path LIKE ?");
+	const QString prefix = likeDirPrefix(rootPath);
+	q.prepare("SELECT id, path, mtime_ms FROM files WHERE path LIKE ? ESCAPE '\\'");
 	q.addBindValue(prefix);
 	if (!q.exec()) return result;
 	while (q.next()) {
@@ -864,9 +885,8 @@ int DatabaseManager::fileCount() const
 int DatabaseManager::fileCountUnderPath(const QString& rootPath) const
 {
 	QSqlQuery q(connection());
-	const QString norm   = QDir::fromNativeSeparators(rootPath);
-	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
-	q.prepare("SELECT COUNT(*) FROM files WHERE path LIKE ?");
+	const QString prefix = likeDirPrefix(rootPath);
+	q.prepare("SELECT COUNT(*) FROM files WHERE path LIKE ? ESCAPE '\\'");
 	q.addBindValue(prefix);
 	if (q.exec() && q.next())
 		return q.value(0).toInt();
@@ -875,21 +895,20 @@ int DatabaseManager::fileCountUnderPath(const QString& rootPath) const
 
 int DatabaseManager::removeFilesUnderPath(const QString& rootPath)
 {
-	const QString norm   = QDir::fromNativeSeparators(rootPath);
-	const QString prefix = (norm.endsWith('/') ? norm : norm + '/') + '%';
+	const QString prefix = likeDirPrefix(rootPath);
 
 	// jobs.file_id has no ON DELETE CASCADE, so any file that's ever had a job
 	// (proposed/queued/done/etc.) would otherwise abort the whole DELETE FROM files
 	// below under foreign_keys=ON — SQLite rolls back the entire statement on the
 	// first constraint violation, not just the offending row.
 	QSqlQuery delJobs(connection());
-	delJobs.prepare("DELETE FROM jobs WHERE file_id IN (SELECT id FROM files WHERE path LIKE ?)");
+	delJobs.prepare("DELETE FROM jobs WHERE file_id IN (SELECT id FROM files WHERE path LIKE ? ESCAPE '\\')");
 	delJobs.addBindValue(prefix);
 	if (!delJobs.exec())
 		qWarning() << "removeFilesUnderPath: failed to delete jobs:" << delJobs.lastError().text();
 
 	QSqlQuery q(connection());
-	q.prepare("DELETE FROM files WHERE path LIKE ?");
+	q.prepare("DELETE FROM files WHERE path LIKE ? ESCAPE '\\'");
 	q.addBindValue(prefix);
 	if (!q.exec()) {
 		qWarning() << "removeFilesUnderPath: failed to delete files:" << q.lastError().text();

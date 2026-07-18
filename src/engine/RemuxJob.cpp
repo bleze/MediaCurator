@@ -176,7 +176,16 @@ void RemuxJob::run()
 	connect(m_process, &QProcess::readyRead,
 	        this, &RemuxJob::onReadyRead);
 	connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-	        this, [this](int code, QProcess::ExitStatus) { onProcessFinished(code); });
+	        this, [this](int code, QProcess::ExitStatus status) { onProcessFinished(code, status); });
+	connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
+		// FailedToStart is the one error that never emits finished() — without
+		// this the job stays "running" and wedges its storage-group slot forever.
+		if (err != QProcess::FailedToStart)
+			return;
+		m_log += QStringLiteral("Failed to start mkvmerge (%1): %2\n")
+		             .arg(m_mkvmergePath, m_process->errorString());
+		emit finished(2, m_log, 0);
+	});
 
 	m_process->start(m_mkvmergePath, m_args);
 }
@@ -214,8 +223,18 @@ void RemuxJob::onReadyRead()
 	m_readBuf = m_readBuf.mid(pos);
 }
 
-void RemuxJob::onProcessFinished(int exitCode)
+void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 {
+	// A crashed (or killed) mkvmerge has no meaningful exit code — on some
+	// platforms it reads back as 0, which the success check below would trust,
+	// and MKV headers are written first so even a truncated output can pass the
+	// stream-diff verification. Force the failure path instead.
+	if (status != QProcess::NormalExit) {
+		if (!m_cancelRequested)
+			m_log += QStringLiteral("mkvmerge terminated abnormally — treating as failed.\n");
+		exitCode = 2;
+	}
+
 	// Drain any bytes that didn't end with \r/\n
 	m_readBuf += m_process->readAll();
 	if (!m_readBuf.isEmpty()) {

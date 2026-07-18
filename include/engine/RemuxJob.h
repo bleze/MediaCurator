@@ -2,13 +2,12 @@
 #include "core/DatabaseManager.h"
 #include "engine/ActionEngine.h"
 #include <QObject>
+#include <QProcess>
 #include <QString>
 #include <QStringList>
 
 #include <atomic>
 #include <functional>
-
-class QProcess;
 
 namespace Mc {
 
@@ -72,7 +71,7 @@ signals:
 
 private slots:
 	void onReadyRead();
-	void onProcessFinished(int exitCode);
+	void onProcessFinished(int exitCode, QProcess::ExitStatus status);
 
 private:
 	qint64      m_jobId;

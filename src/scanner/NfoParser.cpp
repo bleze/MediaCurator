@@ -132,7 +132,12 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
 		      .arg(meta.voteCount)
 		: QString();
 
-	if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+	if (file.exists()) {
+		// An existing NFO we can't read (locked by Kodi/Radarr/AV, permissions)
+		// must never fall through to the create-branch below — its WriteOnly |
+		// Truncate open can still succeed and would destroy the file's content.
+		if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+			return false;
 		QString content = QString::fromUtf8(file.readAll());
 		file.close();
 

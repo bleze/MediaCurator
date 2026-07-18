@@ -234,6 +234,7 @@ void JobQueue::occupySlot(int storageGroup, qint64 jobId, qint64 fileId, qint64 
 	slot.jobId              = jobId;
 	slot.fileId             = fileId;
 	slot.estimatedSavings   = estimatedSavings;
+	slot.activation         = m_nextSlotActivation++;
 }
 
 void JobQueue::releaseSlot(int storageGroup)
@@ -504,6 +505,19 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 			finishTagEditJob(storageGroup, jobId, fileId, ok, log, sidecarDeletionsJson,
 			                 flagChangesJson, allStreams);
 		});
+		connect(proc, &QProcess::errorOccurred,
+		        this, [this, proc, jobId, fileId, storageGroup, sidecarDeletionsJson,
+		               flagChangesJson, allStreams](QProcess::ProcessError err) {
+			// FailedToStart never emits finished() — fail the job here so the
+			// slot is released instead of staying busy until app restart.
+			if (err != QProcess::FailedToStart)
+				return;
+			const QString log = QStringLiteral("Failed to start mkvpropedit: %1")
+			                        .arg(proc->errorString());
+			proc->deleteLater();
+			finishTagEditJob(storageGroup, jobId, fileId, false, log, sidecarDeletionsJson,
+			                 flagChangesJson, allStreams);
+		});
 		proc->start(mkvpropeditPath, args);
 		return true;
 	}
@@ -620,8 +634,27 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	// downloading can't run right now; if OpenSubtitles is slow, this simply
 	// gives up after the timeout and the file muxes without it, same as before —
 	// it stays available for a manual "Download Subtitles" pass afterward.
-	if (m_mergeSidecarSubtitles && fileId > 0)
+	const quint64 slotActivation = m_runningByGroup[storageGroup].activation;
+	if (m_mergeSidecarSubtitles && fileId > 0) {
 		SubtitleManager::instance().tryDownloadNow(fileId, kSubtitlePrefetchTimeoutMs);
+		// tryDownloadNow blocks in a nested event loop, so UI events ran while this
+		// frame was suspended: the user may have cancelled this job (cancelJob()
+		// released the slot — there was no RemuxJob to kill yet) or the whole queue,
+		// and a dispatch may since have handed the group's slot to another job — or
+		// even to a fresh activation of this same one. In all of those cases this
+		// frame no longer owns the slot and must not launch a mux against it; the
+		// job itself was already put back to "queued" by the cancel path.
+		const auto slotIt = m_runningByGroup.constFind(storageGroup);
+		if (slotIt == m_runningByGroup.cend() || slotIt->activation != slotActivation) {
+#ifdef Q_OS_WIN
+			// This activation never touched the folder — drop its captured
+			// timestamp unless a fresh activation of the same job re-captured one.
+			if (slotIt == m_runningByGroup.cend() || slotIt->jobId != jobId)
+				m_pendingDirTimestamps.remove(jobId);
+#endif
+			return true;
+		}
+	}
 
 	QStringList args;
 	const QJsonArray arr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();

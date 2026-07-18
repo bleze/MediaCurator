@@ -297,7 +297,7 @@ QString UserProfile::subtitleFormatDisplayName(const QString& id)
 QStringList UserProfile::defaultAudioFormatOrder()
 {
 	return {"atmos", "truehd", "dtsx", "dtshdma", "dtshd_hra",
-			"flac", "eac3", "dts", "ac3", "aac", "mp3"};
+			"flac", "eac3", "opus", "dts", "ac3", "aac", "vorbis", "mp3"};
 }
 
 // static
@@ -314,6 +314,8 @@ QString UserProfile::audioFormatDisplayName(const QString& id)
 		{"eac3",      "DD+"},
 		{"ac3",       "DD (AC3)"},
 		{"aac",       "AAC"},
+		{"opus",      "Opus"},
+		{"vorbis",    "Vorbis"},
 		{"mp3",       "MP3"},
 	};
 	return names.value(id, id);

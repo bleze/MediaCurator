@@ -114,6 +114,10 @@ bool RuleEngine::isRedundantAudio(const StreamRecord& s, const QList<StreamRecor
 	const int  myTier     = audioQualityTier(s);
 	const bool myDisabled = isAudioFormatDisabled(s);
 	const int  myCh       = s.channels;
+	// A format absent from the ranking (tier -1, e.g. a codec newer than this
+	// profile knows) can't be judged against the hierarchy — never remove it as
+	// codec-redundant. Exact same-format duplicates still deduplicate below.
+	const bool myUnranked = (myTier < 0);
 
 	bool hasEnabledAlt    = false;
 	bool hasBetterEnabled = false;
@@ -129,7 +133,7 @@ bool RuleEngine::isRedundantAudio(const StreamRecord& s, const QList<StreamRecor
 		if (myCh > 0 && sib.channels > 0 && sib.channels < myCh) continue;
 
 		hasEnabledAlt = true;
-		if (audioQualityTier(sib) > myTier) {
+		if (!myUnranked && audioQualityTier(sib) > myTier) {
 			hasBetterEnabled = true;
 		} else if (audioQualityTier(sib) == myTier && audioFormatId(sib) == audioFormatId(s)) {
 			// Equal-tier duplicate of the same format: keep the default-flagged one,
@@ -263,6 +267,12 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 		    || (preCls.type == TrackType::Signs && preCls.confidence >= 0.90)
 		    || s.trackType == QLatin1String("signs");
 		if (isCommentaryOrSigns) continue;
+		// Forced tracks cover foreign-language parts only — they are not a
+		// full-content alternative, so they must not count as the "regular track"
+		// that lets PreferNonSdh/Remove drop the only complete (SDH) subtitle.
+		const bool isForcedStream = s.isForced
+		                            || (preCls.type == TrackType::Forced && preCls.confidence >= 0.90);
+		if (isForcedStream) continue;
 		const bool isSdhStream = s.isHearingImpaired || s.trackType == "sdh"
 		                         || preCls.type == TrackType::Sdh
 		                         || preCls.type == TrackType::HearingImpaired;
@@ -385,8 +395,10 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 					}
 				}
 
+				// normalizeLang on both sides, same as the audio path above — a
+				// "ger"-tagged sub must match an originalLanguage stored as "deu".
 				const bool isOrigSub    = !file.originalLanguage.isEmpty() &&
-				                          s.language.compare(file.originalLanguage, Qt::CaseInsensitive) == 0 &&
+				                          normalizeLang(s.language) == normalizeLang(file.originalLanguage) &&
 				                          m_profile->keepOriginalLanguageSubtitle();
 
 				// Remove or deprioritise an SDH track in an understood language.

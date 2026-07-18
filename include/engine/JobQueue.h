@@ -87,7 +87,13 @@ private:
 		qint64    fileId          = -1;
 		qint64    estimatedSavings = 0;
 		bool      finishBusy      = false;
+		// Unique per occupySlot() call — lets a frame that suspended in a nested
+		// event loop (subtitle prefetch) detect that the slot was released or
+		// re-assigned (even to the same job) while it was blocked.
+		quint64   activation      = 0;
 	};
+
+	quint64 m_nextSlotActivation = 1;
 
 	struct DirTimestamp {
 		QDateTime origCreated;

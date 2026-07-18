@@ -582,23 +582,29 @@ void ScanWorker::run()
 		// an unchanged nested subfolder was deliberately not re-walked above (its
 		// mtime didn't move), so its files must not be treated as "missing" just
 		// because this run never visited it.
-		for (const QString& dir : changedKnownDirs) {
-			for (const auto& dbFile : db.filesUnderPath(dir)) {
-				if (QDir::cleanPath(QFileInfo(dbFile.path).absolutePath()) != dir) continue;
-				if (foundPaths.contains(dbFile.path)) continue;
-				db.deleteFile(dbFile.id);
-				emit fileRemoved(dbFile.id);
-				++removed;
+		// Both loops must be skipped on cancel (same guard as the full-scan prune
+		// below): a partially-walked folder's unvisited files aren't in foundPaths,
+		// so pruning would delete rows for files still on disk — and re-stamping
+		// the baseline would then hide the folder from every future quick scan.
+		if (!m_cancelled.loadRelaxed()) {
+			for (const QString& dir : changedKnownDirs) {
+				for (const auto& dbFile : db.filesUnderPath(dir)) {
+					if (QDir::cleanPath(QFileInfo(dbFile.path).absolutePath()) != dir) continue;
+					if (foundPaths.contains(dbFile.path)) continue;
+					db.deleteFile(dbFile.id);
+					emit fileRemoved(dbFile.id);
+					++removed;
+				}
 			}
-		}
 
-		// Re-stamp the baseline for every folder actually listed this run (both
-		// newly-discovered and re-walked-because-changed) to its current mtime, so
-		// the next quick scan's comparison starts from a fresh, accurate point.
-		// Folders that stayed on the fast (skip-without-listing) path never had
-		// their baseline invalidated, so they're deliberately left untouched here.
-		for (const QString& dir : visitedDirs)
-			db.touchDirBaseline(dir);
+			// Re-stamp the baseline for every folder actually listed this run (both
+			// newly-discovered and re-walked-because-changed) to its current mtime, so
+			// the next quick scan's comparison starts from a fresh, accurate point.
+			// Folders that stayed on the fast (skip-without-listing) path never had
+			// their baseline invalidated, so they're deliberately left untouched here.
+			for (const QString& dir : visitedDirs)
+				db.touchDirBaseline(dir);
+		}
 	} else {
 		// Discover and scan in a single pass — no pre-collection phase.
 		// FollowSymlinks is intentionally omitted to avoid infinite loops on cyclic junctions.
