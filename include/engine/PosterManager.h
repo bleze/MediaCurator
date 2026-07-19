@@ -54,6 +54,14 @@ public:
 	// regardless of this setting.
 	void setUnderstoodLanguages(const QStringList& languages);
 
+	// Days to wait before retrying a file whose status is 'no_poster' (TMDB had no
+	// match, or no API key was configured at the time). Without this, a file that
+	// never resolves gets its NFO/local-art directory re-scanned on every single
+	// launch forever — expensive and, for NAS-hosted libraries, enough to wake a
+	// sleeping drive on every startup. 0 disables the cooldown (always retry).
+	// Mirrors UserProfile::subtitleRetryCooldownDays().
+	void setRetryCooldownDays(int days);
+
 	// Enqueue a newly-scanned file for poster lookup without resetting existing data.
 	// No-op if the file already has a poster or the TMDB key is not set.
 	void enqueue(qint64 fileId);
@@ -97,6 +105,7 @@ signals:
 	void workerTmdbKeyChanged(QString key);
 	void workerWriteNfoChanged(bool enabled);
 	void workerUnderstoodLanguagesChanged(QStringList languages);
+	void workerRetryCooldownChanged(int days);
 	void workerStop();
 
 private:
@@ -115,6 +124,7 @@ private:
 	QString                m_tmdbApiKey;
 	bool                   m_writeNfoFiles = false;
 	QStringList            m_understoodLanguages;
+	int                    m_retryCooldownDays = 7;
 
 	QSet<qint64>           m_batchIds;
 	int                    m_batchTotal  = 0;

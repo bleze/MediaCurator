@@ -75,12 +75,12 @@ private:
 	QPushButton* m_btnBrowseStagingDir;
 	QLineEdit*   m_editTmdbKey;
 	QCheckBox*   m_chkWriteNfo;
+	QSpinBox*    m_spinRetryCooldown;   // shared: TMDB poster/NFO lookups + OpenSubtitles re-search
 	QLineEdit*   m_editOsApiKey;
 	QLineEdit*   m_editOsUsername;
 	QLineEdit*   m_editOsPassword;
 	QCheckBox*   m_chkAutoDownloadSubs;
 	QCheckBox*   m_chkComputeMovieHash;
-	QSpinBox*    m_spinSubtitleRetryCooldown;
 	QListWidget* m_editionTokenList;
 	QLineEdit*   m_editEditionToken;
 	QCheckBox*   m_chkAutoTrack;

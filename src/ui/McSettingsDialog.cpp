@@ -445,21 +445,6 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		"yourself, and reading every file up front slows down batch downloads. Off by default."));
 	osLayout->addWidget(m_chkComputeMovieHash);
 
-	auto* subRetryRow   = new QHBoxLayout;
-	auto* subRetryLabel = new QLabel(tr("Retry cooldown (days):"), osGroup);
-	m_spinSubtitleRetryCooldown = new QSpinBox(osGroup);
-	m_spinSubtitleRetryCooldown->setRange(0, 365);
-	m_spinSubtitleRetryCooldown->setSpecialValueText(tr("Off (always retry)"));
-	m_spinSubtitleRetryCooldown->setValue(profile->subtitleRetryCooldownDays());
-	m_spinSubtitleRetryCooldown->setToolTip(tr(
-		"How long to wait before re-searching a file that's still missing a subtitle after "
-		"a previous attempt found nothing. Without this, every scan re-searches the same\n"
-		"files OpenSubtitles has no match for. 0 disables the cooldown."));
-	subRetryRow->addWidget(subRetryLabel);
-	subRetryRow->addWidget(m_spinSubtitleRetryCooldown);
-	subRetryRow->addStretch();
-	osLayout->addLayout(subRetryRow);
-
 	auto* editionLabel = new QLabel(tr("Edition/cut tags:"), osGroup);
 	editionLabel->setToolTip(tr(
 		"Words that mark a distinct cut of a film (\"EXTENDED\", \"DIRECTORS CUT\", ...). Used to "
@@ -618,22 +603,70 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	perfPageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 4 — Other
+	// Tab 4 — Interface
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* ifacePage   = new QWidget;
+	auto* ifacePageLo = new QVBoxLayout(ifacePage);
+	ifacePageLo->setSpacing(8);
+	ifacePageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(ifacePage, tr("Interface"));
+	tabs->setTabColor(4, QColor(0x7a, 0x4a, 0xb0));
+
+	// Job Queue
+	auto* jobGroup  = new QGroupBox(tr("Job Queue"), ifacePage);
+	auto* jobLayout = new QVBoxLayout(jobGroup);
+	m_chkAutoTrack  = new QCheckBox(tr("Track running job"), jobGroup);
+	m_chkAutoTrack->setToolTip(tr(
+		"When a job starts: scroll it into view, switching the filter to Running "
+		"first if another filter is active"));
+	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
+	jobLayout->addWidget(m_chkAutoTrack);
+	ifacePageLo->addWidget(jobGroup);
+
+	// Cards
+	auto* cardsGroup  = new QGroupBox(tr("Cards"), ifacePage);
+	auto* cardsLayout = new QVBoxLayout(cardsGroup);
+
+	auto* fanartRow   = new QHBoxLayout;
+	auto* fanartLabel = new QLabel(tr("Fanart background opacity:"), cardsGroup);
+	m_sliderFanartOpacity = new QSlider(Qt::Horizontal, cardsGroup);
+	m_sliderFanartOpacity->setRange(0, 100);
+	const int initialFanartPct = AppSettings::instance().value("library/fanartOpacity", 5).toInt();
+	m_sliderFanartOpacity->setValue(initialFanartPct);
+	m_sliderFanartOpacity->setToolTip(tr(
+		"How visible the movie's fanart backdrop is behind each card. "
+		"0% hides it entirely; higher values make it more prominent."));
+	m_lblFanartOpacity = new QLabel(tr("%1%").arg(initialFanartPct), cardsGroup);
+	m_lblFanartOpacity->setMinimumWidth(36);
+	connect(m_sliderFanartOpacity, &QSlider::valueChanged, this, [this](int v) {
+		m_lblFanartOpacity->setText(tr("%1%").arg(v));
+		emit fanartOpacityChanged(v / 100.0);
+	});
+	fanartRow->addWidget(fanartLabel);
+	fanartRow->addWidget(m_sliderFanartOpacity, 1);
+	fanartRow->addWidget(m_lblFanartOpacity);
+	cardsLayout->addLayout(fanartRow);
+	ifacePageLo->addWidget(cardsGroup);
+
+	ifacePageLo->addStretch();
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 5 — Other (always last — catch-all for settings that don't fit elsewhere)
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* genPage   = new QWidget;
 	auto* genPageLo = new QVBoxLayout(genPage);
 	genPageLo->setSpacing(8);
 	genPageLo->setContentsMargins(8, 8, 8, 8);
 
-	// Scrollable: this tab has grown to five stacked groups and counting — without
-	// this, every new setting added here permanently raises the whole dialog's
-	// forced minimum height instead of just needing a scroll within the tab.
+	// Scrollable: this tab stacks several groups — without this, every new setting
+	// added here permanently raises the whole dialog's forced minimum height
+	// instead of just needing a scroll within the tab.
 	auto* genScroll = new QScrollArea;
 	genScroll->setWidget(genPage);
 	genScroll->setWidgetResizable(true);
 	genScroll->setFrameShape(QFrame::NoFrame);
 	tabs->addTab(genScroll, tr("Other"));
-	tabs->setTabColor(4, QColor(0x55, 0x55, 0x65));
+	tabs->setTabColor(5, QColor(0x55, 0x55, 0x65));
 
 	// Understood Languages
 	auto* langGroup  = new QGroupBox(tr("Understood Languages"), genPage);
@@ -657,7 +690,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	// letting this one claim leftover vertical space blew up the whole tab's —
 	// and therefore the dialog's — minimum height.
 	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-	m_langList->setMaximumHeight(120);
+	m_langList->setMaximumHeight(110);
 	for (const QString& code : profile->understoodLanguages()) {
 		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
 		                                 displayName(code), m_langList);
@@ -729,6 +762,38 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	enrichLayout->addWidget(tmdbHint);
 	genPageLo->addWidget(enrichGroup);
 
+	// Retry cooldown — shared by TMDB poster/NFO lookups and OpenSubtitles re-search,
+	// so it gets its own group rather than living under either one specifically.
+	// Explicitly not job-queue retry (a failed remux job) — that's a different
+	// concept entirely and lives in the Job Queue group below.
+	auto* retryGroup  = new QGroupBox(tr("Metadata Retry Cooldown"), genPage);
+	auto* retryLayout = new QVBoxLayout(retryGroup);
+
+	auto* retryHint = new QLabel(
+		tr("Applies to background poster, fanart, and subtitle lookups that came up empty "
+		   "— not to a failed job in the Job Queue, which is retried separately."),
+		retryGroup);
+	retryHint->setWordWrap(true);
+	retryLayout->addWidget(retryHint);
+
+	auto* retryRow   = new QHBoxLayout;
+	auto* retryLabel = new QLabel(tr("Wait before retrying (days):"), retryGroup);
+	m_spinRetryCooldown = new QSpinBox(retryGroup);
+	m_spinRetryCooldown->setRange(0, 365);
+	m_spinRetryCooldown->setSpecialValueText(tr("Off (always retry)"));
+	m_spinRetryCooldown->setValue(profile->subtitleRetryCooldownDays());
+	m_spinRetryCooldown->setToolTip(tr(
+		"How long to wait before re-checking a file that came up empty on a previous attempt "
+		"— a poster/rating TMDB had no match for, or a subtitle OpenSubtitles had nothing for. "
+		"Without this, every scan and every launch repeats the same lookup (including a local\n"
+		"folder scan for poster/NFO files) for files that were already checked and found to "
+		"have nothing. Shared by both TMDB and OpenSubtitles lookups. 0 disables the cooldown."));
+	retryRow->addWidget(retryLabel);
+	retryRow->addWidget(m_spinRetryCooldown);
+	retryRow->addStretch();
+	retryLayout->addLayout(retryRow);
+	genPageLo->addWidget(retryGroup);
+
 	// Analysis
 	auto* analysisGroup  = new QGroupBox(tr("Analysis"), genPage);
 	auto* analysisLayout = new QVBoxLayout(analysisGroup);
@@ -747,42 +812,6 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkWriteLog->setChecked(profile->writeJobLog());
 	analysisLayout->addWidget(m_chkWriteLog);
 	genPageLo->addWidget(analysisGroup);
-
-	// Job Queue
-	auto* jobGroup  = new QGroupBox(tr("Job Queue"), genPage);
-	auto* jobLayout = new QVBoxLayout(jobGroup);
-	m_chkAutoTrack  = new QCheckBox(tr("Track running job"), jobGroup);
-	m_chkAutoTrack->setToolTip(tr(
-		"When a job starts: scroll it into view, switching the filter to Running "
-		"first if another filter is active"));
-	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
-	jobLayout->addWidget(m_chkAutoTrack);
-	genPageLo->addWidget(jobGroup);
-
-	// Cards
-	auto* cardsGroup  = new QGroupBox(tr("Cards"), genPage);
-	auto* cardsLayout = new QVBoxLayout(cardsGroup);
-
-	auto* fanartRow   = new QHBoxLayout;
-	auto* fanartLabel = new QLabel(tr("Fanart background opacity:"), cardsGroup);
-	m_sliderFanartOpacity = new QSlider(Qt::Horizontal, cardsGroup);
-	m_sliderFanartOpacity->setRange(0, 100);
-	const int initialFanartPct = AppSettings::instance().value("library/fanartOpacity", 5).toInt();
-	m_sliderFanartOpacity->setValue(initialFanartPct);
-	m_sliderFanartOpacity->setToolTip(tr(
-		"How visible the movie's fanart backdrop is behind each card. "
-		"0% hides it entirely; higher values make it more prominent."));
-	m_lblFanartOpacity = new QLabel(tr("%1%").arg(initialFanartPct), cardsGroup);
-	m_lblFanartOpacity->setMinimumWidth(36);
-	connect(m_sliderFanartOpacity, &QSlider::valueChanged, this, [this](int v) {
-		m_lblFanartOpacity->setText(tr("%1%").arg(v));
-		emit fanartOpacityChanged(v / 100.0);
-	});
-	fanartRow->addWidget(fanartLabel);
-	fanartRow->addWidget(m_sliderFanartOpacity, 1);
-	fanartRow->addWidget(m_lblFanartOpacity);
-	cardsLayout->addLayout(fanartRow);
-	genPageLo->addWidget(cardsGroup);
 
 	genPageLo->addStretch();
 
@@ -972,7 +1001,7 @@ void McSettingsDialog::accept()
 	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());
 	m_profile->setAutoDownloadSubtitles(m_chkAutoDownloadSubs->isChecked());
 	m_profile->setComputeSubtitleMovieHash(m_chkComputeMovieHash->isChecked());
-	m_profile->setSubtitleRetryCooldownDays(m_spinSubtitleRetryCooldown->value());
+	m_profile->setSubtitleRetryCooldownDays(m_spinRetryCooldown->value());
 
 	QStringList editionTokens;
 	for (int i = 0; i < m_editionTokenList->count(); ++i)

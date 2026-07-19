@@ -141,12 +141,13 @@ class PosterWorker : public QObject
 public:
 	explicit PosterWorker(PosterWorkQueue* queue, const QString& tmdbApiKey,
 	                      bool writeNfoFiles, const QStringList& understoodLanguages,
-	                      QObject* parent = nullptr)
+	                      int retryCooldownDays, QObject* parent = nullptr)
 	    : QObject(parent)
 	    , m_queue(queue)
 	    , m_tmdbApiKey(tmdbApiKey)
 	    , m_writeNfoFiles(writeNfoFiles)
 	    , m_understoodLanguages(understoodLanguages)
+	    , m_retryCooldownDays(retryCooldownDays)
 	{
 		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 		m_cacheDir  = dataDir + "/posters";
@@ -188,6 +189,7 @@ public slots:
 	void setTmdbApiKey(const QString& key) { m_tmdbApiKey = key; }
 	void setWriteNfoFiles(bool enabled) { m_writeNfoFiles = enabled; }
 	void setUnderstoodLanguages(QStringList languages) { m_understoodLanguages = std::move(languages); }
+	void setRetryCooldownDays(int days) { m_retryCooldownDays = qMax(0, days); }
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
@@ -340,6 +342,21 @@ private:
 			}
 			applyTmdbInfo(info, imdbId);
 			return;
+		}
+
+		// A file TMDB never matched (or that was processed with no API key set)
+		// stays 'no_poster' with an empty display_title forever, which keeps it
+		// selected by fileIdsNeedingPosters() on every future launch. Without this
+		// cooldown, that means re-running findNfoImdbId()/findLocalArt() below —
+		// both directory listings against the file's own folder — for the same
+		// permanently-unresolved file on every single startup, which is what was
+		// waking sleeping NAS drives and adding real per-launch delay. 0 disables
+		// the cooldown (always retry).
+		if (existing && existing->status == "no_poster" && m_retryCooldownDays > 0
+		    && existing->fetchedAt > 0) {
+			const qint64 cooldownMs = qint64(m_retryCooldownDays) * 24 * 60 * 60 * 1000;
+			if (QDateTime::currentMSecsSinceEpoch() - existing->fetchedAt < cooldownMs)
+				return;
 		}
 
 		// Not fully done — resolve the imdbId (NFO first, DB fallback) and seed
@@ -825,6 +842,7 @@ private:
 	QString                m_tmdbApiKey;
 	bool                   m_writeNfoFiles = false;
 	QStringList            m_understoodLanguages;
+	int                    m_retryCooldownDays = 7;
 	QString                m_cacheDir;
 	QString                m_fanartDir;
 	bool                   m_stopping   = false;
@@ -873,7 +891,8 @@ void PosterManager::startWorkerPool()
 {
 	while (m_workers.size() < m_parallelWorkers) {
 		auto* thread = new QThread(this);
-		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey, m_writeNfoFiles, m_understoodLanguages);
+		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey, m_writeNfoFiles,
+		                                m_understoodLanguages, m_retryCooldownDays);
 		worker->moveToThread(thread);
 
 		connect(thread, &QThread::started,  worker, &PosterWorker::startProcessing);
@@ -906,6 +925,9 @@ void PosterManager::startWorkerPool()
 		        Qt::QueuedConnection);
 		connect(this, &PosterManager::workerUnderstoodLanguagesChanged,
 		        worker, &PosterWorker::setUnderstoodLanguages,
+		        Qt::QueuedConnection);
+		connect(this, &PosterManager::workerRetryCooldownChanged,
+		        worker, &PosterWorker::setRetryCooldownDays,
 		        Qt::QueuedConnection);
 		connect(this, &PosterManager::workerStop,
 		        worker, &PosterWorker::stop,
@@ -998,6 +1020,14 @@ void PosterManager::setUnderstoodLanguages(const QStringList& languages)
 	if (languages == m_understoodLanguages) return;
 	m_understoodLanguages = languages;
 	emit workerUnderstoodLanguagesChanged(languages);
+}
+
+void PosterManager::setRetryCooldownDays(int days)
+{
+	days = qMax(0, days);
+	if (days == m_retryCooldownDays) return;
+	m_retryCooldownDays = days;
+	emit workerRetryCooldownChanged(days);
 }
 
 void PosterManager::enqueue(qint64 fileId)

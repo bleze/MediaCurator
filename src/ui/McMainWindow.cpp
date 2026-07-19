@@ -340,6 +340,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 		PosterManager::instance().setWriteNfoFiles(m_profile->writeNfoFiles());
 		PosterManager::instance().setUnderstoodLanguages(m_profile->understoodLanguages());
+		PosterManager::instance().setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
 		const bool tmdbConfigured = !m_profile->tmdbApiKey().isEmpty();
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			d->setTmdbConfigured(tmdbConfigured);
@@ -560,6 +561,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	pm.start(m_profile->tmdbApiKey());
 	pm.setWriteNfoFiles(m_profile->writeNfoFiles());
 	pm.setUnderstoodLanguages(m_profile->understoodLanguages());
+	pm.setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
 	connect(&pm, &PosterManager::posterReady,
 	        m_listModel, &McFileListModel::onPosterReady);
 	connect(&pm, &PosterManager::fanartReady,
