@@ -23,8 +23,8 @@ $FFPROBE_URLS    = @(
     "https://github.com/GyanD/codexffmpeg/releases/download/$FFPROBE_VERSION/ffmpeg-$FFPROBE_VERSION-essentials_build.zip"
 )
 
-$MKV_VERSION     = "88.0"
-$MKV_URL         = "https://mkvtoolnix.download/windows/releases/88.0/mkvtoolnix-64-bit-88.0.7z"
+$MKV_VERSION     = "100.0"
+$MKV_URL         = "https://mkvtoolnix.download/windows/releases/100.0/mkvtoolnix-64-bit-100.0.7z"
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 $Root       = (Resolve-Path "$PSScriptRoot\..").Path

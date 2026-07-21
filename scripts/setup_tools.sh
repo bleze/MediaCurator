@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Pinned versions - keep in sync with setup_tools.ps1
-MKV_VERSION="88.0"
+MKV_VERSION="100.0"
 
 case "$(uname)" in
     Darwin) PLATFORM="macos" ;;
