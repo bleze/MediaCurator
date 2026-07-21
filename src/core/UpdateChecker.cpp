@@ -102,7 +102,12 @@ void UpdateChecker::onReplyFinished(QNetworkReply* reply, bool silent)
 		return;
 	}
 
-	AppSettings::instance().setValue("update/lastCheckMs", QDateTime::currentMSecsSinceEpoch());
+	// Only silent (startup) checks feed the throttle timestamp. A manual check
+	// from the Help menu must not push back the next automatic check — doing so
+	// made auto-check-on-startup appear to stop working entirely for anyone who
+	// occasionally checks manually, since every manual check reset the 24h clock.
+	if (silent)
+		AppSettings::instance().setValue("update/lastCheckMs", QDateTime::currentMSecsSinceEpoch());
 
 	const QVersionNumber latest  = parseTag(tagName);
 	const QVersionNumber current = QVersionNumber::fromString(QCoreApplication::applicationVersion());

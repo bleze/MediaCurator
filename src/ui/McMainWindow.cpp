@@ -1659,10 +1659,10 @@ void McMainWindow::completeStartup()
 
 	updateJobPanelVisibility(/*forceShow=*/true);
 
-	if (!AppSettings::instance().value("onboarding/seen", false).toBool()) {
+	if (AppSettings::instance().value("onboarding/seenVersion", 0).toInt() < McOnboardingDialog::CurrentVersion) {
 		McOnboardingDialog dlg(this);
 		dlg.exec();
-		AppSettings::instance().setValue("onboarding/seen", true);
+		AppSettings::instance().setValue("onboarding/seenVersion", McOnboardingDialog::CurrentVersion);
 	}
 
 	QTimer::singleShot(2000, this, [] { UpdateChecker::instance().check(/*silent=*/true); });
@@ -3520,11 +3520,17 @@ void McMainWindow::onAbout()
 			QString("<span style='color:#8888aa;'>%1</span>  %2").arg(key, val), dlg);
 		lbl->setTextFormat(Qt::RichText);
 		infoLayout->addWidget(lbl);
+		return lbl;
 	};
 	makeRow(tr("Author:"),        tr("Jacob Pedersen — Bleze Software"));
 	makeRow(tr("License:"),       tr("Apache 2.0 — open source, free to use and modify"));
 	makeRow(tr("Built with:"),    QString("Qt %1  ·  SQLite  ·  nlohmann/json").arg(qVersion()));
 	makeRow(tr("Bundled tools:"), tr("ffprobe (LGPL)  ·  mkvmerge, mkvpropedit (GPL, MKVToolNix)"));
+
+	auto* githubLabel = makeRow(tr("GitHub:"),
+		QStringLiteral("<a href=\"https://github.com/bleze/MediaCurator\">"
+		               "github.com/bleze/MediaCurator</a>"));
+	githubLabel->setOpenExternalLinks(true);
 
 	mainLayout->addLayout(infoLayout);
 

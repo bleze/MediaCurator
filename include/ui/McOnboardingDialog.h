@@ -16,6 +16,11 @@ class McOnboardingDialog : public QDialog
 {
 	Q_OBJECT
 public:
+	// Bump whenever pages are added or meaningfully changed. McMainWindow shows
+	// the dialog again on next startup for anyone whose stored
+	// "onboarding/seenVersion" is below this, even if they've seen an earlier tour.
+	static constexpr int CurrentVersion = 2;
+
 	explicit McOnboardingDialog(QWidget* parent = nullptr);
 
 private:

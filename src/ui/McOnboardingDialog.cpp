@@ -69,6 +69,29 @@ QLabel* sizeBarSample(QWidget* parent, int width, int height, double savedFracti
 	return lbl;
 }
 
+// Renders the actual card group badge (McCardDelegate::drawGroupChip) standalone,
+// so the onboarding preview matches the real library-card badge pixel for pixel.
+QLabel* groupChip(QWidget* parent, int group)
+{
+	constexpr int h = 20;
+	const QFont font = parent->font();
+	const int w = McCardDelegate::groupChipWidth(group, font);
+
+	const qreal dpr = parent->devicePixelRatioF();
+	QPixmap pm(qCeil(w * dpr), qCeil(h * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+
+	QPainter p(&pm);
+	McCardDelegate::drawGroupChip(&p, 0, 0, h, group, font, dpr);
+	p.end();
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
+	lbl->setFixedSize(w, h);
+	return lbl;
+}
+
 // One onboarding page: icon, bold title, body text, and an optional row of extra widgets
 // (e.g. sample badges) placed between the body and the bottom stretch.
 QWidget* buildPage(QWidget* parent, QLabel* icon, const QString& title,
@@ -149,6 +172,29 @@ McOnboardingDialog::McOnboardingDialog(QWidget* parent)
 		   "icon means. Run <b>Tools → Analyze</b> to preview the savings, then queue the job: "
 		   "the Job Queue panel and status bar track how much space you've reclaimed."),
 		{ sizeBarSample(m_stack, 220, 3, 0.10) }));
+
+	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/refresh.svg"), 56),
+		tr("Posters, fanart, and NFOs"),
+		tr("Add a free TMDB API key in <b>Tools → Settings → Other</b> and MediaCurator will "
+		   "match your movies automatically, download posters and fanart, and — if you turn it "
+		   "on — write Kodi-style .nfo files with the correct title, original title, year, and "
+		   "rating. Got the wrong match? Right-click a card to search and pick manually.")));
+
+	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/translate.svg"), 56),
+		tr("Missing subtitles? Downloaded"),
+		tr("OpenSubtitles integration finds subtitle tracks in the languages you understand and "
+		   "adds them automatically. Turn on <b>Settings → Subtitles → Automatically download "
+		   "missing subtitles after scanning</b>, or right-click any file and choose <b>Download "
+		   "Subtitles…</b> to fetch one on the spot. Works anonymously out of the box — add an "
+		   "API key in the same tab for a higher daily quota.")));
+
+	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/storage_group.svg"), 56),
+		tr("Scan multiple drives in parallel"),
+		tr("If your library spans more than one physical drive or NAS share, open <b>File → "
+		   "Manage Library Folders…</b> and give each folder a storage group. Folders in "
+		   "different groups scan and remux at the same time; folders sharing a group still run "
+		   "one at a time so a single disk never gets saturated."),
+		{ groupChip(m_stack, 1), groupChip(m_stack, 2), groupChip(m_stack, 3) }));
 
 	auto* footer = new QHBoxLayout;
 	footer->setContentsMargins(16, 0, 16, 0);
