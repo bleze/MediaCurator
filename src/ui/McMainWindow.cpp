@@ -1,4 +1,5 @@
 #include "ui/McMainWindow.h"
+#include <nlohmann/json.hpp>
 #include "core/AppSettings.h"
 #include "ui/ImdbSearchDialog.h"
 #include "ui/McFilterPanel.h"
@@ -3522,10 +3523,27 @@ void McMainWindow::onAbout()
 		infoLayout->addWidget(lbl);
 		return lbl;
 	};
-	makeRow(tr("Author:"),        tr("Jacob Pedersen — Bleze Software"));
-	makeRow(tr("License:"),       tr("Apache 2.0 — open source, free to use and modify"));
-	makeRow(tr("Built with:"),    QString("Qt %1  ·  SQLite  ·  nlohmann/json").arg(qVersion()));
-	makeRow(tr("Bundled tools:"), tr("ffprobe (LGPL)  ·  mkvmerge, mkvpropedit (GPL, MKVToolNix)"));
+	// "Built with" versions come from the actual library/header, not a hand-maintained
+	// string: Qt via qVersion() (runtime), nlohmann/json via the vendored header's own
+	// NLOHMANN_JSON_VERSION_* macros (third_party/nlohmann/json.hpp), so both track
+	// whatever's actually linked/vendored without needing to be updated here by hand.
+	const QString nlohmannVersion = QString("%1.%2.%3")
+		.arg(NLOHMANN_JSON_VERSION_MAJOR).arg(NLOHMANN_JSON_VERSION_MINOR).arg(NLOHMANN_JSON_VERSION_PATCH);
+
+	// ffprobe/mkvmerge versions are queried from the bundled binaries themselves
+	// (ExternalTools::ffprobeVersion()/mkvmergeVersion() run `-version`/`--version`),
+	// so this always reflects whatever's actually in tools/<platform>/.
+	const QString ffprobeVer  = ExternalTools::instance().ffprobeVersion();
+	const QString mkvmergeVer = ExternalTools::instance().mkvmergeVersion();
+
+	makeRow(tr("Author:"),  tr("Jacob Pedersen — Bleze Software"));
+	makeRow(tr("License:"), tr("Apache 2.0 — open source, free to use and modify"));
+	makeRow(tr("Built with:"),
+		QString("Qt %1  ·  SQLite  ·  nlohmann/json %2").arg(qVersion(), nlohmannVersion));
+	makeRow(tr("Bundled tools:"),
+		QString("ffprobe %1 (LGPL)  ·  mkvmerge %2 (GPL, MKVToolNix)")
+			.arg(ffprobeVer.isEmpty()  ? tr("(not found)") : ffprobeVer,
+			     mkvmergeVer.isEmpty() ? tr("(not found)") : mkvmergeVer));
 
 	auto* githubLabel = makeRow(tr("GitHub:"),
 		QStringLiteral("<a href=\"https://github.com/bleze/MediaCurator\">"

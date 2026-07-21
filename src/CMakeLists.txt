@@ -156,6 +156,10 @@ qt_add_executable(MediaCurator
     ${MC_HEADERS}
 )
 
+if(MSVC)
+    target_compile_options(MediaCurator PRIVATE /W4 /WX-)
+endif()
+
 set_target_properties(MediaCurator PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME        "MediaCurator"
     MACOSX_BUNDLE_GUI_IDENTIFIER     "dk.bleze.mediacurator"

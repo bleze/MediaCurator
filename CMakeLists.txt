@@ -28,7 +28,13 @@ endif()
 
 # ── MSVC-specific flags ────────────────────────────────────────────────────────
 if(MSVC)
-    add_compile_options(/W4 /WX- /utf-8 /MP)
+    # /W4 is scoped to the MediaCurator target only (src/CMakeLists.txt), not
+    # applied directory-wide here — the vendored cld2 target below sets its own
+    # /w to silence upstream warnings, and a directory-wide /W4 would still
+    # reach cld2's compile command ahead of its /w, which MSVC flags with
+    # D9025 ("overriding '/W4' with '/w'") since the two conflict on the
+    # command line.
+    add_compile_options(/utf-8 /MP)
     add_compile_definitions(_UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     # Treat angle-bracket includes (Qt, STL, third-party) as external so MSVC
     # Code Analysis does not flag issues inside third-party headers.
@@ -102,7 +108,13 @@ target_include_directories(cld2
 )
 # Vendored source we don't maintain — silence rather than patch upstream warnings.
 if(MSVC)
-    target_compile_options(cld2 PRIVATE /w)
+    # /W0 (not /w): CMake's Visual Studio generator recognizes /W<n> and writes
+    # it straight into the vcxproj's <WarningLevel> property. Plain /w gets
+    # dropped into AdditionalOptions as a raw string instead, which then sits
+    # alongside whatever WarningLevel CMake still defaults the project to —
+    # MSVC sees both on the actual command line and emits D9025 ("overriding
+    # '/W1' with '/w'") even though functionally /w still wins either way.
+    target_compile_options(cld2 PRIVATE /W0)
 else()
     target_compile_options(cld2 PRIVATE -w)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")

@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 
 #ifdef Q_OS_WIN
@@ -12,6 +13,30 @@
 #endif
 
 namespace Mc {
+
+namespace {
+// Runs `exePath args` and pulls the first capture group of `pattern` out of its
+// combined stdout+stderr — the actual bundled binary is the source of truth for
+// its own version, rather than a string we'd otherwise have to hardcode and keep
+// in sync by hand.
+QString queryToolVersion(const QString& exePath, const QStringList& args, const QRegularExpression& pattern)
+{
+	if (exePath.isEmpty() || !QFile::exists(exePath))
+		return {};
+
+	QProcess proc;
+	proc.start(exePath, args);
+	if (!proc.waitForFinished(3000)) {
+		proc.kill();
+		return {};
+	}
+
+	const QString output = QString::fromUtf8(proc.readAllStandardOutput())
+	                      + QString::fromUtf8(proc.readAllStandardError());
+	const QRegularExpressionMatch match = pattern.match(output);
+	return match.hasMatch() ? match.captured(1) : QString();
+}
+} // namespace
 
 ExternalTools& ExternalTools::instance()
 {
@@ -69,9 +94,29 @@ QString ExternalTools::vlcPath() const
 	return m_vlcPath;
 }
 
-bool    ExternalTools::validateAll()      { return true; }
-QString ExternalTools::ffprobeVersion()  const { return {}; }
-QString ExternalTools::mkvmergeVersion() const { return {}; }
+bool ExternalTools::validateAll() { return true; }
+
+QString ExternalTools::ffprobeVersion() const
+{
+	if (!m_ffprobeVersionQueried) {
+		m_ffprobeVersionQueried = true;
+		// Stop at the dotted version number itself — the gyan.dev build string
+		// continues with "-essentials_build-www.gyan.dev" etc, which we don't want.
+		m_ffprobeVersion = queryToolVersion(ffprobePath(), {"-version"},
+			QRegularExpression(QStringLiteral(R"(ffprobe version (\d+(?:\.\d+)+))")));
+	}
+	return m_ffprobeVersion;
+}
+
+QString ExternalTools::mkvmergeVersion() const
+{
+	if (!m_mkvmergeVersionQueried) {
+		m_mkvmergeVersionQueried = true;
+		m_mkvmergeVersion = queryToolVersion(mkvmergePath(), {"--version"},
+			QRegularExpression(QStringLiteral(R"(mkvmerge v(\S+))")));
+	}
+	return m_mkvmergeVersion;
+}
 
 void ExternalTools::applyBackgroundPriority(QProcess* process)
 {

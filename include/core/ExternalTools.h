@@ -46,5 +46,9 @@ private:
 	mutable QString m_mkvpropeditPath;
 	mutable QString m_vlcPath;
 	mutable bool    m_vlcSearched = false;
+	mutable QString m_ffprobeVersion;
+	mutable bool    m_ffprobeVersionQueried = false;
+	mutable QString m_mkvmergeVersion;
+	mutable bool    m_mkvmergeVersionQueried = false;
 };
 } // namespace Mc
