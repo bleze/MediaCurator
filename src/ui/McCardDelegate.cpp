@@ -1291,7 +1291,8 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original language (flag)");
 					else if (isOrig)         lines << tr("\xE2\x97\x8E  Original audio language");
 					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary");
-					if (streamIsSDH(s)) lines << tr("SDH / Hearing impaired");
+					const bool isSdhFlag = streamIsSDH(s);
+					if (isSdhFlag) lines << tr("SDH subtitle");
 					if (s.codecType == QLatin1String("video") && !s.hdrFormat.isEmpty()) {
 						QString hdr = s.hdrFormat;
 						if (s.maxCll > 0 || s.maxFall > 0)
@@ -1300,7 +1301,13 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 						if (!s.masteringDisplay.isEmpty())
 							lines << tr("Mastering display: %1").arg(s.masteringDisplay);
 					}
-					if (cls.type != TrackType::Main) {
+					// Skip types already conveyed by a flag line above (Forced/Commentary/SDH) —
+					// restating them here would just repeat the same fact a third time.
+					const bool clsAlreadyShown =
+					    (cls.type == TrackType::Forced && s.isForced)
+					    || (cls.type == TrackType::Commentary && s.isCommentary)
+					    || ((cls.type == TrackType::Sdh || cls.type == TrackType::HearingImpaired) && isSdhFlag);
+					if (cls.type != TrackType::Main && !clsAlreadyShown) {
 						QString typeName;
 						switch (cls.type) {
 						case TrackType::Commentary:      typeName = tr("Commentary");       break;

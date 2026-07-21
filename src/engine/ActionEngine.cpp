@@ -104,23 +104,27 @@ QStringList ActionEngine::buildCommand(const FileDecision& decision, const QStri
 	// every attachment silently carries the "removed" cover art straight through.
 	// Only image-typed attachments are stripped — fonts attached for styled
 	// (ASS/SSA) subtitles must survive, or subtitle rendering breaks.
+	//
+	// The --attachments/--no-attachments flag is emitted unconditionally here
+	// (not just when identifyAttachments() already found an image attachment):
+	// for non-Matroska sources (e.g. an MP4's iTunes "covr" cover art atom),
+	// mkvmerge's own identify JSON reports no attachments at all — the atom
+	// isn't one on the source side — yet mkvmerge's MP4 reader still
+	// synthesizes a genuine Matroska attachment for it in the *output*. Gating
+	// on the source already showing an image attachment missed that case and
+	// let the cover art through untouched.
 	if (coverArtRemoved && cont != QLatin1String("iso-bluray") && cont != QLatin1String("iso-dvd")) {
 		const QJsonArray attachments = identifyAttachments(mkvInput);
 		QStringList keepAttachmentIds;
-		bool anyImageAttachment = false;
 		for (const QJsonValue& v : attachments) {
 			const QJsonObject a = v.toObject();
-			if (a.value("content_type").toString().startsWith(QLatin1String("image/")))
-				anyImageAttachment = true;
-			else
+			if (!a.value("content_type").toString().startsWith(QLatin1String("image/")))
 				keepAttachmentIds << QString::number(a.value("id").toInt());
 		}
-		if (anyImageAttachment) {
-			if (keepAttachmentIds.isEmpty())
-				args << "--no-attachments";
-			else
-				args << "--attachments" << keepAttachmentIds.join(',');
-		}
+		if (keepAttachmentIds.isEmpty())
+			args << "--no-attachments";
+		else
+			args << "--attachments" << keepAttachmentIds.join(',');
 	}
 
 	args << mkvInput;

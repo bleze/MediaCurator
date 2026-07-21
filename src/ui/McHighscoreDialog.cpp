@@ -69,6 +69,7 @@ void McHighscoreDialog::rebuildTable(const QList<HighscoreEntry>& entries)
 		auto* rankItem  = new QTableWidgetItem(QString::number(row + 1));
 		auto* nameItem  = new QTableWidgetItem(e.name);
 		auto* scoreItem = new QTableWidgetItem(formatReclaimed(e.score));
+		scoreItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
 		if (e.name.compare(m_localPlayerName, Qt::CaseInsensitive) == 0) {
 			QFont bold = m_table->font();
