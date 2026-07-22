@@ -395,6 +395,10 @@ int main(int argc, char* argv[])
 		Mc::McMainWindow window;
 		activeMainWindow = &window;
 		window.attachSplash(&splash, appIcon);
+		window.setSingleInstanceLockReleaser([singleInstanceServer]() {
+			singleInstanceServer->close();
+			QLocalServer::removeServer(kSingleInstanceServerName);
+		});
 
 		rc = app.exec();
 		shutdownRequested = window.shutdownRequested();

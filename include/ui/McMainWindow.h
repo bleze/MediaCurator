@@ -12,6 +12,8 @@
 #include <QThread>
 #include <QTimer>
 
+#include <functional>
+
 #include "engine/HighscoreClient.h"
 
 class QPaintEvent;
@@ -48,6 +50,15 @@ public:
 
 	// main() hands off the splash; window stays hidden until dismissSplash().
 	void attachSplash(QSplashScreen* splash, const QIcon& appIcon = {});
+
+	// main() hands this off right after construction. closeEvent() invokes it the
+	// moment it commits to actually closing — before the slow teardown below —
+	// so the single-instance named pipe stops answering immediately instead of
+	// staying alive for this process's entire (possibly multi-second) shutdown.
+	// Otherwise a MediaCurator.exe launched by the update installer's finish page
+	// while this process is still unwinding sees a "live" instance, silently pings
+	// it, and exits — leaving nothing running until the user starts it manually.
+	void setSingleInstanceLockReleaser(std::function<void()> releaser) { m_releaseSingleInstanceLock = std::move(releaser); }
 
 	// Set once closeEvent() has actually accepted the close after the "Shut Down
 	// After" job-wait path. main() checks this after app.exec() returns and only
@@ -193,6 +204,7 @@ private:
 	bool             m_shutdownOnClose    = false;   // set by the "Quit && Shut Down" job-wait path
 	bool             m_closeOnJobFinishPending = false; // guards against stacking duplicate jobFinished->close() hooks
 	bool             m_closeHandled       = false;   // true once closeEvent() has run its teardown once
+	std::function<void()> m_releaseSingleInstanceLock;   // see setSingleInstanceLockReleaser()
 	McHighscoreBand*   m_highscoreBand       = nullptr;
 	McHighscoreDialog* m_highscoreDialog     = nullptr;
 	QTimer*            m_highscoreDebounce   = nullptr;

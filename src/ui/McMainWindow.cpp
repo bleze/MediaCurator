@@ -2165,6 +2165,11 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		m_jobQueue->cancel();
 	}
 
+	// Release the single-instance lock now, before the slow teardown below —
+	// see setSingleInstanceLockReleaser() for why this can't wait until the
+	// process actually exits.
+	if (m_releaseSingleInstanceLock) m_releaseSingleInstanceLock();
+
 	// Stop the library loader if it is still paging through the database.
 	// cancel() sets an atomic flag; the worker checks it between every file emit.
 	// DB pages are fast (< 50 ms each), so 3 s is more than enough.
