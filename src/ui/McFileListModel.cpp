@@ -142,6 +142,23 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 			if ((m_quickFilters & QF_DtsX) && e.hasDtsX) hasAudioMatch = true;
 			if (!hasAudioMatch) return false;
 		}
+
+		// Media category pills — OR within the group (Movies | TV | Docs | Misc).
+		const quint32 mediaMask = QF_Movie | QF_Tv | QF_Documentary | QF_Misc;
+		if (m_quickFilters & mediaMask) {
+			const QString t = MediaTypes::normalize(e.file.mediaType);
+			bool hasMediaMatch = false;
+			if ((m_quickFilters & QF_Movie)
+			    && t == QLatin1String(MediaTypes::Movie)) hasMediaMatch = true;
+			if ((m_quickFilters & QF_Tv)
+			    && t == QLatin1String(MediaTypes::Tv)) hasMediaMatch = true;
+			if ((m_quickFilters & QF_Documentary)
+			    && t == QLatin1String(MediaTypes::Documentary)) hasMediaMatch = true;
+			if ((m_quickFilters & QF_Misc)
+			    && (t == QLatin1String(MediaTypes::Misc)
+			        || t == QLatin1String(MediaTypes::Unknown))) hasMediaMatch = true;
+			if (!hasMediaMatch) return false;
+		}
 	}
 
 	// ── Storage group filter ──────────────────────────────────────────────────
@@ -173,21 +190,99 @@ bool McFileListModel::entryLessThan(const FileEntry& a, const FileEntry& b) cons
 	}
 }
 
-void McFileListModel::applyFilter()
+void McFileListModel::sortAllEntries()
 {
-	beginResetModel();
-	m_entries.clear();
-	m_entries.reserve(m_allEntries.size());
-	for (const auto& e : m_allEntries)
-		if (entryPassesFilter(e)) m_entries.append(e);
-
-	std::sort(m_entries.begin(), m_entries.end(),
+	std::sort(m_allEntries.begin(), m_allEntries.end(),
 	          [this](const FileEntry& a, const FileEntry& b) { return entryLessThan(a, b); });
-	m_entries.shrink_to_fit(); // release over-reserve after filter
-	endResetModel();
+}
+
+void McFileListModel::applyFilter(bool forceFullReset)
+{
+	// Build the filtered view as an order-preserving subsequence of m_allEntries.
+	// m_allEntries must already be in the active sort order (see sortAllEntries /
+	// setSortOrder / reload) so we never re-sort here — re-sorting would break the
+	// subsequence invariant the incremental diff below relies on.
+	QList<FileEntry> newEntries;
+	newEntries.reserve(m_allEntries.size());
+	for (const auto& e : m_allEntries)
+		if (entryPassesFilter(e)) newEntries.append(e);
+
+	if (forceFullReset || m_entries.isEmpty()) {
+		beginResetModel();
+		m_entries = std::move(newEntries);
+		endResetModel();
+		return;
+	}
+
+	// Diff against the previous filtered list instead of a full model reset.
+	// Matched rows keep their indices (scroll position + size cache stay warm);
+	// only pure insertions/removals are emitted. Same idea as McJobListModel.
+	QSet<qint64> newIds;
+	newIds.reserve(newEntries.size());
+	for (const auto& e : newEntries) newIds.insert(e.file.id);
+	QSet<qint64> oldIds;
+	oldIds.reserve(m_entries.size());
+	for (const auto& e : m_entries) oldIds.insert(e.file.id);
+
+	int i = 0, j = 0;
+	while (i < m_entries.size() || j < newEntries.size()) {
+		if (i < m_entries.size() && j < newEntries.size()
+		    && m_entries[i].file.id == newEntries[j].file.id) {
+			// Same file still visible — keep row; no dataChanged (filter-only).
+			++i;
+			++j;
+		} else if (i < m_entries.size() && !newIds.contains(m_entries[i].file.id)) {
+			// Batch consecutive removals for large filter flips (e.g. Movies on
+			// a mostly-movie library removes thousands of unknowns at once).
+			int end = i;
+			while (end + 1 < m_entries.size()
+			       && !newIds.contains(m_entries[end + 1].file.id))
+				++end;
+			beginRemoveRows({}, i, end);
+			m_entries.erase(m_entries.begin() + i, m_entries.begin() + end + 1);
+			endRemoveRows();
+		} else if (j < newEntries.size() && !oldIds.contains(newEntries[j].file.id)) {
+			int endJ = j;
+			while (endJ + 1 < newEntries.size()
+			       && !oldIds.contains(newEntries[endJ + 1].file.id))
+				++endJ;
+			const int count = endJ - j + 1;
+			beginInsertRows({}, i, i + count - 1);
+			for (int k = 0; k < count; ++k)
+				m_entries.insert(i + k, newEntries[j + k]);
+			endInsertRows();
+			i += count;
+			j = endJ + 1;
+		} else {
+			// Subsequence invariant broken (sort keys changed without a full
+			// re-sort of m_allEntries). Fall back to a clean rebuild.
+			beginResetModel();
+			m_entries = std::move(newEntries);
+			endResetModel();
+			return;
+		}
+	}
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+bool McFileListModel::hasClassifiedMediaTypes() const
+{
+	for (const FileEntry& e : m_allEntries) {
+		const QString t = MediaTypes::normalize(e.file.mediaType);
+		if (t != QLatin1String(MediaTypes::Unknown))
+			return true;
+	}
+	return false;
+}
+
+void McFileListModel::notifyMediaCategoriesAvailability()
+{
+	const bool has = hasClassifiedMediaTypes();
+	if (has == m_hadClassifiedMedia) return;
+	m_hadClassifiedMedia = has;
+	emit mediaCategoriesAvailabilityChanged(has);
+}
 
 void McFileListModel::reload()
 {
@@ -210,7 +305,9 @@ void McFileListModel::reload()
 	m_forcedRemovals = db.allStreamForcedRemovals();
 
 	recomputeFolderCounts();
-	applyFilter();
+	sortAllEntries();
+	applyFilter(/*forceFullReset=*/true);
+	notifyMediaCategoriesAvailability();
 
 	QApplication::restoreOverrideCursor();
 }
@@ -275,6 +372,9 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 		}
 	}
 	if (!foundInAll) m_allEntries.append(e);
+
+	// Newly loaded/updated entries may introduce the first classified type.
+	notifyMediaCategoriesAvailability();
 
 	const bool passes = entryPassesFilter(e);
 	for (int i = 0; i < m_entries.size(); ++i) {
@@ -380,9 +480,26 @@ void McFileListModel::onFanartReady(qint64 fileId, const QString& fanartPath,
 		m_fanartBatchTimer.start();
 }
 
-void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating)
+void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating,
+                                      const QString& mediaType)
 {
 	m_ratings[fileId] = rating;
+	const QString normalizedType = mediaType.isEmpty()
+	    ? QString{} : MediaTypes::normalize(mediaType);
+
+	// Keep the unfiltered set in sync so refilters don't lose the update.
+	for (auto& e : m_allEntries) {
+		if (e.file.id != fileId) continue;
+		if (!title.isEmpty()) {
+			e.file.displayTitle = title;
+			e.file.displayYear  = year;
+		}
+		if (!normalizedType.isEmpty()
+		    && normalizedType != QLatin1String(MediaTypes::Unknown))
+			e.file.mediaType = normalizedType;
+		break;
+	}
+
 	for (int row = 0; row < m_entries.size(); ++row) {
 		if (m_entries.at(row).file.id != fileId) continue;
 		auto& entry = m_entries[row];
@@ -390,10 +507,22 @@ void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int y
 			entry.file.displayTitle = title;
 			entry.file.displayYear  = year;
 		}
+		if (!normalizedType.isEmpty()
+		    && normalizedType != QLatin1String(MediaTypes::Unknown))
+			entry.file.mediaType = normalizedType;
 		const QModelIndex idx = index(row);
-		emit dataChanged(idx, idx, {DisplayTitleRole, DisplayYearRole, RatingRole});
+		emit dataChanged(idx, idx, {DisplayTitleRole, DisplayYearRole, RatingRole, FileRole});
 		break;
 	}
+
+	// Category filter may now include/exclude this file.
+	const quint32 mediaMask = QF_Movie | QF_Tv | QF_Documentary | QF_Misc;
+	if ((m_quickFilters & mediaMask) && !normalizedType.isEmpty())
+		applyFilter();
+
+	if (!normalizedType.isEmpty()
+	    && normalizedType != QLatin1String(MediaTypes::Unknown))
+		notifyMediaCategoriesAvailability();
 }
 
 void McFileListModel::onImdbIdSaved(qint64 fileId, const QString& imdbId)
@@ -462,7 +591,10 @@ void McFileListModel::setSortOrder(int order)
 {
 	if (m_sortOrder == order) return;
 	m_sortOrder = order;
-	applyFilter();
+	// Sort the master list first so applyFilter can treat the visible set as a
+	// subsequence (incremental). Full reset because every row reorders.
+	sortAllEntries();
+	applyFilter(/*forceFullReset=*/true);
 }
 
 void McFileListModel::setRatingFilter(double minRating, double maxRating)
@@ -508,6 +640,38 @@ void McFileListModel::setDisplayTitleForFile(qint64 fileId, const QString& title
 		emit dataChanged(idx, idx, { DisplayTitleRole, DisplayYearRole });
 		break;
 	}
+}
+
+void McFileListModel::setMediaTypeForFile(qint64 fileId, const QString& mediaType)
+{
+	const QString t = MediaTypes::normalize(mediaType);
+	for (auto& e : m_allEntries) {
+		if (e.file.id != fileId) continue;
+		e.file.mediaType = t;
+		break;
+	}
+	for (int row = 0; row < m_entries.size(); ++row) {
+		if (m_entries.at(row).file.id != fileId) continue;
+		m_entries[row].file.mediaType = t;
+		const QModelIndex idx = index(row);
+		emit dataChanged(idx, idx, { FileRole });
+		break;
+	}
+	const quint32 mediaMask = QF_Movie | QF_Tv | QF_Documentary | QF_Misc;
+	if (m_quickFilters & mediaMask)
+		applyFilter();
+	notifyMediaCategoriesAvailability();
+}
+
+void McFileListModel::setMediaTypeBatch(const QList<qint64>& fileIds, const QString& mediaType)
+{
+	const QString t = MediaTypes::normalize(mediaType);
+	const QSet<qint64> idSet(fileIds.begin(), fileIds.end());
+	for (auto& e : m_allEntries)
+		if (idSet.contains(e.file.id)) e.file.mediaType = t;
+	// Visible set may change under a category filter — rebuild.
+	applyFilter();
+	notifyMediaCategoriesAvailability();
 }
 
 // ── QAbstractListModel ────────────────────────────────────────────────────────

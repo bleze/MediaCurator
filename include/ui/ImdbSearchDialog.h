@@ -45,9 +45,12 @@ public:
 	QString    selectedOriginalLanguage() const;  // ISO 639-1 from TMDB; empty if not available
 	double     selectedVoteAverage()      const;
 	int        selectedVoteCount()        const;
-	int        selectedTmdbId()           const;  // TMDB movie id; 0 if none selected
-	QString    selectedOriginalTitle()    const;  // TMDB original_title; empty if not available
-	QString    selectedReleaseDate()      const;  // TMDB release_date, YYYY-MM-DD; empty if not available
+	int        selectedTmdbId()           const;  // TMDB movie/tv id; 0 if none selected
+	QString    selectedOriginalTitle()    const;  // TMDB original_title / original_name
+	QString    selectedReleaseDate()      const;  // release_date / first_air_date, YYYY-MM-DD
+	// MediaTypes::* value derived from the selected result (movie/tv/documentary).
+	// Empty if the user only typed an IMDb id without a TMDB result.
+	QString    selectedMediaType()        const;
 
 	// When set, auto-accepts if the search returns exactly one result with a valid
 	// IMDb ID. Shows the dialog normally if the result is ambiguous or the fetch fails.
@@ -66,15 +69,17 @@ private slots:
 	void onResultSelectionChanged();
 
 private:
-	// Looks the movie up directly by its known IMDb ID via TMDB's /find endpoint.
-	// Preferred over a title search whenever an ID is already on file, since a
-	// folder-name search can match the wrong movie (sequels, remakes, shared titles).
+	// Looks the title up directly by its known IMDb ID via TMDB's /find endpoint
+	// (movie_results + tv_results). Preferred over a title search whenever an ID
+	// is already on file, since a folder-name search can match the wrong entry.
 	void searchByExistingImdbId();
 
 	// Cancels the in-flight search/thumbnail/prefetch requests safely: handlers
 	// are detached before abort() so their synchronous finished() can't mutate
 	// the reply hashes mid-iteration.
 	void abortResultRequests();
+	// results items may include an injected "_mc_media_type" string ("movie"/"tv")
+	// when sourced from /find or multi-search.
 	void populateSearchResults(const QJsonArray& results, const QRegularExpressionMatch& yearMatch);
 
 protected:
@@ -123,13 +128,15 @@ private:
 	QList<QJsonObject>             m_allBackdrops;
 	QString                        m_selectedFanartPath;
 
-	void fetchPosterImages(int tmdbId, const QString& origLang);
+	// kind: "movie" or "tv" — selects the TMDB images endpoint.
+	void fetchPosterImages(int tmdbId, const QString& origLang, const QString& kind = QStringLiteral("movie"));
 	void populateGallery();
 	void populateFanartGallery();
 
 	QStringList            m_understoodLanguages;
 	QString                m_selectedTitle;
 	QString                m_selectedPosterPath;
+	QString                m_selectedMediaType;  // MediaTypes::* from last selection
 	QHash<int, QByteArray> m_thumbDataByRow;
 	QString                m_existingImdbId;
 	QString                m_existingPosterPath;

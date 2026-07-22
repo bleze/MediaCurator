@@ -453,6 +453,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.rating           = index.data(McFileListModel::RatingRole).toDouble();
 		d.displayTitle      = index.data(McFileListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McFileListModel::DisplayYearRole).toInt();
+		d.mediaType         = file.mediaType;
 		d.containerTitle    = index.data(McFileListModel::ContainerTitleRole).toString();
 		d.folderCount       = index.data(McFileListModel::FolderCountRole).toInt();
 		d.originalLanguage  = file.originalLanguage;
@@ -484,6 +485,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.storageGroup      = index.data(McJobListModel::StorageGroupRole).toInt();
 		d.displayTitle      = index.data(McJobListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McJobListModel::DisplayYearRole).toInt();
+		d.mediaType         = index.data(McJobListModel::MediaTypeRole).toString();
 		d.containerTitle    = index.data(McJobListModel::ContainerTitleRole).toString();
 		d.fanartPath        = index.data(McJobListModel::FanartRole).toString();
 		d.allStreams         = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
@@ -1711,17 +1713,60 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			rightEdge = x - 8;  // gap between rating and meta text
 		}
 
+		// Shared text baseline for duration/size and the media chip so they sit
+		// on one line (rating uses the same midY + ascent/2 convention above).
+		const QFontMetrics metaFm(metaFont);
+		const int metaBase = midY + metaFm.ascent() / 2;
+
 		// Duration · size
 		if (!metaText.isEmpty()) {
-			const QFontMetrics mfm(metaFont);
-			const int mW   = mfm.horizontalAdvance(metaText);
-			const int mBase = midY + mfm.ascent() / 2;
+			const int mW = metaFm.horizontalAdvance(metaText);
 			painter->save();
 			painter->setFont(metaFont);
 			painter->setPen(dimColor);
-			painter->drawText(rightEdge - mW, mBase, metaText);
+			painter->drawText(rightEdge - mW, metaBase, metaText);
 			painter->restore();
 			rightEdge -= mW + 8;  // gap between meta and title
+		}
+
+		// Media category chip (Movie / TV / Doc / Misc) — skip for unknown.
+		// Colours match the filter-bar pills (MediaTypes::badgeColor).
+		const QString mt = MediaTypes::normalize(d.mediaType);
+		QString typeLabel;
+		if (mt == QLatin1String(MediaTypes::Movie))
+			typeLabel = QStringLiteral("Movie");
+		else if (mt == QLatin1String(MediaTypes::Tv))
+			typeLabel = QStringLiteral("TV");
+		else if (mt == QLatin1String(MediaTypes::Documentary))
+			typeLabel = QStringLiteral("Doc");
+		else if (mt == QLatin1String(MediaTypes::Misc))
+			typeLabel = QStringLiteral("Misc");
+		const QColor typeColor = MediaTypes::badgeColor(mt);
+		if (!typeLabel.isEmpty() && typeColor.isValid()) {
+			QFont chipFont = option.font;
+			// Match metaFont size so glyph metrics line up with duration/size.
+			chipFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+			chipFont.setBold(true);
+			const QFontMetrics cfm(chipFont);
+			const int chipPadX = 5;
+			const int chipPadY = 1;
+			const int chipW    = cfm.horizontalAdvance(typeLabel) + chipPadX * 2;
+			// Pin the label to the same baseline as duration/size, then grow the
+			// pill around it — AlignCenter in a geometrically-centered rect was
+			// sitting a pixel or two high next to baseline-drawn meta text.
+			const int chipTop = metaBase - cfm.ascent() - chipPadY;
+			const int chipH   = cfm.height() + 2 * chipPadY;
+			const QRect chipRect(rightEdge - chipW, chipTop, chipW, chipH);
+			painter->save();
+			painter->setRenderHint(QPainter::Antialiasing, true);
+			painter->setPen(Qt::NoPen);
+			painter->setBrush(typeColor);
+			painter->drawRoundedRect(chipRect, 3, 3);
+			painter->setPen(Qt::white);
+			painter->setFont(chipFont);
+			painter->drawText(chipRect.left() + chipPadX, metaBase, typeLabel);
+			painter->restore();
+			rightEdge = chipRect.left() - 6;
 		}
 
 		// Smart title — fills remaining left portion

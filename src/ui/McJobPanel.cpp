@@ -381,7 +381,7 @@ void McJobPanel::setupUi()
 	m_sortCombo->setCurrentIndex(AppSettings::instance().value("jobPanel/sortMode", 0).toInt());
 	m_sortCombo->setToolTip(tr("Sort order for the job list. \"Most recently completed\" is auto-selected when viewing Done jobs."));
 
-	// ── Quick-filter pills (same codec/quality set as the library panel) ──────
+	// ── Quick-filter pills (same set as the library panel, including media type) ─
 	using QF = McFilterPanel;
 	const QColor videoColor { 0xa0, 0x50, 0x00 };
 	const QColor hdrColor   { 0x70, 0x30, 0xa0 };
@@ -404,15 +404,43 @@ void McJobPanel::setupUi()
 	filterLayout->addWidget(m_storageGroupContainer);
 	refreshStorageGroups();
 
-	const auto addPill = [&](const char* label, const QColor& color, const char* tip, quint32 flag) {
-		auto* btn = makePill(QLatin1String(label), color, filterBar);
+	const auto addPillTo = [&](QWidget* parent, QHBoxLayout* layout,
+	                           const char* label, const QColor& color, const char* tip, quint32 flag) {
+		auto* btn = makePill(QLatin1String(label), color, parent);
 		btn->setToolTip(QLatin1String(tip));
 		connect(btn, &QToolButton::toggled, this, [this, flag](bool on) {
 			m_qfFlags = on ? (m_qfFlags | flag) : (m_qfFlags & ~flag);
 			m_model->setQuickFilters(m_qfFlags);
 		});
-		filterLayout->addWidget(btn);
+		layout->addWidget(btn);
 	};
+	const auto addPill = [&](const char* label, const QColor& color, const char* tip, quint32 flag) {
+		addPillTo(filterBar, filterLayout, label, color, tip, flag);
+	};
+
+	// Media categories — hidden until at least one job file has a real type.
+	// Checked colour == on-card badge (MediaTypes::badgeColor).
+	{
+		m_mediaCategoryContainer = new QWidget(filterBar);
+		auto* mediaLay = new QHBoxLayout(m_mediaCategoryContainer);
+		mediaLay->setContentsMargins(0, 0, 0, 0);
+		mediaLay->setSpacing(4);
+		mediaLay->addWidget(vSep(m_mediaCategoryContainer));
+		addPillTo(m_mediaCategoryContainer, mediaLay, "Movies",
+		          MediaTypes::badgeColor(QLatin1String(MediaTypes::Movie)),
+		          "Movies only", QF::QF_Movie);
+		addPillTo(m_mediaCategoryContainer, mediaLay, "TV",
+		          MediaTypes::badgeColor(QLatin1String(MediaTypes::Tv)),
+		          "TV series only", QF::QF_Tv);
+		addPillTo(m_mediaCategoryContainer, mediaLay, "Docs",
+		          MediaTypes::badgeColor(QLatin1String(MediaTypes::Documentary)),
+		          "Documentaries only", QF::QF_Documentary);
+		addPillTo(m_mediaCategoryContainer, mediaLay, "Misc",
+		          MediaTypes::badgeColor(QLatin1String(MediaTypes::Misc)),
+		          "Misc / unmatched only", QF::QF_Misc);
+		m_mediaCategoryContainer->setVisible(false);
+		filterLayout->addWidget(m_mediaCategoryContainer);
+	}
 
 	filterLayout->addWidget(vSep(filterBar));
 	addPill("4K",     videoColor, "4K files only (width >= 3840)", QF::QF_4K);
@@ -1452,6 +1480,7 @@ void McJobPanel::applyStorageGroupFilter()
 void McJobPanel::refresh()
 {
 	m_model->reload();
+	setMediaCategoryFiltersVisible(m_model->hasClassifiedMediaTypes());
 	updateFooter();
 	emit jobsChanged(m_model->rowCount());
 }
@@ -1459,6 +1488,7 @@ void McJobPanel::refresh()
 void McJobPanel::refreshPaged(int limit)
 {
 	m_model->reloadPaged(limit);
+	setMediaCategoryFiltersVisible(m_model->hasClassifiedMediaTypes());
 	updateFooter();
 	emit jobsChanged(m_model->rowCount());
 }
@@ -1559,6 +1589,35 @@ void McJobPanel::setRatingForFile(qint64 fileId, double rating)
 void McJobPanel::setTitleForFile(qint64 fileId, const QString& title, int year)
 {
 	m_model->setDisplayTitleForFile(fileId, title, year);
+}
+
+void McJobPanel::setMediaTypeForFile(qint64 fileId, const QString& mediaType)
+{
+	m_model->setMediaTypeForFile(fileId, mediaType);
+	setMediaCategoryFiltersVisible(m_model->hasClassifiedMediaTypes());
+}
+
+void McJobPanel::setMediaCategoryFiltersVisible(bool visible)
+{
+	if (!m_mediaCategoryContainer) return;
+	if (m_mediaCategoryContainer->isVisible() == visible) return;
+
+	m_mediaCategoryContainer->setVisible(visible);
+
+	if (!visible) {
+		using QF = McFilterPanel;
+		const quint32 mediaMask = QF::QF_Movie | QF::QF_Tv | QF::QF_Documentary | QF::QF_Misc;
+		if (m_qfFlags & mediaMask) {
+			const auto buttons = m_mediaCategoryContainer->findChildren<QToolButton*>();
+			for (QToolButton* btn : buttons) {
+				btn->blockSignals(true);
+				btn->setChecked(false);
+				btn->blockSignals(false);
+			}
+			m_qfFlags &= ~mediaMask;
+			m_model->setQuickFilters(m_qfFlags);
+		}
+	}
 }
 
 void McJobPanel::onQueueSelected()

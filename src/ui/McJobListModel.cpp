@@ -423,6 +423,40 @@ void McJobListModel::setDisplayTitleForFile(qint64 fileId, const QString& title,
 	}
 }
 
+void McJobListModel::setMediaTypeForFile(qint64 fileId, const QString& mediaType)
+{
+	const QString t = MediaTypes::normalize(mediaType);
+	bool any = false;
+	for (auto& e : m_allEntries) {
+		if (e.job.fileId != fileId) continue;
+		e.job.mediaType = t;
+		any = true;
+	}
+	if (!any) return;
+
+	// Multiple jobs can share one file — update every visible card.
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId != fileId) continue;
+		m_entries[i].job.mediaType = t;
+		emit dataChanged(index(i), index(i), { MediaTypeRole });
+	}
+
+	using QF = McFilterPanel;
+	const quint32 mediaMask = QF::QF_Movie | QF::QF_Tv | QF::QF_Documentary | QF::QF_Misc;
+	if (m_quickFilters & mediaMask)
+		applyFilter();
+}
+
+bool McJobListModel::hasClassifiedMediaTypes() const
+{
+	for (const JobCardEntry& e : m_allEntries) {
+		const QString t = MediaTypes::normalize(e.job.mediaType);
+		if (t != QLatin1String(MediaTypes::Unknown))
+			return true;
+	}
+	return false;
+}
+
 QHash<QString, int> McJobListModel::countsByStatus() const
 {
 	QHash<QString, int> counts;
@@ -610,6 +644,23 @@ void McJobListModel::applyFilter(bool forceFullReset)
 				}
 				if (!ok) continue;
 			}
+
+			// Media category pills — OR within the group (same as library).
+			const quint32 mediaMask = QF::QF_Movie | QF::QF_Tv | QF::QF_Documentary | QF::QF_Misc;
+			if (m_quickFilters & mediaMask) {
+				const QString t = MediaTypes::normalize(e.job.mediaType);
+				bool ok = false;
+				if ((m_quickFilters & QF::QF_Movie)
+				    && t == QLatin1String(MediaTypes::Movie)) ok = true;
+				if ((m_quickFilters & QF::QF_Tv)
+				    && t == QLatin1String(MediaTypes::Tv)) ok = true;
+				if ((m_quickFilters & QF::QF_Documentary)
+				    && t == QLatin1String(MediaTypes::Documentary)) ok = true;
+				if ((m_quickFilters & QF::QF_Misc)
+				    && (t == QLatin1String(MediaTypes::Misc)
+				        || t == QLatin1String(MediaTypes::Unknown))) ok = true;
+				if (!ok) continue;
+			}
 		}
 
 		// ── Storage group filter ─────────────────────────────────────────────────
@@ -760,6 +811,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case DisplayYearRole:    return e.job.displayYear;
 	case StorageGroupRole:   return e.storageGroup;
 	case FinishedAtRole:     return e.job.finishedAt;
+	case MediaTypeRole:      return e.job.mediaType;
 	default:                   return {};
 	}
 }

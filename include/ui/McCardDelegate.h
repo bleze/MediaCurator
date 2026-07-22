@@ -158,6 +158,7 @@ private:
 		double              rating         = 0.0;   // TMDB vote_average; 0 = unknown
 		QString             displayTitle;           // TMDB/user override (Library only)
 		int                 displayYear    = 0;    // release year from TMDB, 0 = unknown (Library only)
+		QString             mediaType;              // MediaTypes::* (Library only; empty = unknown)
 		QString             containerTitle;         // ffprobe format tags title (Library only)
 		int                 folderCount    = 1;     // files sharing the same parent folder (Library only)
 		QString             originalLanguage;       // ISO 639-2 original audio language (both modes)

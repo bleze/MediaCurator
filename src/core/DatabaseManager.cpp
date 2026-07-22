@@ -465,6 +465,14 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE files ADD COLUMN subtitle_attempted_ms INTEGER DEFAULT 0");
 	}
 
+	// Migration: media category (movie / tv / documentary / misc / unknown).
+	// Filled by TMDB enrichment or user override; used by library filter pills.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN media_type TEXT NOT NULL DEFAULT 'unknown'");
+		m.exec("CREATE INDEX IF NOT EXISTS idx_files_media_type ON files(media_type)");
+	}
+
 	return true;
 }
 
@@ -591,6 +599,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.containerTitle   = q.value("container_title").toString();
 	r.displayTitle     = q.value("display_title").toString();
 	r.displayYear      = q.value("display_year").toInt();
+	r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 	r.ignored          = q.value("ignored").toInt() != 0;
 	r.subtitleAttemptedMs = q.value("subtitle_attempted_ms").toLongLong();
 	return r;
@@ -621,6 +630,7 @@ QHash<qint64, FileRecord> DatabaseManager::filesByIds(const QList<qint64>& ids) 
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
+		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
 		result[r.id] = std::move(r);
 	};
@@ -668,6 +678,7 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 	r.containerTitle   = q.value("container_title").toString();
 	r.displayTitle     = q.value("display_title").toString();
 	r.displayYear      = q.value("display_year").toInt();
+	r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 	r.ignored          = q.value("ignored").toInt() != 0;
 	return r;
 }
@@ -693,6 +704,7 @@ QList<FileRecord> DatabaseManager::allFiles() const
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
+		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
 		result.append(r);
 	}
@@ -722,6 +734,7 @@ QList<FileRecord> DatabaseManager::filesWithoutAnyJob() const
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
+		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
 		result.append(r);
 	}
@@ -773,6 +786,7 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit, int sort
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
+		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
 		result.append(r);
 	}
@@ -1638,6 +1652,15 @@ bool DatabaseManager::updateDisplayTitle(qint64 fileId, const QString& title, in
 	return q.exec();
 }
 
+bool DatabaseManager::updateMediaType(qint64 fileId, const QString& mediaType)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET media_type=? WHERE id=?");
+	q.addBindValue(MediaTypes::normalize(mediaType));
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
 bool DatabaseManager::setFileIgnored(qint64 fileId, bool ignored)
 {
 	QSqlQuery q(connection());
@@ -1790,6 +1813,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.containerTitle     = q.value("container_title").toString();
 		r.displayTitle       = q.value("display_title").toString();
 		r.displayYear        = q.value("display_year").toInt();
+		r.mediaType          = MediaTypes::normalize(q.value("media_type").toString());
 		result.append(r);
 	}
 }
@@ -1816,7 +1840,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       COALESCE(j.finished_at, 0) AS finished_at,"
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
-		"       COALESCE(f.display_year, 0) AS display_year"
+		"       COALESCE(f.display_year, 0) AS display_year,"
+		"       COALESCE(f.media_type, 'unknown') AS media_type"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -1849,7 +1874,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(j.finished_at, 0) AS finished_at,"
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
-		"       COALESCE(f.display_year, 0) AS display_year"
+		"       COALESCE(f.display_year, 0) AS display_year,"
+		"       COALESCE(f.media_type, 'unknown') AS media_type"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	// The panel's "running" filter tab means "actively running OR queued to run
@@ -1892,7 +1918,8 @@ std::optional<JobDisplayRecord> DatabaseManager::jobDisplayRecordById(qint64 job
 		"       COALESCE(j.finished_at, 0) AS finished_at,"
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
-		"       COALESCE(f.display_year, 0) AS display_year"
+		"       COALESCE(f.display_year, 0) AS display_year,"
+		"       COALESCE(f.media_type, 'unknown') AS media_type"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.id = ?"));
@@ -1922,7 +1949,8 @@ QList<JobDisplayRecord> DatabaseManager::liveJobsForPanel() const
 		"       COALESCE(j.finished_at, 0) AS finished_at,"
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
-		"       COALESCE(f.display_year, 0) AS display_year"
+		"       COALESCE(f.display_year, 0) AS display_year,"
+		"       COALESCE(f.media_type, 'unknown') AS media_type"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.status IN ('running', 'queued')"
@@ -2069,11 +2097,15 @@ QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 		        OR f.display_title IS NULL
 		        OR pc.fanart_path = ''
 		        OR pc.fanart_path IS NULL
+		        OR f.media_type IS NULL
+		        OR f.media_type = ''
+		        OR f.media_type = 'unknown'
 		   ))
 		   OR (pc.status = 'no_poster' AND (
 		           f.display_title = ''
 		        OR f.display_title IS NULL
 		        OR (pc.imdb_id != '' AND pc.vote_average = 0)
+		        OR (pc.imdb_id != '' AND (f.media_type IS NULL OR f.media_type = '' OR f.media_type = 'unknown'))
 		   ))
 		ORDER BY f.filename COLLATE NOCASE
 	)");

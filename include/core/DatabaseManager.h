@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <QColor>
 #include <QHash>
 #include <QObject>
 #include <QSqlDatabase>
@@ -11,6 +12,51 @@
 #include <optional>
 
 namespace Mc {
+
+// Media category stored on files.media_type (TMDB-derived or user override).
+// Values: "unknown" | "movie" | "tv" | "documentary" | "misc"
+namespace MediaTypes {
+inline constexpr const char* Unknown      = "unknown";
+inline constexpr const char* Movie        = "movie";
+inline constexpr const char* Tv           = "tv";
+inline constexpr const char* Documentary  = "documentary";
+inline constexpr const char* Misc         = "misc";
+
+// Classify TMDB media_type ("movie"/"tv") + genre_ids (99 = Documentary).
+[[nodiscard]] inline QString classify(const QString& tmdbMediaType, bool isDocumentary)
+{
+	if (isDocumentary)
+		return QString::fromLatin1(Documentary);
+	if (tmdbMediaType == QLatin1String("tv"))
+		return QString::fromLatin1(Tv);
+	if (tmdbMediaType == QLatin1String("movie"))
+		return QString::fromLatin1(Movie);
+	return QString::fromLatin1(Unknown);
+}
+
+[[nodiscard]] inline QString normalize(const QString& type)
+{
+	if (type.isEmpty())
+		return QString::fromLatin1(Unknown);
+	return type;
+}
+
+// Badge / filter-pill fill colours — kept here so cards and filter bars stay in sync.
+// Checked filter pills should match the on-card chip exactly.
+[[nodiscard]] inline QColor badgeColor(const QString& type)
+{
+	const QString t = normalize(type);
+	if (t == QLatin1String(Movie))
+		return QColor(0x2e, 0x7d, 0x32);   // green
+	if (t == QLatin1String(Tv))
+		return QColor(0x15, 0x65, 0xc0);   // blue
+	if (t == QLatin1String(Documentary))
+		return QColor(0x6a, 0x1b, 0x9a);   // purple
+	if (t == QLatin1String(Misc))
+		return QColor(0x5d, 0x40, 0x37);   // brown
+	return {};
+}
+} // namespace MediaTypes
 
 // Mirrors the 'files' table row
 struct FileRecord {
@@ -31,6 +77,7 @@ struct FileRecord {
 	QString     embeddedImdbId;  // IMDb ID from container tags (e.g. IMDB=tt1234567); not persisted
 	QString     displayTitle;     // TMDB/user-assigned override; preferred over all others
 	int         displayYear  = 0; // release year from TMDB (0 = unknown)
+	QString     mediaType = QStringLiteral("unknown"); // MediaTypes::* value
 	bool        ignored = false;  // user-hidden; excluded from library view by default
 	qint64      subtitleAttemptedMs = 0; // last time an OpenSubtitles lookup was attempted (0 = never)
 };
@@ -149,6 +196,7 @@ struct JobDisplayRecord {
 	QString containerTitle;   // title from ffprobe format tags; may be absent or junk
 	QString displayTitle;     // TMDB/user-assigned override; preferred over all others
 	int     displayYear = 0;  // release year from TMDB (0 = unknown)
+	QString mediaType = QStringLiteral("unknown"); // MediaTypes::* from files.media_type
 };
 
 enum class JobSortMode {
@@ -276,6 +324,7 @@ public:
 	bool recoverRunningJobs();
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
 	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
+	bool updateMediaType(qint64 fileId, const QString& mediaType);
 	bool setFileIgnored(qint64 fileId, bool ignored);
 	void deleteJobsForFile(qint64 fileId);
 	void deletePendingJobsForFile(qint64 fileId);

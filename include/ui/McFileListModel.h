@@ -63,14 +63,18 @@ public:
 
 	// Must stay in sync with McFilterPanel::QuickFilter
 	enum QuickFilter : quint32 {
-		QF_None   = 0,
-		QF_4K     = 1 << 0,
-		QF_DV     = 1 << 1,
-		QF_HDR    = 1 << 2,
-		QF_Atmos  = 1 << 3,
-		QF_TrueHD = 1 << 4,
-		QF_DtsHD  = 1 << 5,
-		QF_DtsX   = 1 << 6,
+		QF_None         = 0,
+		QF_4K           = 1 << 0,
+		QF_DV           = 1 << 1,
+		QF_HDR          = 1 << 2,
+		QF_Atmos        = 1 << 3,
+		QF_TrueHD       = 1 << 4,
+		QF_DtsHD        = 1 << 5,
+		QF_DtsX         = 1 << 6,
+		QF_Movie        = 1 << 7,
+		QF_Tv           = 1 << 8,
+		QF_Documentary  = 1 << 9,
+		QF_Misc         = 1 << 10,
 	};
 
 	enum SortOrder {
@@ -103,8 +107,17 @@ public:
 	int  totalCount() const { return m_allEntries.size(); }
 	int  sortOrder() const { return m_sortOrder; }
 
+	// True when at least one library file has a non-unknown media_type — used to
+	// show/hide the Movies/TV/Docs/Misc filter pills.
+	[[nodiscard]] bool hasClassifiedMediaTypes() const;
+
 	/** Returns the set of stream indices the user has force-marked for removal. */
 	QSet<int> forcedRemovalsFor(qint64 fileId) const { return m_forcedRemovals.value(fileId); }
+
+signals:
+	// Fired when the library goes from "no classified types" ↔ "has at least one".
+	// Filter bars use this to show/hide the Movies/TV/Docs/Misc pills.
+	void mediaCategoriesAvailabilityChanged(bool hasClassified);
 
 public slots:
 	void setFilterText(const QString& text);
@@ -119,16 +132,23 @@ public slots:
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
+	void setMediaTypeForFile(qint64 fileId, const QString& mediaType);
+	void setMediaTypeBatch(const QList<qint64>& fileIds, const QString& mediaType);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void onImdbIdSaved(qint64 fileId, const QString& imdbId);
-	void onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating);
+	void onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating,
+	                     const QString& mediaType = {});
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
 
 private:
 	bool entryPassesFilter(const FileEntry& e) const;
 	bool entryLessThan(const FileEntry& a, const FileEntry& b) const;
-	void applyFilter();
+	// forceFullReset: tear down and rebuild the view (sort-order changes). Filter-only
+	// updates use an incremental insert/remove diff so scroll position and size
+	// caches stay intact — same approach as McJobListModel.
+	void applyFilter(bool forceFullReset = false);
+	void sortAllEntries();
 	void applyEntry(const FileEntry& entry);
 	void computeDerived(FileEntry& e);
 
@@ -153,6 +173,9 @@ private:
 	int                       m_sortOrder          = SortByName;
 	double                    m_ratingMin          = 0.0;
 	double                    m_ratingMax          = 10.0;
+	bool                      m_hadClassifiedMedia = false;
+
+	void notifyMediaCategoriesAvailability();
 };
 
 } // namespace Mc

@@ -26,15 +26,24 @@ public:
 	// (and takes no space) when a single storage group is in use.
 	void refreshStorageGroups();
 
+	// Hide Movies/TV/Docs/Misc pills when the library has no classified entries
+	// (everything is still "unknown"). Active category filters are cleared on hide.
+	void setMediaCategoryFiltersVisible(bool visible);
+
 	enum QuickFilter : quint32 {
-		QF_None   = 0,
-		QF_4K     = 1 << 0,
-		QF_DV     = 1 << 1,
-		QF_HDR    = 1 << 2,
-		QF_Atmos  = 1 << 3,
-		QF_TrueHD = 1 << 4,
-		QF_DtsHD  = 1 << 5,
-		QF_DtsX   = 1 << 6,
+		QF_None         = 0,
+		QF_4K           = 1 << 0,
+		QF_DV           = 1 << 1,
+		QF_HDR          = 1 << 2,
+		QF_Atmos        = 1 << 3,
+		QF_TrueHD       = 1 << 4,
+		QF_DtsHD        = 1 << 5,
+		QF_DtsX         = 1 << 6,
+		// Media categories (OR within group when any selected)
+		QF_Movie        = 1 << 7,
+		QF_Tv           = 1 << 8,
+		QF_Documentary  = 1 << 9,
+		QF_Misc         = 1 << 10,  // misc + unknown/unmatched
 	};
 
 	enum SortOrder {
@@ -70,6 +79,10 @@ private:
 	QComboBox* m_sortCombo      = nullptr;
 	QWidget*   m_ratingSlider   = nullptr;  // RangeSlider (forward-declared as QWidget)
 	QLabel*    m_ratingLabel    = nullptr;
+
+	// Movies/TV/Docs/Misc pills + their leading separator — hidden until the
+	// library has at least one non-unknown media_type.
+	QWidget*      m_mediaCategoryContainer = nullptr;
 
 	// Storage-group chip row — lives in its own container so refreshStorageGroups()
 	// can rebuild it independently of the rest of the filter bar's layout.

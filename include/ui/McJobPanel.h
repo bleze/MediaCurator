@@ -48,6 +48,10 @@ public:
 	// when a single storage group is in use.
 	void refreshStorageGroups();
 
+	// Hide Movies/TV/Docs/Misc pills until the queue has at least one classified
+	// media type. Also called from refresh() so it tracks enrichment live.
+	void setMediaCategoryFiltersVisible(bool visible);
+
 	QComboBox* statusCombo() const { return m_statusFilter; }
 	QComboBox* sortCombo()   const { return m_sortCombo;    }
 
@@ -72,6 +76,7 @@ public slots:
 	void repaintCards();
 	void setRatingForFile(qint64 fileId, double rating);
 	void setTitleForFile(qint64 fileId, const QString& title, int year);
+	void setMediaTypeForFile(qint64 fileId, const QString& mediaType);
 
 signals:
 	void jobsChanged(int count);   // emitted after any load/remove; count = total visible rows
@@ -142,6 +147,9 @@ private:
 	QHash<qint64, JobEtaState> m_etaByJob;
 	// Set when a job is promoted to queued; consumed when Running/Queued filter is shown.
 	qint64 m_focusJobId = -1;
+
+	// Movies/TV/Docs/Misc pills + separator — hidden until a job file is classified.
+	QWidget*     m_mediaCategoryContainer = nullptr;
 
 	// Storage-group chip row — own container so refreshStorageGroups() can rebuild
 	// it independently of the rest of the filter bar's layout.

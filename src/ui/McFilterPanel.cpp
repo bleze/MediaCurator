@@ -3,6 +3,7 @@
 #include "ui/RangeSlider.h"
 #include "ui/McStorageGroupChipToggle.h"
 #include "core/AppSettings.h"
+#include "core/DatabaseManager.h"
 #include "core/StorageGroupSettings.h"
 
 #include <QColor>
@@ -165,6 +166,44 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		}
 	};
 
+	// Media categories — own container so they can be hidden when the library has
+	// no classified entries yet (all media_type = unknown). Multiple pills OR.
+	// Checked colour == on-card badge (MediaTypes::badgeColor).
+	{
+		m_mediaCategoryContainer = new QWidget(this);
+		auto* mediaLay = new QHBoxLayout(m_mediaCategoryContainer);
+		mediaLay->setContentsMargins(0, 0, 0, 0);
+		mediaLay->setSpacing(4);
+		mediaLay->addWidget(vSep(m_mediaCategoryContainer));
+		struct MediaPillDef {
+			const char* label;
+			quint32     flag;
+			const char* type;   // MediaTypes::* for badgeColor
+			QString     tip;
+		};
+		const MediaPillDef mediaGroup[] = {
+			{ "Movies", QF_Movie,       MediaTypes::Movie,
+			  QStringLiteral("Show movies only") },
+			{ "TV",     QF_Tv,          MediaTypes::Tv,
+			  QStringLiteral("Show TV series only") },
+			{ "Docs",   QF_Documentary, MediaTypes::Documentary,
+			  QStringLiteral("Show documentaries only") },
+			{ "Misc",   QF_Misc,        MediaTypes::Misc,
+			  QStringLiteral("Show misc / unmatched files only") },
+		};
+		for (const auto& pd : mediaGroup) {
+			auto* btn = makePill(QLatin1String(pd.label),
+			                     MediaTypes::badgeColor(QLatin1String(pd.type)),
+			                     m_mediaCategoryContainer);
+			btn->setToolTip(pd.tip);
+			const quint32 f = pd.flag;
+			connect(btn, &QToolButton::toggled, this, [this, f](bool on) { onPillToggled(f, on); });
+			mediaLay->addWidget(btn);
+		}
+		m_mediaCategoryContainer->setVisible(false);  // until library has classified types
+		lay->addWidget(m_mediaCategoryContainer);
+	}
+
 	const PillDef resGroup[] = {
 		{ "4K", QF_4K, QStringLiteral("Show only 4K files (width ≥ 3840)") },
 	};
@@ -238,6 +277,31 @@ void McFilterPanel::onPillToggled(quint32 flag, bool on)
 	if (on) m_activeFilters |= flag;
 	else    m_activeFilters &= ~flag;
 	emit quickFiltersChanged(m_activeFilters);
+}
+
+void McFilterPanel::setMediaCategoryFiltersVisible(bool visible)
+{
+	if (!m_mediaCategoryContainer) return;
+	if (m_mediaCategoryContainer->isVisible() == visible) return;
+
+	m_mediaCategoryContainer->setVisible(visible);
+
+	if (!visible) {
+		// Drop any active category bits so a later hide doesn't leave a stuck filter
+		// that matches nothing once types disappear (or were never present).
+		const quint32 mediaMask = QF_Movie | QF_Tv | QF_Documentary | QF_Misc;
+		if (m_activeFilters & mediaMask) {
+			// Uncheck pills without re-emitting per-toggle; one emit at the end.
+			const auto buttons = m_mediaCategoryContainer->findChildren<QToolButton*>();
+			for (QToolButton* btn : buttons) {
+				btn->blockSignals(true);
+				btn->setChecked(false);
+				btn->blockSignals(false);
+			}
+			m_activeFilters &= ~mediaMask;
+			emit quickFiltersChanged(m_activeFilters);
+		}
+	}
 }
 
 void McFilterPanel::refreshStorageGroups()

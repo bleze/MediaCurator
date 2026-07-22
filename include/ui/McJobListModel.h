@@ -50,6 +50,7 @@ public:
 		DisplayYearRole       = Qt::UserRole + 25,  // int release year from TMDB (0 = unknown)
 		StorageGroupRole      = Qt::UserRole + 26,  // int 1-4 — see StorageGroupSettings
 		FinishedAtRole        = Qt::UserRole + 27,  // qint64 epoch seconds job last left "running"; 0 if never
+		MediaTypeRole         = Qt::UserRole + 28,  // QString MediaTypes::* (movie/tv/documentary/misc/unknown)
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -71,6 +72,9 @@ public:
 
 	int jobCount()  const { return m_entries.size(); }
 	int totalCount() const { return m_allEntries.size(); }
+
+	// True when at least one job's file has a non-unknown media_type.
+	[[nodiscard]] bool hasClassifiedMediaTypes() const;
 
 	/** Count of jobs per status string across the full (unfiltered) list. */
 	QHash<QString, int> countsByStatus() const;
@@ -120,6 +124,7 @@ public slots:
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
+	void setMediaTypeForFile(qint64 fileId, const QString& mediaType);
 	void updateProgress(qint64 jobId, int percent);
 	void updateOutputSize(qint64 jobId, qint64 bytes);
 	void updatePhase(qint64 jobId, const QString& label);

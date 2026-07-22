@@ -579,6 +579,13 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
 	        m_listModel, &McFileListModel::onTmdbDataReady);
+	// Keep job-card media types (and category pills) current during enrichment.
+	connect(&pm, &PosterManager::tmdbDataReady, this,
+	        [this](qint64 fileId, const QString&, int, double, const QString& mediaType) {
+		if (mediaType.isEmpty() || mediaType == QLatin1String(MediaTypes::Unknown))
+			return;
+		m_jobPanel->setMediaTypeForFile(fileId, mediaType);
+	});
 	connect(&pm, &PosterManager::batchProgressChanged, this, [this](int done, int total) {
 		m_posterProgressBar->setRange(0, total);
 		m_posterProgressBar->setValue(done);
@@ -753,6 +760,12 @@ void McMainWindow::setupUi()
 					m_listModel->setDisplayTitleForFile(file.id, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(file.id, title, dlg.selectedYear());
 				}
+				const QString mediaType = dlg.selectedMediaType();
+				if (!mediaType.isEmpty() && mediaType != QLatin1String(MediaTypes::Unknown)) {
+					DatabaseManager::instance().updateMediaType(file.id, mediaType);
+					m_listModel->setMediaTypeForFile(file.id, mediaType);
+					m_jobPanel->setMediaTypeForFile(file.id, mediaType);
+				}
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -924,6 +937,37 @@ void McMainWindow::setupUi()
 			});
 		}
 
+		// Set Category — manual override when TMDB is wrong or unmatched.
+		{
+			auto* catMenu = menu.addMenu(tr("Set &Category"));
+			const QString currentType = MediaTypes::normalize(file.mediaType);
+			struct CatOpt { const char* type; const char* label; };
+			const CatOpt cats[] = {
+				{ MediaTypes::Movie,       "Movie" },
+				{ MediaTypes::Tv,          "TV Series" },
+				{ MediaTypes::Documentary, "Documentary" },
+				{ MediaTypes::Misc,        "Misc" },
+				{ MediaTypes::Unknown,     "Unknown" },
+			};
+			for (const CatOpt& c : cats) {
+				auto* act = catMenu->addAction(tr(c.label));
+				act->setCheckable(true);
+				act->setChecked(currentType == QLatin1String(c.type));
+				const QString typeStr = QString::fromLatin1(c.type);
+				connect(act, &QAction::triggered, this, [this, selectedFileIds, typeStr] {
+					auto& db = DatabaseManager::instance();
+					for (qint64 fid : selectedFileIds) {
+						db.updateMediaType(fid, typeStr);
+						m_jobPanel->setMediaTypeForFile(fid, typeStr);
+					}
+					m_listModel->setMediaTypeBatch(selectedFileIds, typeStr);
+					m_statusLabel->setText(tr("Set category to “%1” for %2 file(s)")
+					    .arg(typeStr, QString::number(selectedFileIds.size())));
+					m_listView->viewport()->repaint();
+				});
+			}
+		}
+
 		menu.addSeparator();
 
 		const QString refreshPosterLabel = selectedFileIds.size() > 1
@@ -1083,6 +1127,12 @@ void McMainWindow::setupUi()
 					m_listModel->setDisplayTitleForFile(f.id, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(f.id, title, dlg.selectedYear());
 				}
+				const QString mediaType = dlg.selectedMediaType();
+				if (!mediaType.isEmpty() && mediaType != QLatin1String(MediaTypes::Unknown)) {
+					DatabaseManager::instance().updateMediaType(f.id, mediaType);
+					m_listModel->setMediaTypeForFile(f.id, mediaType);
+					m_jobPanel->setMediaTypeForFile(f.id, mediaType);
+				}
 			}
 			m_listView->viewport()->repaint();
 			// onPosterReady() calls applyFilter() (beginResetModel) synchronously when
@@ -1201,6 +1251,14 @@ void McMainWindow::setupUi()
 	        m_listModel, &McFileListModel::setRatingFilter);
 	connect(m_filterPanel, &McFilterPanel::storageGroupFilterChanged,
 	        m_listModel, &McFileListModel::setStorageGroupFilter);
+	// Hide Movies/TV/Docs/Misc until the library has at least one classified type.
+	connect(m_listModel, &McFileListModel::mediaCategoriesAvailabilityChanged,
+	        m_filterPanel, &McFilterPanel::setMediaCategoryFiltersVisible);
+	// Also keep the job queue pills in sync when enrichment classifies a file.
+	connect(m_listModel, &McFileListModel::mediaCategoriesAvailabilityChanged,
+	        this, [this](bool has) {
+		if (has) m_jobPanel->setMediaCategoryFiltersVisible(true);
+	});
 
 	auto* topWidget = new QWidget(this);
 	auto* topLayout = new QVBoxLayout(topWidget);
@@ -1332,6 +1390,12 @@ void McMainWindow::setupUi()
 					m_listModel->setDisplayTitleForFile(fileId, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(fileId, title, dlg.selectedYear());
 				}
+				const QString mediaType = dlg.selectedMediaType();
+				if (!mediaType.isEmpty() && mediaType != QLatin1String(MediaTypes::Unknown)) {
+					DatabaseManager::instance().updateMediaType(fileId, mediaType);
+					m_listModel->setMediaTypeForFile(fileId, mediaType);
+					m_jobPanel->setMediaTypeForFile(fileId, mediaType);
+				}
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -1399,6 +1463,12 @@ void McMainWindow::setupUi()
 					DatabaseManager::instance().updateDisplayTitle(fileId, title, dlg.selectedYear());
 					m_listModel->setDisplayTitleForFile(fileId, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(fileId, title, dlg.selectedYear());
+				}
+				const QString mediaType = dlg.selectedMediaType();
+				if (!mediaType.isEmpty() && mediaType != QLatin1String(MediaTypes::Unknown)) {
+					DatabaseManager::instance().updateMediaType(fileId, mediaType);
+					m_listModel->setMediaTypeForFile(fileId, mediaType);
+					m_jobPanel->setMediaTypeForFile(fileId, mediaType);
 				}
 			}
 		}

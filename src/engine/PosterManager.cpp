@@ -194,7 +194,7 @@ public slots:
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
 	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
-	void tmdbDataReady(qint64 fileId, QString title, int year, double rating);
+	void tmdbDataReady(qint64 fileId, QString title, int year, double rating, QString mediaType);
 	void imdbIdSaved(qint64 fileId, QString imdbId);
 	// Fired once per file after processFile() returns, regardless of outcome —
 	// drives PosterManager's batch-refresh progress tracking.
@@ -244,13 +244,27 @@ private:
 		// Helper: persist TMDB data from a TmdbInfo result, writing .nfo for durability.
 		// Also emits tmdbDataReady so the UI updates immediately without a DB round-trip.
 		auto applyTmdbInfo = [&](const TmdbInfo& info, const QString& resolvedImdbId) {
+			// Only auto-fill category when unset — never clobber a user override
+			// (Set Category menu). Dialog accepts always write via McMainWindow.
+			QString appliedMediaType;
+			if (!info.mediaType.isEmpty()
+			    && info.mediaType != QLatin1String(MediaTypes::Unknown)
+			    && (fileOpt->mediaType.isEmpty()
+			        || fileOpt->mediaType == QLatin1String(MediaTypes::Unknown))) {
+				DatabaseManager::instance().updateMediaType(fileId, info.mediaType);
+				appliedMediaType = info.mediaType;
+			}
 			if (!info.title.isEmpty()) {
 				if (fileOpt->displayTitle.isEmpty())
 					DatabaseManager::instance().updateDisplayTitle(fileId, info.title, info.year);
-				emit tmdbDataReady(fileId, info.title, info.year, info.voteAverage);
+			}
+			if (!info.title.isEmpty() || !appliedMediaType.isEmpty()) {
+				emit tmdbDataReady(fileId, info.title, info.year, info.voteAverage, appliedMediaType);
 			}
 			// Write .nfo so imdbId (plus whatever TMDB metadata we have) survives
 			// future DB deletions — opt-in, and only for a not-yet-existing .nfo.
+			// TV still gets a movie-style NFO for now (IMDb/title tags); full tvshow
+			// NFO support can land later.
 			if (m_writeNfoFiles && !resolvedImdbId.isEmpty()
 			    && !QFile::exists(NfoParser::nfoPathFor(filePath))) {
 				NfoMovieMeta meta;
@@ -276,10 +290,12 @@ private:
 		if (existing && existing->status == "done"
 		    && !existing->imagePath.isEmpty()
 		    && QFile::exists(existing->imagePath)) {
-			const bool needsRating = existing->voteAverage <= 0.0;
-			const bool needsTitle  = fileOpt->displayTitle.isEmpty();
-			const bool needsNfo    = m_writeNfoFiles && !QFile::exists(NfoParser::nfoPathFor(filePath));
-			bool needsFanart       = existing->fanartPath.isEmpty()
+			const bool needsRating    = existing->voteAverage <= 0.0;
+			const bool needsTitle     = fileOpt->displayTitle.isEmpty();
+			const bool needsMediaType = fileOpt->mediaType.isEmpty()
+			    || fileOpt->mediaType == QLatin1String(MediaTypes::Unknown);
+			const bool needsNfo       = m_writeNfoFiles && !QFile::exists(NfoParser::nfoPathFor(filePath));
+			bool needsFanart          = existing->fanartPath.isEmpty()
 			                         || !QFile::exists(existing->fanartPath);
 
 			QString imdbId = existing->imdbId;
@@ -301,7 +317,7 @@ private:
 				}
 			}
 
-			if (!needsRating && !needsTitle && !needsNfo && !needsFanart) return;
+			if (!needsRating && !needsTitle && !needsMediaType && !needsNfo && !needsFanart) return;
 
 			// Something is still missing — only now fall back to the NFO file
 			// for an imdbId the DB doesn't already have.
@@ -404,7 +420,8 @@ private:
 					// Poster named by baseStem — no imdbId known; try title search to recover it.
 					const auto [title, yearHint] = bestTitleAndYear(*fileOpt);
 					if (!title.isEmpty()) {
-						const TmdbInfo info = fetchTmdbInfoByTitle(title, yearHint);
+						const bool preferTv = pathLooksLikeTv(filePath);
+						const TmdbInfo info = fetchTmdbInfoByTitle(title, yearHint, preferTv);
 						if (!info.imdbId.isEmpty()) {
 							rec.imdbId      = info.imdbId;
 							rec.voteAverage = info.voteAverage;
@@ -449,7 +466,7 @@ private:
 		} else {
 			const auto [title, yearHint] = bestTitleAndYear(*fileOpt);
 			if (!title.isEmpty())
-				info = fetchTmdbInfoByTitle(title, yearHint);
+				info = fetchTmdbInfoByTitle(title, yearHint, pathLooksLikeTv(filePath));
 			if (!info.imdbId.isEmpty())
 				imdbId = info.imdbId;
 		}
@@ -612,9 +629,28 @@ private:
 		int     year        = 0;
 		QString imdbId;     // populated by fetchTmdbInfoByTitle; caller already has it for fetchTmdbInfo
 		int     tmdbId        = 0;
-		QString originalTitle; // TMDB's original_title — language-independent
+		QString originalTitle; // TMDB's original_title / original_name — language-independent
 		QString releaseDate;   // full YYYY-MM-DD, for <premiered>
+		QString mediaType;     // MediaTypes::* (movie/tv/documentary)
+		bool    isTv        = false; // true → use /tv/* endpoints for localized title / external ids
 	};
+
+	// TMDB genre id 99 = Documentary (movies and TV).
+	static constexpr int kGenreDocumentary = 99;
+
+	static bool jsonHasGenre(const QJsonObject& obj, int genreId)
+	{
+		for (const QJsonValue& v : obj[QStringLiteral("genre_ids")].toArray()) {
+			if (v.toInt() == genreId)
+				return true;
+		}
+		// /movie/{id} and /tv/{id} return genres as [{id,name}, ...] not genre_ids
+		for (const QJsonValue& v : obj[QStringLiteral("genres")].toArray()) {
+			if (v.toObject()[QStringLiteral("id")].toInt() == genreId)
+				return true;
+		}
+		return false;
+	}
 
 	// UserProfile::understoodLanguages(), in priority order, converted to the
 	// ISO 639-1 codes TMDB's `language` query param expects. Unmapped/duplicate
@@ -630,50 +666,71 @@ private:
 		return out;
 	}
 
-	static TmdbInfo tmdbInfoFromJson(const QJsonObject& obj, const QString& imdbId)
+	static TmdbInfo tmdbInfoFromMovieJson(const QJsonObject& obj, const QString& imdbId)
 	{
-		const int year = obj["release_date"].toString().left(4).toInt();
-		return { obj["poster_path"].toString(),
-		         obj["backdrop_path"].toString(),
-		         obj["vote_average"].toDouble(),
-		         obj["vote_count"].toInt(),
-		         obj["title"].toString(),
-		         year,
-		         imdbId,
-		         obj["id"].toInt(),
-		         obj["original_title"].toString(),
-		         obj["release_date"].toString() };
+		const QString releaseDate = obj[QStringLiteral("release_date")].toString();
+		const int year = releaseDate.left(4).toInt();
+		TmdbInfo info;
+		info.posterPath    = obj[QStringLiteral("poster_path")].toString();
+		info.backdropPath  = obj[QStringLiteral("backdrop_path")].toString();
+		info.voteAverage   = obj[QStringLiteral("vote_average")].toDouble();
+		info.voteCount     = obj[QStringLiteral("vote_count")].toInt();
+		info.title         = obj[QStringLiteral("title")].toString();
+		info.year          = year;
+		info.imdbId        = imdbId;
+		info.tmdbId        = obj[QStringLiteral("id")].toInt();
+		info.originalTitle = obj[QStringLiteral("original_title")].toString();
+		info.releaseDate   = releaseDate;
+		info.isTv          = false;
+		info.mediaType     = MediaTypes::classify(
+		    QStringLiteral("movie"), jsonHasGenre(obj, kGenreDocumentary));
+		return info;
 	}
 
-	// Localized <title> lookup, kept strictly separate from art/rating/id
-	// resolution: TMDB's /movie/{id} (and /find, /search) endpoints can return a
-	// NULL poster_path/backdrop_path when a `language` param is attached and no
-	// image happens to be tagged for that language — it does not silently fall
-	// back to the generic art. Fetching this from a dedicated call, by tmdbId
-	// (so it's guaranteed to be the same movie, unlike re-running /search/movie
-	// per language), means a missing translation can never cost us the poster.
-	// Tries each understood language in priority order, stopping at the first
-	// one that returns anything at all — not the first one that "looks
-	// translated" (TMDB already falls back to the original title internally
-	// when it has no translation, so that's a legitimate result for the
-	// higher-priority language, not a reason to keep searching).
-	QString fetchLocalizedTitle(int tmdbId, const QStringList& langs)
+	static TmdbInfo tmdbInfoFromTvJson(const QJsonObject& obj, const QString& imdbId)
 	{
+		// TV uses name / original_name / first_air_date instead of title / release_date.
+		const QString airDate = obj[QStringLiteral("first_air_date")].toString();
+		const int year = airDate.left(4).toInt();
+		TmdbInfo info;
+		info.posterPath    = obj[QStringLiteral("poster_path")].toString();
+		info.backdropPath  = obj[QStringLiteral("backdrop_path")].toString();
+		info.voteAverage   = obj[QStringLiteral("vote_average")].toDouble();
+		info.voteCount     = obj[QStringLiteral("vote_count")].toInt();
+		info.title         = obj[QStringLiteral("name")].toString();
+		info.year          = year;
+		info.imdbId        = imdbId;
+		info.tmdbId        = obj[QStringLiteral("id")].toInt();
+		info.originalTitle = obj[QStringLiteral("original_name")].toString();
+		info.releaseDate   = airDate;
+		info.isTv          = true;
+		info.mediaType     = MediaTypes::classify(
+		    QStringLiteral("tv"), jsonHasGenre(obj, kGenreDocumentary));
+		return info;
+	}
+
+	// Localized title lookup, kept separate from art/rating/id resolution so a
+	// language-tagged request can never cost us the poster (TMDB returns NULL
+	// image paths when no language-tagged art exists).
+	QString fetchLocalizedTitle(int tmdbId, bool isTv, const QStringList& langs)
+	{
+		const QString kind = isTv ? QStringLiteral("tv") : QStringLiteral("movie");
+		const QString titleKey = isTv ? QStringLiteral("name") : QStringLiteral("title");
 		for (const QString& lang : langs) {
 			QByteArray data;
 			if (!fetchHttp(QUrl(QStringLiteral(
-			        "https://api.themoviedb.org/3/movie/%1?api_key=%2&language=%3")
-			        .arg(tmdbId).arg(m_tmdbApiKey, lang)), data))
+			        "https://api.themoviedb.org/3/%1/%2?api_key=%3&language=%4")
+			        .arg(kind).arg(tmdbId).arg(m_tmdbApiKey, lang)), data))
 				continue;
-			const QString localizedTitle = QJsonDocument::fromJson(data).object()["title"].toString();
+			const QString localizedTitle =
+			    QJsonDocument::fromJson(data).object()[titleKey].toString();
 			if (!localizedTitle.isEmpty())
 				return localizedTitle;
 		}
 		return {};
 	}
 
-	// Look up by known IMDb ID — single unlocalized call for art/rating/ids,
-	// then an optional localized-title refinement (see fetchLocalizedTitle()).
+	// Look up by known IMDb ID — checks movie_results then tv_results.
 	TmdbInfo fetchTmdbInfo(const QString& imdbId)
 	{
 		const QUrl url(QStringLiteral(
@@ -683,23 +740,30 @@ private:
 		QByteArray data;
 		if (!fetchHttp(url, data)) return {};
 
-		const QJsonArray results = QJsonDocument::fromJson(data)["movie_results"].toArray();
-		if (results.isEmpty()) return {};
+		const QJsonObject root = QJsonDocument::fromJson(data).object();
+		const QJsonArray movies = root[QStringLiteral("movie_results")].toArray();
+		const QJsonArray tvs    = root[QStringLiteral("tv_results")].toArray();
 
-		TmdbInfo info = tmdbInfoFromJson(results.first().toObject(), imdbId);
-		const QString localizedTitle = fetchLocalizedTitle(info.tmdbId, preferredIso1Languages());
+		TmdbInfo info;
+		if (!movies.isEmpty())
+			info = tmdbInfoFromMovieJson(movies.first().toObject(), imdbId);
+		else if (!tvs.isEmpty())
+			info = tmdbInfoFromTvJson(tvs.first().toObject(), imdbId);
+		else
+			return {};
+
+		const QString localizedTitle =
+		    fetchLocalizedTitle(info.tmdbId, info.isTv, preferredIso1Languages());
 		if (!localizedTitle.isEmpty())
 			info.title = localizedTitle;
 		return info;
 	}
 
-	// Search TMDB by movie title.
-	// With a year hint: take the first result whose release year matches.
-	// Without a year hint (or when year-search finds no match): take TMDB's
-	// top relevance-ranked result — works for the vast majority of mainstream titles.
-	TmdbInfo fetchTmdbInfoByTitle(const QString& title, int yearHint = 0)
+	// Search TMDB by title (movies and/or TV). preferTv flips which endpoint is
+	// tried first — used when path heuristics suggest a series (S01E02, Season, …).
+	TmdbInfo fetchTmdbInfoByTitle(const QString& title, int yearHint = 0, bool preferTv = false)
 	{
-		auto trySearch = [&](int year) -> TmdbInfo {
+		auto tryMovieSearch = [&](int year) -> TmdbInfo {
 			const QByteArray encoded = QUrl::toPercentEncoding(title);
 			QString urlStr = QStringLiteral(
 			    "https://api.themoviedb.org/3/search/movie?query=%1&api_key=%2")
@@ -713,8 +777,6 @@ private:
 			const QJsonArray results = QJsonDocument::fromJson(data)["results"].toArray();
 			if (results.isEmpty()) return {};
 
-			// With year: take the first result whose release year matches exactly.
-			// Without year: trust TMDB's popularity ranking and take the top result.
 			QJsonObject obj;
 			if (year > 0) {
 				for (const QJsonValue& v : results) {
@@ -722,13 +784,10 @@ private:
 					if (ry == year) { obj = v.toObject(); break; }
 				}
 			}
-			// No year match (or no year hint): take the top relevance-ranked result.
 			if (obj.isEmpty())
 				obj = results.first().toObject();
 
 			const int tmdbId = obj["id"].toInt();
-
-			// Resolve IMDb ID via external_ids (second lightweight call, language-independent).
 			QString imdbId;
 			{
 				QByteArray extData;
@@ -738,21 +797,74 @@ private:
 					imdbId = QJsonDocument::fromJson(extData)["imdb_id"].toString();
 			}
 			if (imdbId.isEmpty()) return {};
-
-			return tmdbInfoFromJson(obj, imdbId);
+			return tmdbInfoFromMovieJson(obj, imdbId);
 		};
 
-		// Try with year hint first; fall back to year-less search only if no hint.
-		TmdbInfo info = yearHint > 0 ? trySearch(yearHint) : TmdbInfo{};
+		auto tryTvSearch = [&](int year) -> TmdbInfo {
+			const QByteArray encoded = QUrl::toPercentEncoding(title);
+			QString urlStr = QStringLiteral(
+			    "https://api.themoviedb.org/3/search/tv?query=%1&api_key=%2")
+			    .arg(QString::fromLatin1(encoded), m_tmdbApiKey);
+			if (year > 0)
+				urlStr += QStringLiteral("&first_air_date_year=%1").arg(year);
+
+			QByteArray data;
+			if (!fetchHttp(QUrl(urlStr), data)) return {};
+
+			const QJsonArray results = QJsonDocument::fromJson(data)["results"].toArray();
+			if (results.isEmpty()) return {};
+
+			QJsonObject obj;
+			if (year > 0) {
+				for (const QJsonValue& v : results) {
+					const int ry = v.toObject()["first_air_date"].toString().left(4).toInt();
+					if (ry == year) { obj = v.toObject(); break; }
+				}
+			}
+			if (obj.isEmpty())
+				obj = results.first().toObject();
+
+			const int tmdbId = obj["id"].toInt();
+			QString imdbId;
+			{
+				QByteArray extData;
+				if (fetchHttp(QUrl(QStringLiteral(
+				        "https://api.themoviedb.org/3/tv/%1/external_ids?api_key=%2")
+				        .arg(tmdbId).arg(m_tmdbApiKey)), extData))
+					imdbId = QJsonDocument::fromJson(extData)["imdb_id"].toString();
+			}
+			if (imdbId.isEmpty()) return {};
+			return tmdbInfoFromTvJson(obj, imdbId);
+		};
+
+		auto runPrimary = [&](bool tv) -> TmdbInfo {
+			TmdbInfo info = yearHint > 0
+			    ? (tv ? tryTvSearch(yearHint) : tryMovieSearch(yearHint))
+			    : TmdbInfo{};
+			if (info.imdbId.isEmpty())
+				info = tv ? tryTvSearch(0) : tryMovieSearch(0);
+			return info;
+		};
+
+		TmdbInfo info = runPrimary(preferTv);
 		if (info.imdbId.isEmpty())
-			info = trySearch(0);
+			info = runPrimary(!preferTv);
 		if (info.imdbId.isEmpty())
 			return info;
 
-		const QString localizedTitle = fetchLocalizedTitle(info.tmdbId, preferredIso1Languages());
+		const QString localizedTitle =
+		    fetchLocalizedTitle(info.tmdbId, info.isTv, preferredIso1Languages());
 		if (!localizedTitle.isEmpty())
 			info.title = localizedTitle;
 		return info;
+	}
+
+	// Path/filename heuristics that strongly suggest a TV episode rather than a movie.
+	static bool pathLooksLikeTv(const QString& path)
+	{
+		static const QRegularExpression re(
+		    QStringLiteral(R"((?i)(?:[\\/]s\d{1,2}e\d{1,3}\b|s\d{1,2}e\d{1,3}|season[\s._-]?\d{1,2}|episode[\s._-]?\d{1,3}))"));
+		return re.match(path).hasMatch();
 	}
 
 	// Derive the best human-readable search title and an optional year hint from

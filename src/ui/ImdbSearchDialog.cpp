@@ -1,5 +1,6 @@
 #include "ui/ImdbSearchDialog.h"
 #include "core/AppSettings.h"
+#include "core/DatabaseManager.h"
 #include "ui/McLanguageFlags.h"
 
 #include <QApplication>
@@ -141,11 +142,15 @@ public:
 		const QColor textColor = sel
 			? option.palette.color(grp, QPalette::HighlightedText)
 			: option.palette.color(grp, QPalette::Text);
+		// Optional type tag (Movie / TV / Doc) from UserRole + 12.
+		const QString typeTag = index.data(Qt::UserRole + 12).toString();
+		QString titleText = index.data(Qt::DisplayRole).toString();
+		if (!typeTag.isEmpty())
+			titleText = QStringLiteral("%1  ·  %2").arg(titleText, typeTag);
 		p->save();
 		p->setPen(textColor);
 		p->setFont(option.font);
-		p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
-		            index.data(Qt::DisplayRole).toString());
+		p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, titleText);
 		p->restore();
 
 		if (id.isEmpty()) return;
@@ -585,6 +590,7 @@ QString    ImdbSearchDialog::selectedImdbId()     const { return m_imdbIdEdit->t
 QString    ImdbSearchDialog::selectedTitle()      const { return m_selectedTitle; }
 int        ImdbSearchDialog::selectedYear()       const { return m_selectedYear; }
 QString    ImdbSearchDialog::selectedPosterPath() const { return m_selectedPosterPath; }
+QString    ImdbSearchDialog::selectedMediaType()  const { return m_selectedMediaType; }
 QString    ImdbSearchDialog::selectedFanartPath() const
 {
 	// Only return a path if the user explicitly picked a backdrop; otherwise the
@@ -706,7 +712,8 @@ void ImdbSearchDialog::onSearch()
 	params.addQueryItem("language", "en-US");
 	params.addQueryItem("page",     "1");
 
-	QUrl url("https://api.themoviedb.org/3/search/movie");
+	// Multi-search covers movies + TV (+ person, which we filter out).
+	QUrl url("https://api.themoviedb.org/3/search/multi");
 	url.setQuery(params);
 
 	QNetworkRequest req(url);
@@ -728,12 +735,22 @@ void ImdbSearchDialog::onSearch()
 		}
 
 		const QJsonObject root    = QJsonDocument::fromJson(reply->readAll()).object();
-		const QJsonArray  results = root["results"].toArray();
+		const QJsonArray  raw     = root["results"].toArray();
 		reply->deleteLater();
 
-		if (results.isEmpty()) {
-			return;
+		// Keep only movie/tv and tag each object with media_type for populate.
+		QJsonArray results;
+		for (const QJsonValue& v : raw) {
+			QJsonObject obj = v.toObject();
+			const QString mt = obj[QStringLiteral("media_type")].toString();
+			if (mt != QLatin1String("movie") && mt != QLatin1String("tv"))
+				continue;
+			obj[QStringLiteral("_mc_media_type")] = mt;
+			results.append(obj);
 		}
+
+		if (results.isEmpty())
+			return;
 
 		populateSearchResults(results, yearMatch);
 	});
@@ -766,9 +783,20 @@ void ImdbSearchDialog::searchByExistingImdbId()
 		m_searchReply = nullptr;
 		m_btnSearch->setEnabled(true);
 
-		const QJsonArray results = reply->error() == QNetworkReply::NoError
-		    ? QJsonDocument::fromJson(reply->readAll()).object()["movie_results"].toArray()
-		    : QJsonArray{};
+		QJsonArray results;
+		if (reply->error() == QNetworkReply::NoError) {
+			const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+			for (const QJsonValue& v : root[QStringLiteral("movie_results")].toArray()) {
+				QJsonObject obj = v.toObject();
+				obj[QStringLiteral("_mc_media_type")] = QStringLiteral("movie");
+				results.append(obj);
+			}
+			for (const QJsonValue& v : root[QStringLiteral("tv_results")].toArray()) {
+				QJsonObject obj = v.toObject();
+				obj[QStringLiteral("_mc_media_type")] = QStringLiteral("tv");
+				results.append(obj);
+			}
+		}
 		reply->deleteLater();
 
 		if (!results.isEmpty()) {
@@ -785,18 +813,46 @@ void ImdbSearchDialog::searchByExistingImdbId()
 
 void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QRegularExpressionMatch& yearMatch)
 {
+	static constexpr int kGenreDocumentary = 99;
+
+	auto hasGenre = [](const QJsonObject& obj, int genreId) {
+		for (const QJsonValue& v : obj[QStringLiteral("genre_ids")].toArray()) {
+			if (v.toInt() == genreId) return true;
+		}
+		return false;
+	};
+
 	for (const auto& v : results) {
-		const QJsonObject obj         = v.toObject();
-		const QString     title       = obj["title"].toString();
-		const QString     originalTitle = obj["original_title"].toString();
-		const QString     releaseDate = obj["release_date"].toString();
-		const int         year        = releaseDate.left(4).toInt();
-		const int         tmdbId      = obj["id"].toInt();
-		const QString     posterPath   = obj["poster_path"].toString();
-		const QString     backdropPath = obj["backdrop_path"].toString();
-		const QString     origLang    = obj["original_language"].toString();
-		const double      voteAvg     = obj["vote_average"].toDouble();
-		const int         voteCount   = obj["vote_count"].toInt();
+		const QJsonObject obj = v.toObject();
+		const QString kind = obj.contains(QStringLiteral("_mc_media_type"))
+		    ? obj[QStringLiteral("_mc_media_type")].toString()
+		    : (obj.contains(QStringLiteral("name")) && !obj.contains(QStringLiteral("title"))
+		           ? QStringLiteral("tv") : QStringLiteral("movie"));
+		const bool isTv = (kind == QLatin1String("tv"));
+
+		const QString title = isTv
+		    ? obj[QStringLiteral("name")].toString()
+		    : obj[QStringLiteral("title")].toString();
+		const QString originalTitle = isTv
+		    ? obj[QStringLiteral("original_name")].toString()
+		    : obj[QStringLiteral("original_title")].toString();
+		const QString releaseDate = isTv
+		    ? obj[QStringLiteral("first_air_date")].toString()
+		    : obj[QStringLiteral("release_date")].toString();
+		const int         year         = releaseDate.left(4).toInt();
+		const int         tmdbId       = obj[QStringLiteral("id")].toInt();
+		const QString     posterPath   = obj[QStringLiteral("poster_path")].toString();
+		const QString     backdropPath = obj[QStringLiteral("backdrop_path")].toString();
+		const QString     origLang     = obj[QStringLiteral("original_language")].toString();
+		const double      voteAvg      = obj[QStringLiteral("vote_average")].toDouble();
+		const int         voteCount    = obj[QStringLiteral("vote_count")].toInt();
+
+		const QString mediaType = Mc::MediaTypes::classify(kind, hasGenre(obj, kGenreDocumentary));
+		const QString typeTag =
+		    mediaType == QLatin1String(Mc::MediaTypes::Documentary) ? QStringLiteral("Doc")
+		  : mediaType == QLatin1String(Mc::MediaTypes::Tv)          ? QStringLiteral("TV")
+		  : mediaType == QLatin1String(Mc::MediaTypes::Movie)       ? QStringLiteral("Movie")
+		                                                            : QString{};
 
 		const QString display = year > 0
 			? QStringLiteral("%1  (%2)").arg(title).arg(year)
@@ -813,6 +869,9 @@ void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QR
 		item->setData(Qt::UserRole + 8, backdropPath);
 		item->setData(Qt::UserRole + 10, originalTitle);
 		item->setData(Qt::UserRole + 11, releaseDate);
+		item->setData(Qt::UserRole + 12, typeTag);
+		item->setData(Qt::UserRole + 13, mediaType);
+		item->setData(Qt::UserRole + 14, kind);  // "movie" or "tv" for API endpoints
 
 		// Fetch poster thumbnail asynchronously
 		if (!posterPath.isEmpty()) {
@@ -876,9 +935,13 @@ void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QR
 	// Prefetch IMDb IDs for all results in parallel
 	for (int row = 0; row < m_resultsList->count(); ++row) {
 		const int tmdbId = m_resultsList->item(row)->data(Qt::UserRole).toInt();
+		const QString kind = m_resultsList->item(row)->data(Qt::UserRole + 14).toString();
+		const QString apiKind = (kind == QLatin1String("tv")) ? QStringLiteral("tv")
+		                                                      : QStringLiteral("movie");
 		QUrlQuery pq;
 		pq.addQueryItem("api_key", m_tmdbApiKey);
-		QUrl pUrl(QStringLiteral("https://api.themoviedb.org/3/movie/%1/external_ids").arg(tmdbId));
+		QUrl pUrl(QStringLiteral("https://api.themoviedb.org/3/%1/%2/external_ids")
+		              .arg(apiKind).arg(tmdbId));
 		pUrl.setQuery(pq);
 		QNetworkRequest pReq(pUrl);
 		pReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
@@ -1064,10 +1127,15 @@ void ImdbSearchDialog::onResultSelectionChanged()
 	m_selectedTitle      = item->data(Qt::UserRole + 1).toString();
 	m_selectedYear       = item->data(Qt::UserRole + 2).toInt();
 	m_selectedPosterPath = item->data(Qt::UserRole + 3).toString();
+	m_selectedMediaType  = item->data(Qt::UserRole + 13).toString();
 	m_galleryImageData.clear();
 
+	const QString kind = item->data(Qt::UserRole + 14).toString();
+	const QString apiKind = (kind == QLatin1String("tv")) ? QStringLiteral("tv")
+	                                                      : QStringLiteral("movie");
 	fetchPosterImages(item->data(Qt::UserRole).toInt(),
-	                  item->data(Qt::UserRole + 5).toString());
+	                  item->data(Qt::UserRole + 5).toString(),
+	                  apiKind);
 
 	if (m_extIdsReply) { m_extIdsReply->abort(); m_extIdsReply = nullptr; }
 
@@ -1094,7 +1162,8 @@ void ImdbSearchDialog::onResultSelectionChanged()
 
 	QUrlQuery params;
 	params.addQueryItem("api_key", m_tmdbApiKey);
-	QUrl url(QStringLiteral("https://api.themoviedb.org/3/movie/%1/external_ids").arg(tmdbId));
+	QUrl url(QStringLiteral("https://api.themoviedb.org/3/%1/%2/external_ids")
+	             .arg(apiKind).arg(tmdbId));
 	url.setQuery(params);
 	QNetworkRequest req(url);
 	req.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
@@ -1121,7 +1190,7 @@ void ImdbSearchDialog::onResultSelectionChanged()
 	});
 }
 
-void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang)
+void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang, const QString& kind)
 {
 	if (m_imagesReply) { m_imagesReply->disconnect(this); m_imagesReply = nullptr; }
 	for (auto it = m_galleryThumbReplies.begin(); it != m_galleryThumbReplies.end(); ++it)
@@ -1151,10 +1220,13 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang)
 			langs.append(iso1);
 	}
 
+	const QString apiKind = (kind == QLatin1String("tv")) ? QStringLiteral("tv")
+	                                                      : QStringLiteral("movie");
 	QUrlQuery params;
 	params.addQueryItem(QStringLiteral("api_key"), m_tmdbApiKey);
 	params.addQueryItem(QStringLiteral("include_image_language"), langs.join(u','));
-	QUrl url(QStringLiteral("https://api.themoviedb.org/3/movie/%1/images").arg(tmdbId));
+	QUrl url(QStringLiteral("https://api.themoviedb.org/3/%1/%2/images")
+	             .arg(apiKind).arg(tmdbId));
 	url.setQuery(params);
 	QNetworkRequest req(url);
 	req.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
