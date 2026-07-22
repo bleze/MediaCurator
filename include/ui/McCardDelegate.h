@@ -134,6 +134,7 @@ public slots:
 signals:
 	void playRequested(const QModelIndex& index);
 	void imdbPageRequested(const QModelIndex& index);
+	void tmdbPageRequested(const QModelIndex& index);
 	void streamToggleRequested(const QModelIndex& index, int streamIndex);
 	void streamFlagChangeRequested(const QModelIndex& index, int streamIndex,
 	                               const QString& flag, bool value);
@@ -143,7 +144,8 @@ public:
 	                        const QList<StreamRecord>& tracks,
 	                        const QFont& baseFont,
 	                        bool hasImdb,
-	                        const QString& originalLang = {}) const;
+	                        const QString& originalLang = {},
+	                        bool hasTmdb = false) const;
 
 private:
 	// Normalised card data populated from whichever model is in use.
@@ -155,6 +157,7 @@ private:
 		QString             posterPath;
 		int                 posterVersion  = 0;
 		QString             imdbId;
+		int                 tmdbId         = 0;     // TMDB movie/tv numeric id; 0 = unknown
 		double              rating         = 0.0;   // TMDB vote_average; 0 = unknown
 		QString             displayTitle;           // TMDB/user override (Library only)
 		int                 displayYear    = 0;    // release year from TMDB, 0 = unknown (Library only)
@@ -208,6 +211,12 @@ private:
 
 	static QRect   playButtonRect(const QRect& contentRect);
 	static QRect   imdbButtonRect(const QRect& contentRect);
+	// hasImdb: whether the IMDb button is also present — shifts the TMDB button
+	// one slot left so the two never overlap. IMDb always anchors the rightmost slot.
+	static QRect   tmdbButtonRect(const QRect& contentRect, bool hasImdb);
+	// Total width the badge rows must yield to the right for whichever of the
+	// IMDb/TMDB buttons are present (0, 1, or 2), including the gap before the badges.
+	static int     rightButtonsReserve(bool hasImdb, bool hasTmdb);
 	static QString formatDuration(double sec);
 	static QString formatSize(qint64 bytes);
 	static QString codecLabel(const StreamRecord& s);
@@ -224,7 +233,8 @@ private:
 	                  int hoveredStreamIndex        = -1,
 	                  const QString& flagChangesJson = {}) const;
 
-	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect, bool hasImdb = false) const;
+	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect,
+	                        bool hasImdb = false, bool hasTmdb = false) const;
 
 	// Left inset of the content area from the card's left edge — kPosterW + kPosterGap
 	// when TMDB is configured, otherwise just enough for a checkbox column (job queue)

@@ -577,6 +577,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	});
 	connect(&pm, &PosterManager::imdbIdSaved,
 	        m_listModel, &McFileListModel::onImdbIdSaved);
+	connect(&pm, &PosterManager::tmdbIdSaved,
+	        m_listModel, &McFileListModel::onTmdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
 	        m_listModel, &McFileListModel::onTmdbDataReady);
 	// Keep job-card media types (and category pills) current during enrichment.
@@ -684,6 +686,14 @@ void McMainWindow::setupUi()
 		if (!id.isEmpty())
 			QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.imdb.com/title/%1/").arg(id)));
 	});
+	connect(fileDelegate, &McFileCardDelegate::tmdbPageRequested,
+	        this, [this](const QModelIndex& idx) {
+		const int id = idx.data(McFileListModel::TmdbRole).toInt();
+		if (id <= 0) return;
+		const QString kind = idx.data(McFileListModel::FileRole).value<FileRecord>().mediaType
+		                   == QLatin1String(MediaTypes::Tv) ? QStringLiteral("tv") : QStringLiteral("movie");
+		QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.themoviedb.org/%1/%2").arg(kind).arg(id)));
+	});
 	connect(fileDelegate, &McFileCardDelegate::streamToggleRequested,
 	        this, [this](const QModelIndex& idx, int streamIndex) {
 		const qint64 fileId = idx.data(McFileListModel::FileRole).value<FileRecord>().id;
@@ -746,7 +756,7 @@ void McMainWindow::setupUi()
 				}
 				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
-				                                 dlg.selectedFanartPath());
+				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
 				if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(file.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(file.id, dlg.selectedVoteAverage());
@@ -811,9 +821,10 @@ void McMainWindow::setupUi()
 			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
 				streams = idx.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
 				const bool hasImdb = !idx.data(McFileListModel::ImdbRole).toString().isEmpty();
+				const bool hasTmdb = idx.data(McFileListModel::TmdbRole).toInt() > 0;
 				hitStreamIdx = del->hitTestBadgeStream(vpPos, m_listView->visualRect(idx),
 				                                        streams, m_listView->font(),
-				                                        hasImdb, file.originalLanguage);
+				                                        hasImdb, file.originalLanguage, hasTmdb);
 			}
 			const StreamRecord* hitStream = nullptr;
 			for (const StreamRecord& s : streams) {
@@ -1113,7 +1124,7 @@ void McMainWindow::setupUi()
 				}
 				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
-				                                 dlg.selectedFanartPath());
+				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
 				if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(f.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(f.id, dlg.selectedVoteAverage());
@@ -1376,7 +1387,7 @@ void McMainWindow::setupUi()
 				}
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
-				                                 dlg.selectedFanartPath());
+				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
 			if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
@@ -1450,7 +1461,7 @@ void McMainWindow::setupUi()
 				}
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
-				                                 dlg.selectedFanartPath());
+				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
 			if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
@@ -2580,8 +2591,9 @@ void McMainWindow::startLibraryLoader()
 	// metaReady arrives on a background thread.
 	QHash<qint64, QString> posters, imdbs, fanarts;
 	QHash<qint64, double> ratings;
-	db.loadPosterMeta(posters, imdbs, ratings, fanarts);
-	m_listModel->initMeta(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts);
+	QHash<qint64, int> tmdbIds;
+	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds);
+	m_listModel->initMeta(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts, tmdbIds);
 
 	// ── First page: library + queue (synchronous, splash still visible) ───────
 	// Must use the same sort order the model itself sorts by (persisted setting,
@@ -2670,8 +2682,9 @@ void McMainWindow::startLibraryLoader()
 	               const QHash<qint64, QString>& imdbIds,
 	               const QSet<qint64>& filesWithJobs,
 	               const QHash<qint64, double>& ratings,
-	               const QHash<qint64, QString>& fanartPaths) {
-		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths);
+	               const QHash<qint64, QString>& fanartPaths,
+	               const QHash<qint64, int>& tmdbIds) {
+		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths, tmdbIds);
 		if (auto* cardDelegate = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			cardDelegate->prefetchVisibleArtwork();
 	});

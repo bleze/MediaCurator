@@ -19,8 +19,9 @@ void LibraryLoader::run()
 	// Use batched load to cut down on query round-trips during library startup.
 	QHash<qint64, QString> posters, imdbs, fanarts;
 	QHash<qint64, double> ratings;
-	db.loadPosterMeta(posters, imdbs, ratings, fanarts);
-	emit metaReady(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts);
+	QHash<qint64, int> tmdbIds;
+	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds);
+	emit metaReady(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts, tmdbIds);
 
 	int offset    = m_startOffset;
 	int pageIndex = 0;

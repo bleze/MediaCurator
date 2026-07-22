@@ -301,7 +301,7 @@ void McFileListModel::reload()
 		m_allEntries.append(e);
 	}
 
-	db.loadPosterMeta(m_posterPaths, m_imdbIds, m_ratings, m_fanartPaths);
+	db.loadPosterMeta(m_posterPaths, m_imdbIds, m_ratings, m_fanartPaths, m_tmdbIds);
 	m_forcedRemovals = db.allStreamForcedRemovals();
 
 	recomputeFolderCounts();
@@ -328,7 +328,8 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
                                const QHash<qint64, QString>& imdbIds,
                                const QSet<qint64>& filesWithJobs,
                                const QHash<qint64, double>& ratings,
-                               const QHash<qint64, QString>& fanartPaths)
+                               const QHash<qint64, QString>& fanartPaths,
+                               const QHash<qint64, int>& tmdbIds)
 {
 	m_posterPaths    = posterPaths;
 	m_imdbIds        = imdbIds;
@@ -339,10 +340,11 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 	}
 	if (!ratings.isEmpty())     m_ratings     = ratings;
 	if (!fanartPaths.isEmpty()) m_fanartPaths = fanartPaths;
+	if (!tmdbIds.isEmpty())     m_tmdbIds     = tmdbIds;
 	if (!m_entries.isEmpty()) {
 		const QList<int> roles = {
 			FanartRole, PosterRole, PosterVersionRole,
-			DisplayTitleRole, DisplayYearRole, RatingRole, ImdbRole
+			DisplayTitleRole, DisplayYearRole, RatingRole, ImdbRole, TmdbRole
 		};
 		emit dataChanged(index(0), index(m_entries.size() - 1), roles);
 	}
@@ -537,6 +539,18 @@ void McFileListModel::onImdbIdSaved(qint64 fileId, const QString& imdbId)
 	}
 }
 
+void McFileListModel::onTmdbIdSaved(qint64 fileId, int tmdbId)
+{
+	m_tmdbIds[fileId] = tmdbId;
+	for (int row = 0; row < m_entries.size(); ++row) {
+		if (m_entries.at(row).file.id == fileId) {
+			const QModelIndex idx = index(row);
+			emit dataChanged(idx, idx, { TmdbRole });
+			break;
+		}
+	}
+}
+
 void McFileListModel::setFilterMissingImdb(bool on)
 {
 	if (m_filterMissingImdb == on) return;
@@ -697,6 +711,7 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case FanartRole:        return m_fanartPaths.value(e.file.id);
 	case PosterVersionRole: return m_posterVersions.value(e.file.id, 0);
 	case ImdbRole:          return m_imdbIds.value(e.file.id);
+	case TmdbRole:          return m_tmdbIds.value(e.file.id, 0);
 	case RatingRole:        return m_ratings.value(e.file.id, 0.0);
 	case DisplayTitleRole:  return e.file.displayTitle;
 	case DisplayYearRole:   return e.file.displayYear;

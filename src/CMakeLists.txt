@@ -253,6 +253,7 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/logout.svg
         resources/icons/undo.svg
         resources/icons/imdb.png
+        resources/icons/tmdb.svg
         resources/icons/vlc.svg
         resources/icons/dollar.svg
         resources/icons/lightning_qr.png

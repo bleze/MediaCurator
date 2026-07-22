@@ -640,6 +640,15 @@ void McJobPanel::setupUi()
 			QDesktopServices::openUrl(
 			    QUrl(QStringLiteral("https://www.imdb.com/title/%1/").arg(id)));
 	});
+	connect(jobDelegate, &McJobCardDelegate::tmdbPageRequested,
+	        this, [](const QModelIndex& idx) {
+		const int id = idx.data(McJobListModel::TmdbIdRole).toInt();
+		if (id <= 0) return;
+		const QString kind = idx.data(McJobListModel::MediaTypeRole).toString()
+		                   == QLatin1String(MediaTypes::Tv) ? QStringLiteral("tv") : QStringLiteral("movie");
+		QDesktopServices::openUrl(
+		    QUrl(QStringLiteral("https://www.themoviedb.org/%1/%2").arg(kind).arg(id)));
+	});
 
 	// Stale size cache: the cache is keyed by row number. After a model reset the
 	// row-to-data mapping changes, so old entries would return wrong heights.
@@ -759,8 +768,9 @@ void McJobPanel::setupUi()
 			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
 				const auto streams = idx.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 				const bool hasImdb = !idx.data(McJobListModel::ImdbIdRole).toString().isEmpty();
+				const bool hasTmdb = idx.data(McJobListModel::TmdbIdRole).toInt() > 0;
 				hitStreamIdx = del->hitTestBadgeStream(
-					vpPos, m_listView->visualRect(idx), streams, m_listView->font(), hasImdb, origLang);
+					vpPos, m_listView->visualRect(idx), streams, m_listView->font(), hasImdb, origLang, hasTmdb);
 			}
 		}
 
@@ -1410,6 +1420,8 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	        m_model, &McJobListModel::onFanartReady);
 	connect(&PosterManager::instance(), &PosterManager::imdbIdSaved,
 	        m_model, &McJobListModel::updateImdbId);
+	connect(&PosterManager::instance(), &PosterManager::tmdbIdSaved,
+	        m_model, &McJobListModel::updateTmdbId);
 
 	// m_model didn't exist yet when the storage-group chip row was built above —
 	// apply the chips' (all-checked) initial state now that it does.

@@ -22,6 +22,7 @@
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QRegularExpression>
 #include <QSvgRenderer>
 #include <QPixmap>
@@ -450,6 +451,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.posterPath       = index.data(McFileListModel::PosterRole).toString();
 		d.posterVersion    = index.data(McFileListModel::PosterVersionRole).toInt();
 		d.imdbId           = index.data(McFileListModel::ImdbRole).toString();
+		d.tmdbId           = index.data(McFileListModel::TmdbRole).toInt();
 		d.rating           = index.data(McFileListModel::RatingRole).toDouble();
 		d.displayTitle      = index.data(McFileListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McFileListModel::DisplayYearRole).toInt();
@@ -472,6 +474,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.posterPath       = index.data(McJobListModel::PosterRole).toString();
 		d.posterVersion    = index.data(McJobListModel::PosterVersionRole).toInt();
 		d.imdbId           = index.data(McJobListModel::ImdbIdRole).toString();
+		d.tmdbId           = index.data(McJobListModel::TmdbIdRole).toInt();
 		d.rating           = index.data(McJobListModel::RatingRole).toDouble();
 		d.status           = index.data(McJobListModel::StatusRole).toString();
 		d.savedBytes       = index.data(McJobListModel::SavedRole).toLongLong();
@@ -690,6 +693,20 @@ QRect McCardDelegate::imdbButtonRect(const QRect& contentRect)
 {
 	const int y = contentRect.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 	return QRect(contentRect.right() - kImdbBtnW, y, kImdbBtnW, kImdbBtnW);
+}
+
+QRect McCardDelegate::tmdbButtonRect(const QRect& contentRect, bool hasImdb)
+{
+	const int y = contentRect.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
+	const int xOffset = hasImdb ? (kImdbBtnW + kBadgeGap) : 0;
+	return QRect(contentRect.right() - kImdbBtnW - xOffset, y, kImdbBtnW, kImdbBtnW);
+}
+
+int McCardDelegate::rightButtonsReserve(bool hasImdb, bool hasTmdb)
+{
+	const int count = (hasImdb ? 1 : 0) + (hasTmdb ? 1 : 0);
+	if (count == 0) return 0;
+	return count * kImdbBtnW + (count - 1) * kBadgeGap + kBadgeGap;
 }
 
 // ── Badge drawing ──────────────────────────────────────────────────────────────
@@ -923,11 +940,13 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 
 // ── Interactive helpers ────────────────────────────────────────────────────────
 
-bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect, bool hasImdb) const
+bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect,
+                                          bool hasImdb, bool hasTmdb) const
 {
 	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 	if (playButtonRect(content).contains(pos)) return true;
 	if (hasImdb && imdbButtonRect(content).contains(pos)) return true;
+	if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) return true;
 	return false;
 }
 
@@ -935,13 +954,14 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
                                         const QList<StreamRecord>& tracks,
                                         const QFont& baseFont,
                                         bool hasImdb,
-                                        const QString& originalLang) const
+                                        const QString& originalLang,
+                                        bool hasTmdb) const
 {
 	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 	QFont badgeFont = baseFont;
 	badgeFont.setPointSizeF(baseFont.pointSizeF() * 0.82);
 	const QFontMetrics fm(badgeFont);
-	const int badgeAreaW = content.width() - (hasImdb ? kImdbBtnW + kBadgeGap : 0);
+	const int badgeAreaW = content.width() - rightButtonsReserve(hasImdb, hasTmdb);
 
 	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 
@@ -1028,8 +1048,11 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 			const bool hasImdb = m_mode == Mode::Library
 				? !cur.data(McFileListModel::ImdbRole).toString().isEmpty()
 				: !cur.data(McJobListModel::ImdbIdRole).toString().isEmpty();
+			const bool hasTmdb = m_mode == Mode::Library
+				? cur.data(McFileListModel::TmdbRole).toInt() > 0
+				: cur.data(McJobListModel::TmdbIdRole).toInt() > 0;
 
-			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb);
+			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb, hasTmdb);
 			if (!overInteractive && m_mode == Mode::JobQueue
 			    && (cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
@@ -1037,7 +1060,7 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 				const auto    streams  = cur.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 				const QString origLang = cur.data(McJobListModel::OriginalLanguageRole).toString();
 				overInteractive = (hitTestBadgeStream(pos, m_view->visualRect(cur),
-				                                      streams, m_view->font(), hasImdb, origLang) >= 0);
+				                                      streams, m_view->font(), hasImdb, origLang, hasTmdb) >= 0);
 			}
 			m_view->viewport()->setCursor(overInteractive ? Qt::PointingHandCursor : Qt::ArrowCursor);
 		} else {
@@ -1092,13 +1115,21 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 		return true;
 	}
 
+	const bool hasTmdb = m_mode == Mode::Library
+		? index.data(McFileListModel::TmdbRole).toInt() > 0
+		: index.data(McJobListModel::TmdbIdRole).toInt() > 0;
+	if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) {
+		emit tmdbPageRequested(index);
+		return true;
+	}
+
 	if (m_mode == Mode::JobQueue
 	    && (index.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
 	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("failed"))) {
 		const auto    streams  = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 		const QString origLang = index.data(McJobListModel::OriginalLanguageRole).toString();
-		const int streamIdx = hitTestBadgeStream(pos, itemRect, streams, viewFont, hasImdb, origLang);
+		const int streamIdx = hitTestBadgeStream(pos, itemRect, streams, viewFont, hasImdb, origLang, hasTmdb);
 		if (streamIdx >= 0) {
 			emit streamToggleRequested(index, streamIdx);
 			return true;
@@ -1121,6 +1152,12 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	// IMDb button tooltip
 	if (!d.imdbId.isEmpty() && imdbButtonRect(content).contains(event->pos())) {
 		QToolTip::showText(event->globalPos(), tr("Open IMDb page — %1").arg(d.imdbId), view);
+		return true;
+	}
+
+	// TMDB button tooltip
+	if (d.tmdbId > 0 && tmdbButtonRect(content, !d.imdbId.isEmpty()).contains(event->pos())) {
+		QToolTip::showText(event->globalPos(), tr("Open TMDB page — %1").arg(d.tmdbId), view);
 		return true;
 	}
 
@@ -1211,7 +1248,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	QFont badgeFont = option.font;
 	badgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
 	const QFontMetrics fm(badgeFont);
-	const int badgeAreaW = content.width() - (!d.imdbId.isEmpty() ? kImdbBtnW + kBadgeGap : 0);
+	const int badgeAreaW = content.width() - rightButtonsReserve(!d.imdbId.isEmpty(), d.tmdbId > 0);
 
 	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 
@@ -1384,6 +1421,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 
 	const CardData d = fetchData(index);
 	const bool hasImdb = !d.imdbId.isEmpty();
+	const bool hasTmdb = d.tmdbId > 0;
 
 	{
 		QFont badgeFont = option.font;
@@ -1395,7 +1433,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	}
 	const QFontMetrics& fm = m_badgeFm;
 	const int totalContentW = w - leftContentInset() - kPadH;
-	const int rightReserve  = hasImdb ? kImdbBtnW + kBadgeGap : 0;
+	const int rightReserve  = rightButtonsReserve(hasImdb, hasTmdb);
 	const int badgeAreaW    = totalContentW - rightReserve;
 
 	int totalRows = 0;
@@ -1444,7 +1482,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	// Enforce a minimum of 3 track rows so cards never shrink below a consistent
 	// floor; cards with more rows than 3 simply grow to show them all.
 	const int trackH     = qMax(totalRows, 3) * (kBadgeH + kRowGap);
-	const int badgeAreaH = hasImdb ? qMax(trackH, kImdbBtnW) : trackH;
+	const int badgeAreaH = (hasImdb || hasTmdb) ? qMax(trackH, kImdbBtnW) : trackH;
 	const int h          = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + badgeAreaH + kPadBottom,
 	                             kMinRowH);
 	const QSize result{w, h};
@@ -1874,9 +1912,10 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		                  Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, d.filename);
 	}
 
-	// ── Badge area: IMDb button (right) + track rows (left) ─────────────────
+	// ── Badge area: IMDb + TMDB buttons (right) + track rows (left) ─────────
 	const bool hasImdb  = !d.imdbId.isEmpty();
-	const int rightReserve = hasImdb ? kImdbBtnW + kBadgeGap : 0;
+	const bool hasTmdb  = d.tmdbId > 0;
+	const int rightReserve = rightButtonsReserve(hasImdb, hasTmdb);
 	const int badgeAreaW   = content.width() - rightReserve;
 
 	if (hasImdb) {
@@ -1888,6 +1927,12 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			QPixmapCache::insert("imdb_logo", logo);
 		}
 		painter->save();
+		painter->setRenderHint(QPainter::Antialiasing);
+		// imdb.png is a plain square-cornered asset — clip to a rounded rect so it
+		// matches the rounding every other button/badge/pill in the app uses.
+		QPainterPath clip;
+		clip.addRoundedRect(ir, 4, 4);
+		painter->setClipPath(clip, Qt::IntersectClip);
 		painter->setOpacity(ir.contains(m_lastMousePos) ? 1.0 : 0.75);
 		const int ox = ir.left() + (ir.width()  - logo.width())  / 2;
 		const int oy = ir.top()  + (ir.height() - logo.height()) / 2;
@@ -1895,9 +1940,22 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		painter->restore();
 	}
 
+	if (hasTmdb) {
+		const QRect btnRect = tmdbButtonRect(content, hasImdb);
+		// tmdb.svg's <rect>/<text> carry their own explicit fill colors, so the
+		// color renderSvgIcon injects on the root <svg> tag is inert here — this
+		// renders the icon in its real brand colors, not a recolored silhouette.
+		const QPixmap logo = renderSvgIcon(QStringLiteral(":/icons/tmdb.svg"), Qt::white,
+		                                    btnRect.height(), painter->device()->devicePixelRatioF());
+		painter->save();
+		painter->setOpacity(btnRect.contains(m_lastMousePos) ? 1.0 : 0.75);
+		painter->drawPixmap(btnRect, logo);
+		painter->restore();
+	}
+
 	// Hover-highlight the badge under the mouse for toggleable job cards
 	const int hoveredStreamIdx = (m_mode == Mode::JobQueue && d.toggleable && m_lastMousePos.x() >= 0)
-		? hitTestBadgeStream(m_lastMousePos, option.rect, d.allStreams, option.font, hasImdb, d.originalLanguage)
+		? hitTestBadgeStream(m_lastMousePos, option.rect, d.allStreams, option.font, hasImdb, d.originalLanguage, hasTmdb)
 		: -1;
 
 	QFont badgeFont = option.font;

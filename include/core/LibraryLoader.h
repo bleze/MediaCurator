@@ -27,7 +27,8 @@ signals:
 	               QHash<qint64, QString> imdbIds,
 	               QSet<qint64> filesWithJobs,
 	               QHash<qint64, double> ratings,
-	               QHash<qint64, QString> fanartPaths);
+	               QHash<qint64, QString> fanartPaths,
+	               QHash<qint64, int> tmdbIds);
 	void fileReady(Mc::FileRecord file, QList<Mc::StreamRecord> streams);
 	void pageReady(QList<Mc::FileRecord> files, Mc::FileStreamMap streams);
 	void finished(int totalFileCount);

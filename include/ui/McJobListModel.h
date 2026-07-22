@@ -51,6 +51,7 @@ public:
 		StorageGroupRole      = Qt::UserRole + 26,  // int 1-4 — see StorageGroupSettings
 		FinishedAtRole        = Qt::UserRole + 27,  // qint64 epoch seconds job last left "running"; 0 if never
 		MediaTypeRole         = Qt::UserRole + 28,  // QString MediaTypes::* (movie/tv/documentary/misc/unknown)
+		TmdbIdRole            = Qt::UserRole + 29,  // int — TMDB movie/tv numeric id, 0 if unknown
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -131,6 +132,7 @@ public slots:
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void updateImdbId(qint64 fileId, const QString& imdbId);
+	void updateTmdbId(qint64 fileId, int tmdbId);
 
 private:
 	// Reverts an optimistic setStreamFlag/setStreamLanguage update after TrackFlagService

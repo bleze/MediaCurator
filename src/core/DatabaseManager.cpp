@@ -260,6 +260,7 @@ bool DatabaseManager::initSchema()
 			status     TEXT NOT NULL DEFAULT 'pending',
 			image_path TEXT NOT NULL DEFAULT '',
 			imdb_id    TEXT NOT NULL DEFAULT '',
+			tmdb_id    INTEGER NOT NULL DEFAULT 0,
 			fetched_at INTEGER NOT NULL DEFAULT 0
 		);
 
@@ -353,6 +354,13 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE poster_cache ADD COLUMN vote_count INTEGER DEFAULT 0");
 		m.exec("ALTER TABLE poster_cache ADD COLUMN fanart_path TEXT DEFAULT ''");
 		// Ignore errors — column already exists
+	}
+
+	// Migration: add tmdb_id to poster_cache (drives the card's "Open TMDB page" button)
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE poster_cache ADD COLUMN tmdb_id INTEGER NOT NULL DEFAULT 0");
+		// Ignore error — column already exists
 	}
 
 	// Migration: add title columns to files
@@ -1802,6 +1810,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.filePath    = q.value(7).toString();
 		r.sizeBytes   = q.value(8).toLongLong();
 		r.imdbId            = q.value(9).toString();
+		r.tmdbId             = q.value("tmdb_id").toInt();
 		r.jobType            = q.value("job_type").toString();
 		r.durationSec        = q.value("duration_s").toDouble();
 		r.voteAverage        = q.value("vote_average").toDouble();
@@ -1830,6 +1839,7 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
 		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       COALESCE(pc.tmdb_id, 0) AS tmdb_id,"
 		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
@@ -1864,6 +1874,7 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
 		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       COALESCE(pc.tmdb_id, 0) AS tmdb_id,"
 		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
@@ -1908,6 +1919,7 @@ std::optional<JobDisplayRecord> DatabaseManager::jobDisplayRecordById(qint64 job
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
 		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       COALESCE(pc.tmdb_id, 0) AS tmdb_id,"
 		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
@@ -1939,6 +1951,7 @@ QList<JobDisplayRecord> DatabaseManager::liveJobsForPanel() const
 		"SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,"
 		"       f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,"
 		"       COALESCE(pc.imdb_id, '') AS imdb_id,"
+		"       COALESCE(pc.tmdb_id, 0) AS tmdb_id,"
 		"       j.job_type,"
 		"       COALESCE(f.duration_s, 0.0) AS duration_s,"
 		"       COALESCE(pc.vote_average, 0.0) AS vote_average,"
@@ -2037,14 +2050,15 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, fetched_at, vote_average, vote_count)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET
 			source=excluded.source,
 			status=excluded.status,
 			image_path=excluded.image_path,
 			fanart_path=CASE WHEN excluded.fanart_path != '' THEN excluded.fanart_path ELSE fanart_path END,
 			imdb_id=excluded.imdb_id,
+			tmdb_id=CASE WHEN excluded.tmdb_id > 0 THEN excluded.tmdb_id ELSE tmdb_id END,
 			fetched_at=excluded.fetched_at,
 			vote_average=CASE WHEN excluded.vote_average > 0 THEN excluded.vote_average ELSE vote_average END,
 			vote_count=CASE WHEN excluded.vote_count > 0 THEN excluded.vote_count ELSE vote_count END
@@ -2057,6 +2071,7 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 	q.addBindValue(nn(rec.imagePath));
 	q.addBindValue(nn(rec.fanartPath));
 	q.addBindValue(nn(rec.imdbId));
+	q.addBindValue(rec.tmdbId);
 	q.addBindValue(rec.fetchedAt);
 	q.addBindValue(rec.voteAverage);
 	q.addBindValue(rec.voteCount);
@@ -2067,7 +2082,7 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count FROM poster_cache WHERE file_id=?");
+	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id FROM poster_cache WHERE file_id=?");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return {};
 	PosterRecord r;
@@ -2080,6 +2095,7 @@ std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 	r.fetchedAt   = q.value(5).toLongLong();
 	r.voteAverage = q.value(6).toDouble();
 	r.voteCount   = q.value(7).toInt();
+	r.tmdbId      = q.value(8).toInt();
 	return r;
 }
 
@@ -2141,6 +2157,21 @@ void DatabaseManager::updateImdbId(qint64 fileId, const QString& imdbId)
 	q.addBindValue(imdbId);
 	if (!q.exec())
 		qWarning() << "updateImdbId failed:" << q.lastError().text();
+}
+
+void DatabaseManager::updateTmdbId(qint64 fileId, int tmdbId)
+{
+	QSqlQuery q(connection());
+	// Upsert a minimal row if none exists, or update only tmdb_id on conflict.
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, tmdb_id, fetched_at)
+		VALUES(?, '', 'pending', '', ?, 0)
+		ON CONFLICT(file_id) DO UPDATE SET tmdb_id = excluded.tmdb_id
+	)");
+	q.addBindValue(fileId);
+	q.addBindValue(tmdbId);
+	if (!q.exec())
+		qWarning() << "updateTmdbId failed:" << q.lastError().text();
 }
 
 void DatabaseManager::clearPosterPath(const QString& imagePath)
@@ -2208,12 +2239,13 @@ QHash<qint64, double> DatabaseManager::allRatings() const
 void DatabaseManager::loadPosterMeta(QHash<qint64, QString>& posterPaths,
                                      QHash<qint64, QString>& imdbIds,
                                      QHash<qint64, double>& ratings,
-                                     QHash<qint64, QString>& fanartPaths) const
+                                     QHash<qint64, QString>& fanartPaths,
+                                     QHash<qint64, int>& tmdbIds) const
 {
 	QSqlQuery q(connection());
 	// Single pass over poster_cache for the common startup meta.
 	// Individual methods are kept for targeted use.
-	q.exec("SELECT file_id, image_path, imdb_id, vote_average, fanart_path FROM poster_cache");
+	q.exec("SELECT file_id, image_path, imdb_id, vote_average, fanart_path, tmdb_id FROM poster_cache");
 	while (q.next()) {
 		const qint64 id = q.value(0).toLongLong();
 
@@ -2232,6 +2264,10 @@ void DatabaseManager::loadPosterMeta(QHash<qint64, QString>& posterPaths,
 		const QString fan = q.value(4).toString();
 		if (!fan.isEmpty())
 			fanartPaths.insert(id, fan);
+
+		const int tmdb = q.value(5).toInt();
+		if (tmdb > 0)
+			tmdbIds.insert(id, tmdb);
 	}
 }
 

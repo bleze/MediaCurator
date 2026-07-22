@@ -75,7 +75,7 @@ public:
 	void refresh(qint64 fileId, const QString& posterPath = {},
 	             const QByteArray& imageData = {}, const QString& imdbId = {},
 	             double voteAverage = 0.0, int voteCount = 0,
-	             const QString& fanartTmdbPath = {});
+	             const QString& fanartTmdbPath = {}, int tmdbId = 0);
 
 	// Refresh many files as one tracked batch — merges into an already-active batch
 	// if one is in flight. Drives batchProgressChanged()/batchFinished() so the UI
@@ -97,6 +97,9 @@ signals:
 	// Fired synchronously inside refresh() as soon as the imdb_id is written to DB,
 	// before any async poster download.  Lets the UI update the IMDb button immediately.
 	void imdbIdSaved(qint64 fileId, QString imdbId);
+	// Fired whenever a TMDB numeric id is resolved and persisted (refresh(), or the
+	// background matcher's applyTmdbInfo). Lets the UI update the TMDB button immediately.
+	void tmdbIdSaved(qint64 fileId, int tmdbId);
 
 	// Batch refresh progress — driven by refreshBatch()/cancelBatch().
 	void batchProgressChanged(int done, int total);

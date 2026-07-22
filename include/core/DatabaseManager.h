@@ -168,6 +168,7 @@ struct PosterRecord {
 	QString imagePath;
 	QString fanartPath;     // absolute path to w780 backdrop; empty if not yet fetched
 	QString imdbId;
+	int     tmdbId      = 0;   // TMDB movie/tv numeric id; 0 = unknown
 	qint64  fetchedAt   = 0;
 	double  voteAverage = 0.0;
 	int     voteCount   = 0;
@@ -188,6 +189,7 @@ struct JobDisplayRecord {
 	qint64  createdAt   = 0;
 	qint64  finishedAt  = 0;   // epoch seconds; 0 for jobs not yet completed
 	QString imdbId;            // from poster_cache; empty if no IMDb link yet
+	int     tmdbId     = 0;    // from poster_cache; 0 if unknown
 	double  voteAverage = 0.0;
 	QString originalLanguage;  // ISO 639-2; set by RuleEngine or TMDB dialog
 	QString commandArgsJson;
@@ -355,12 +357,14 @@ public:
 	void loadPosterMeta(QHash<qint64, QString>& posterPaths,
 	                    QHash<qint64, QString>& imdbIds,
 	                    QHash<qint64, double>& ratings,
-	                    QHash<qint64, QString>& fanartPaths) const;
+	                    QHash<qint64, QString>& fanartPaths,
+	                    QHash<qint64, int>& tmdbIds) const;
 
 	void                        resetPosterForFile(qint64 fileId);
 	void                        clearPosterPath(const QString& imagePath);
 	void                        clearFanartPath(const QString& fanartPath);
 	void                        updateImdbId(qint64 fileId, const QString& imdbId);
+	void                        updateTmdbId(qint64 fileId, int tmdbId);
 	void                        resetNoPosterRecords();
 
 	// ── Startup cleanup ──────────────────────────────────────────────────────

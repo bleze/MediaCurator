@@ -196,6 +196,7 @@ signals:
 	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
 	void tmdbDataReady(qint64 fileId, QString title, int year, double rating, QString mediaType);
 	void imdbIdSaved(qint64 fileId, QString imdbId);
+	void tmdbIdSaved(qint64 fileId, int tmdbId);
 	// Fired once per file after processFile() returns, regardless of outcome —
 	// drives PosterManager's batch-refresh progress tracking.
 	void fileProcessed(qint64 fileId);
@@ -281,6 +282,13 @@ private:
 			// UI models too -- upsertPosterRecord() alone only updates the DB.
 			if (!resolvedImdbId.isEmpty())
 				emit imdbIdSaved(fileId, resolvedImdbId);
+			// tmdbId isn't always set on the PosterRecord the caller upserts (several
+			// branches only touch rating/title), so persist it here unconditionally
+			// instead of relying on that upsert to carry it.
+			if (info.tmdbId > 0) {
+				DatabaseManager::instance().updateTmdbId(fileId, info.tmdbId);
+				emit tmdbIdSaved(fileId, info.tmdbId);
+			}
 		};
 
 		// Skip files that are already fully done (poster + rating + title).
@@ -1018,6 +1026,8 @@ void PosterManager::startWorkerPool()
 		        this,     &PosterManager::tmdbDataReady);
 		connect(worker, &PosterWorker::imdbIdSaved,
 		        this,     &PosterManager::imdbIdSaved);
+		connect(worker, &PosterWorker::tmdbIdSaved,
+		        this,     &PosterManager::tmdbIdSaved);
 		connect(worker, &PosterWorker::fileProcessed,
 		        this, [this](qint64 fileId) {
 			if (!m_batchActive || !m_batchIds.remove(fileId)) return;
@@ -1157,7 +1167,7 @@ void PosterManager::enqueueBatch(const QList<qint64>& fileIds)
 void PosterManager::refresh(qint64 fileId, const QString& posterPath,
                              const QByteArray& imageData, const QString& imdbIdHint,
                              double voteAverage, int voteCount,
-                             const QString& fanartTmdbPath)
+                             const QString& fanartTmdbPath, int tmdbId)
 {
 	const auto rec = DatabaseManager::instance().posterForFile(fileId);
 	const QString imdbId = !imdbIdHint.isEmpty() ? imdbIdHint
@@ -1169,6 +1179,10 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 	if (!imdbIdHint.isEmpty()) {
 		DatabaseManager::instance().updateImdbId(fileId, imdbIdHint);
 		emit imdbIdSaved(fileId, imdbIdHint);
+	}
+	if (tmdbId > 0) {
+		DatabaseManager::instance().updateTmdbId(fileId, tmdbId);
+		emit tmdbIdSaved(fileId, tmdbId);
 	}
 
 	const QString cacheDir  = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)

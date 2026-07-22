@@ -506,6 +506,24 @@ void McJobListModel::updateImdbId(qint64 fileId, const QString& imdbId)
 	}
 }
 
+void McJobListModel::updateTmdbId(qint64 fileId, int tmdbId)
+{
+	for (int i = 0; i < m_allEntries.size(); ++i) {
+		if (m_allEntries[i].job.fileId == fileId) {
+			m_allEntries[i].job.tmdbId = tmdbId;
+			break;
+		}
+	}
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId == fileId) {
+			m_entries[i].job.tmdbId = tmdbId;
+			const QModelIndex idx = index(i);
+			emit dataChanged(idx, idx, { TmdbIdRole });
+			return;
+		}
+	}
+}
+
 void McJobListModel::updateProgress(qint64 jobId, int percent)
 {
 	m_progress.insert(jobId, percent);
@@ -812,6 +830,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case StorageGroupRole:   return e.storageGroup;
 	case FinishedAtRole:     return e.job.finishedAt;
 	case MediaTypeRole:      return e.job.mediaType;
+	case TmdbIdRole:         return e.job.tmdbId;
 	default:                   return {};
 	}
 }

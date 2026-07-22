@@ -59,6 +59,7 @@ public:
 		SubtitleStreamsRole= Qt::UserRole + 15,
 		FileIdRole         = Qt::UserRole + 16,  // qint64 for fast id lookup (avoids full FileRecord copy in sizeHint)
 		StorageGroupRole   = Qt::UserRole + 17,  // int 1-4 — see StorageGroupSettings
+		TmdbRole           = Qt::UserRole + 18,  // int — TMDB movie/tv numeric id, 0 if unknown
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -99,7 +100,8 @@ public:
 	              const QHash<qint64, QString>& imdbIds,
 	              const QSet<qint64>& filesWithJobs,
 	              const QHash<qint64, double>& ratings = {},
-	              const QHash<qint64, QString>& fanartPaths = {});
+	              const QHash<qint64, QString>& fanartPaths = {},
+	              const QHash<qint64, int>& tmdbIds = {});
 	void applyFileUpdate(const Mc::FileRecord& file, const QList<Mc::StreamRecord>& streams);
 	void removeEntry(qint64 fileId);
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter
@@ -137,6 +139,7 @@ public slots:
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void onImdbIdSaved(qint64 fileId, const QString& imdbId);
+	void onTmdbIdSaved(qint64 fileId, int tmdbId);
 	void onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating,
 	                     const QString& mediaType = {});
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
@@ -161,6 +164,7 @@ private:
 	QTimer                    m_fanartBatchTimer;
 	QHash<qint64, int>        m_posterVersions;  // fileId → version counter (increments on update)
 	QHash<qint64, QString>    m_imdbIds;         // fileId → IMDb ID
+	QHash<qint64, int>        m_tmdbIds;         // fileId → TMDB numeric id
 	QHash<qint64, double>     m_ratings;         // fileId → TMDB vote_average (absent = no rating)
 	QHash<qint64, int>        m_folderCounts;    // fileId → count of files sharing the same parent folder
 	QHash<qint64, QSet<int>>  m_forcedRemovals;  // fileId → stream indices user wants removed
