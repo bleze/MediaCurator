@@ -14,6 +14,14 @@ env:
 
 jobs:
   build-windows:
+    # Skip the redundant build when this is the version-bump commit landing on
+    # main via plain `git push origin main` — the immediately-following
+    # `git push origin vX.Y.Z` triggers the real build via the tags trigger
+    # above (github.ref is refs/tags/vX there, not refs/heads/main, so this
+    # condition doesn't affect it). Keeps CI on ordinary (non-release) pushes.
+    if: >-
+      !(github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+        startsWith(github.event.head_commit.message, 'Release '))
     runs-on: windows-latest
     name: Windows (MSVC x64)
     env:
@@ -110,6 +118,10 @@ jobs:
         if-no-files-found: error
 
   build-macos:
+    # See build-windows's identical condition for why this exists.
+    if: >-
+      !(github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+        startsWith(github.event.head_commit.message, 'Release '))
     runs-on: macos-latest
     name: macOS (Clang universal)
     env:
@@ -192,6 +204,10 @@ jobs:
     # exist on older still-supported target distros. Building on the older
     # baseline keeps the bundled Qt libs (and MediaCurator itself) compatible
     # with a wider range of target systems.
+    # See build-windows's identical condition for why this exists.
+    if: >-
+      !(github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+        startsWith(github.event.head_commit.message, 'Release '))
     runs-on: ubuntu-22.04
     name: Linux (GCC x64)
     env:

@@ -36,7 +36,9 @@ Use [semantic versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
 #### Step 2 — Commit and tag
 
-The tag **must** match the version in `CMakeLists.txt`, prefixed with `v`:
+The tag **must** match the version in `CMakeLists.txt`, prefixed with `v`. The commit
+message **must** start with `Release ` (exact prefix) — CI uses that to skip a
+redundant build on the plain `main` push, see note below:
 
 ```powershell
 git add CMakeLists.txt
@@ -47,9 +49,17 @@ git tag v1.8.1
 git push origin v1.8.1
 ```
 
+> `build.yml`'s `build-windows`/`build-macos`/`build-linux` jobs skip themselves when
+> the push is to `refs/heads/main` **and** the commit message starts with `Release `
+> — that combination only ever means "the version-bump commit that's about to be
+> tagged," so building it would just duplicate the build the tag push triggers next.
+> The tag push (`refs/tags/vX.Y.Z`) is unaffected by this check and always builds.
+> If you commit with a different message (or amend it), the `main` push will build
+> normally — harmless, just redundant once you tag.
+
 #### Step 3 — Let CI do the rest
 
-Pushing a `v*` tag triggers `.github/workflows/build.yml`:
+Pushing the `v*` tag triggers `.github/workflows/build.yml`:
 
 1. `build-windows`, `build-macos`, `build-linux` each configure, build, and package
    (NSIS `.exe`, `.dmg`, `.deb`) with the version baked in from `CMakeLists.txt`.

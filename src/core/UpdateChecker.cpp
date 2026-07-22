@@ -2,7 +2,6 @@
 #include "core/AppSettings.h"
 
 #include <QCoreApplication>
-#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -24,7 +23,6 @@ namespace Mc {
 
 namespace {
 constexpr const char* kApiUrl = "https://api.github.com/repos/bleze/MediaCurator/releases/latest";
-constexpr qint64 kMinIntervalMs = 24LL * 60 * 60 * 1000;
 
 QVersionNumber parseTag(const QString& tagName)
 {
@@ -66,14 +64,6 @@ void UpdateChecker::check(bool silent)
 	if (m_busy)
 		return;
 
-	if (silent) {
-		// Default must be qint64: jsonToVariant() casts the stored value to the
-		// default's type, and static_cast<int> of an ms-epoch overflows.
-		const qint64 lastCheckMs = AppSettings::instance().value("update/lastCheckMs", 0LL).toLongLong();
-		if (QDateTime::currentMSecsSinceEpoch() - lastCheckMs < kMinIntervalMs)
-			return;
-	}
-
 	m_busy = true;
 	QNetworkRequest req{QUrl(QString::fromLatin1(kApiUrl))};
 	req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("MediaCurator"));
@@ -101,13 +91,6 @@ void UpdateChecker::onReplyFinished(QNetworkReply* reply, bool silent)
 		emit checkFailed(tr("Unexpected response from GitHub"), silent);
 		return;
 	}
-
-	// Only silent (startup) checks feed the throttle timestamp. A manual check
-	// from the Help menu must not push back the next automatic check — doing so
-	// made auto-check-on-startup appear to stop working entirely for anyone who
-	// occasionally checks manually, since every manual check reset the 24h clock.
-	if (silent)
-		AppSettings::instance().setValue("update/lastCheckMs", QDateTime::currentMSecsSinceEpoch());
 
 	const QVersionNumber latest  = parseTag(tagName);
 	const QVersionNumber current = QVersionNumber::fromString(QCoreApplication::applicationVersion());
