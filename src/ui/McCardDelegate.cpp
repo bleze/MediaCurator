@@ -3,7 +3,6 @@
 #include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
 #include "classifier/RegexClassifier.h"
-#include "core/ExternalTools.h"
 #include "core/StorageGroupSettings.h"
 #include "engine/TrackDecision.h"
 
@@ -1125,10 +1124,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 
 	// Play button tooltip
 	if (playButtonRect(content).contains(event->pos())) {
-		const QString tip = ExternalTools::instance().isVlcAvailable()
-			? tr("Play in VLC")
-			: tr("Play  (VLC not detected — will open in default player)");
-		QToolTip::showText(event->globalPos(), tip, view);
+		QToolTip::showText(event->globalPos(), tr("Play in default player"), view);
 		return true;
 	}
 
@@ -1740,7 +1736,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		}
 	}
 
-	// ── Header: VLC button (right) | right-side meta | filename (left) ───────
+	// ── Header: play button (right) | right-side meta | filename (left) ──────
 	{
 		QFont fnFont = option.font;
 		fnFont.setPointSizeF(option.font.pointSizeF() * 0.85);
@@ -1748,23 +1744,23 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
 		                content.width(), kHeaderH);
 
-		// VLC logo — rightmost element, vertically centred in header
+		// Play icon — rightmost element, vertically centred in header
 		const QRect playBtn = playButtonRect(content);
 		const bool  hovered = playBtn.contains(m_lastMousePos);
 		{
-			QPixmap vlcLogo;
-			const QString cacheKey = QStringLiteral("vlc_logo_%1").arg(playBtn.height());
-			if (!QPixmapCache::find(cacheKey, &vlcLogo)) {
-				vlcLogo = QPixmap(":/icons/vlc.svg").scaled(
+			QPixmap playIcon;
+			const QString cacheKey = QStringLiteral("play_icon_%1").arg(playBtn.height());
+			if (!QPixmapCache::find(cacheKey, &playIcon)) {
+				playIcon = QPixmap(":/icons/vlc.svg").scaled(
 				    playBtn.height(), playBtn.height(),
 				    Qt::KeepAspectRatio, Qt::SmoothTransformation);
-				QPixmapCache::insert(cacheKey, vlcLogo);
+				QPixmapCache::insert(cacheKey, playIcon);
 			}
 			painter->save();
 			painter->setOpacity(hovered ? 1.0 : 0.80);
-			const int ox = playBtn.left() + (playBtn.width()  - vlcLogo.width())  / 2;
-			const int oy = playBtn.top()  + (playBtn.height() - vlcLogo.height()) / 2;
-			painter->drawPixmap(ox, oy, vlcLogo);
+			const int ox = playBtn.left() + (playBtn.width()  - playIcon.width())  / 2;
+			const int oy = playBtn.top()  + (playBtn.height() - playIcon.height()) / 2;
+			painter->drawPixmap(ox, oy, playIcon);
 			painter->restore();
 		}
 
@@ -1773,7 +1769,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 		// Storage-group chip — colored disk icon + group number, drawn only when
 		// the user actually has files spread across >1 group (see
-		// setMultiGroupBadgeEnabled). Sits immediately left of the VLC button,
+		// setMultiGroupBadgeEnabled). Sits immediately left of the play button,
 		// before the status pill (job mode) or filename (library mode) claim the
 		// remaining width. The number backs up the color (4 fixed hues alone can
 		// be hard to tell apart at a glance, especially for colorblind users).

@@ -44,7 +44,7 @@ After setting rules to retain only english and danish audio and subtitle tracks 
 - **Backdrop art** — Pick a backdrop for any matched movie from a TMDB thumbnail grid, or supply your own using the same Kodi/Plex conventions: `<video-basename>-fanart.<ext>`, or (movie-owns-its-folder only) `fanart`/`backdrop`/`background`/`art`.`<ext>`. It's cached locally and shown as a background behind the file card, with opacity adjustable in **Settings → Library Cards** and a live preview as you drag the slider.
 - **IMDb / TMDB integration** — Search TMDB by title, browse results with poster thumbnails, and match a movie by hand when automatic identification isn't confident enough.
 - **NFO writer** *(opt-in)* — Save each matched movie's IMDb ID, TMDB ID, title, original title, release year, and TMDB rating to a Kodi/Plex-compatible `.nfo` file next to the video, so identification survives a database wipe or a rescan even without MediaCurator's own database. The `<title>` written comes from your **Settings → Other** Understood Languages list — the first language TMDB actually has a translation for, in your chosen priority order — while `<originaltitle>` is always included too, so Kodi's own "Show original titles for movies" setting can prefer it on your machine without changing what other viewers of a shared library see. MediaCurator only ever *enriches* an NFO, never rewrites one from scratch: on an existing Kodi-style NFO, each tag it manages is individually added or updated and everything else in the file is left untouched; a scene-release NFO's free-form text has just its IMDb id corrected in place rather than being replaced; and a brand-new NFO is only created when none exists at all. Off by default (**Settings → Other**).
-- **VLC integration** — Play any file directly from the library view.
+- **Play in default player** — Play any file directly from the library view, using whatever app is registered as your system's default for that file type.
 - **Dark mode support** — Uses the system colour scheme; icons and UI elements adapt automatically.
 - **Automatic updates** — MediaCurator checks GitHub for new releases and lets you install with one click — it downloads the installer, runs it silently in the background, and relaunches automatically once done. You can also skip a version or check manually.
 - **Leaderboard** *(opt-in)* — Compare total space reclaimed against other MediaCurator users on a global leaderboard. Off by default; requires a personal write key for the leaderboard backend.
@@ -62,7 +62,6 @@ Hard drives are not cheap. A 16 TB NAS drive for home media storage costs upward
 | ffprobe | Stream analysis | Bundled |
 | mkvmerge | Lossless remux | Bundled |
 | mkvpropedit | Flag/tag edits without remux | Bundled |
-| VLC | In-app playback | Optional — auto-detected if installed |
 
 For a TMDB API key (free), visit [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). Enter it in **Settings** to enable poster art and movie search. The app works without it.
 

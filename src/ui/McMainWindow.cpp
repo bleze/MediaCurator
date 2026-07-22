@@ -669,7 +669,7 @@ void McMainWindow::setupUi()
 	auto* fileDelegate = new McFileCardDelegate(m_listView);
 	connect(fileDelegate, &McFileCardDelegate::playRequested,
 	        this, [this](const QModelIndex& idx) {
-		launchInVlc(idx.data(McFileListModel::FileRole).value<FileRecord>().path);
+		launchInDefaultPlayer(idx.data(McFileListModel::FileRole).value<FileRecord>().path);
 	});
 	connect(fileDelegate, &McFileCardDelegate::imdbPageRequested,
 	        this, [this](const QModelIndex& idx) {
@@ -1222,6 +1222,13 @@ void McMainWindow::setupUi()
 				        [this] { m_highscoreDialog = nullptr; });
 				connect(m_highscoreDialog, &McHighscoreDialog::refreshRequested,
 				        this, [] { HighscoreClient::instance().fetchLeaderboard(); });
+				connect(m_highscoreDialog, &McHighscoreDialog::joinRequested, this, [this] {
+					const QString name = promptForHighscoreName(currentReclaimedMb());
+					if (!name.isEmpty()) {
+						m_highscoreDialog->setLocalPlayerName(name);
+						submitHighscoreIfDue();
+					}
+				});
 			}
 			m_highscoreDialog->show();
 			m_highscoreDialog->raise();
@@ -1271,7 +1278,7 @@ void McMainWindow::setupUi()
 	        this, &McMainWindow::onShowPreview);
 
 	connect(m_jobPanel, &McJobPanel::playRequested,
-	        this, &McMainWindow::launchInVlc);
+	        this, &McMainWindow::launchInDefaultPlayer);
 
 	connect(m_jobPanel, &McJobPanel::editImdbLinkRequested,
 	        this, [this](qint64 fileId) {
@@ -3209,6 +3216,23 @@ qint64 McMainWindow::currentReclaimedMb() const
 	return AppSettings::instance().reclaimedBytes() / (1024 * 1024);
 }
 
+QString McMainWindow::promptForHighscoreName(qint64 mb)
+{
+	bool ok = false;
+	QString name = QInputDialog::getText(this, tr("Join the Leaderboard"),
+	    tr("You've reclaimed %1 MB so far!\n"
+	       "Enter a name to appear on MediaCurator's public leaderboard:").arg(mb),
+	    QLineEdit::Normal, QString(), &ok).trimmed();
+	if (!ok || name.isEmpty()) {
+		AppSettings::instance().setValue("highscore/optedOut", true);
+		return QString();
+	}
+	name.truncate(20);
+	AppSettings::instance().setValue("highscore/playerName", name);
+	AppSettings::instance().setValue("highscore/optedOut", false);
+	return name;
+}
+
 void McMainWindow::submitHighscoreIfDue()
 {
 	qint64 mb = currentReclaimedMb();
@@ -3217,19 +3241,11 @@ void McMainWindow::submitHighscoreIfDue()
 
 	QString name = AppSettings::instance().value("highscore/playerName").toString();
 	if (name.isEmpty()) {
-		if (m_highscoreDeclinedThisSession)
-			return;   // don't nag every debounce firing this run
-		bool ok = false;
-		name = QInputDialog::getText(this, tr("Join the Leaderboard"),
-		    tr("You've reclaimed %1 MB so far!\n"
-		       "Enter a name to appear on MediaCurator's public leaderboard:").arg(mb),
-		    QLineEdit::Normal, QString(), &ok).trimmed();
-		if (!ok || name.isEmpty()) {
-			m_highscoreDeclinedThisSession = true;
+		if (AppSettings::instance().value("highscore/optedOut", false).toBool())
+			return;   // declined previously; only asks again via the leaderboard dialog's Join button
+		name = promptForHighscoreName(mb);
+		if (name.isEmpty())
 			return;
-		}
-		name.truncate(20);
-		AppSettings::instance().setValue("highscore/playerName", name);
 	}
 
 	// Clamp against this player's last dreamlo-posted score (cached from the
@@ -3301,15 +3317,12 @@ void McMainWindow::updateHighscoreVisibility()
 		m_highscoreBand->setVisible(shouldShow);
 }
 
-void McMainWindow::launchInVlc(const QString& rawPath)
+void McMainWindow::launchInDefaultPlayer(const QString& rawPath)
 {
-	const QUrl url = QUrl::fromLocalFile(rawPath);
-	const QString vlc = ExternalTools::instance().vlcPath();
-	if (!vlc.isEmpty()) {
-		QProcess::startDetached(vlc, { url.toString() });
-		return;
-	}
-	QDesktopServices::openUrl(url);
+	// Delegates to the OS shell (ShellExecute / LSOpenURLsWithRole / xdg-open),
+	// which resolves the file's registered default app by extension — whatever
+	// the user has set as their system default player, not a specific hardcoded app.
+	QDesktopServices::openUrl(QUrl::fromLocalFile(rawPath));
 }
 
 void McMainWindow::onSettings()

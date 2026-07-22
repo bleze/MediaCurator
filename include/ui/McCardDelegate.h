@@ -20,9 +20,9 @@ namespace Mc {
 /**
  * McCardDelegate — unified card painter for both the library list and the job queue.
  *
- * Mode::Library  — shows poster + filename + duration/size + VLC play + track badges + IMDb button.
+ * Mode::Library  — shows poster + filename + duration/size + play + track badges + IMDb button.
  *                  Track badges are read-only (no click-to-toggle).
- * Mode::JobQueue — shows poster + filename + status pill + size + VLC play + track badges
+ * Mode::JobQueue — shows poster + filename + status pill + size + play + track badges
  *                  (kept normal, removed struck-through) + IMDb button + checkbox + progress bar.
  *                  Proposed-job audio/subtitle badges are click-to-toggle.
  *

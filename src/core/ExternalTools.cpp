@@ -4,7 +4,6 @@
 #include <QFile>
 #include <QProcess>
 #include <QRegularExpression>
-#include <QStandardPaths>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -74,25 +73,6 @@ QString ExternalTools::ffmpegPath()      const { if (m_ffmpegPath.isEmpty())    
 QString ExternalTools::mkvmergePath()    const { if (m_mkvmergePath.isEmpty())    m_mkvmergePath    = findTool("mkvmerge");    return m_mkvmergePath; }
 QString ExternalTools::mkvextractPath()  const { if (m_mkvextractPath.isEmpty())  m_mkvextractPath  = findTool("mkvextract");  return m_mkvextractPath; }
 QString ExternalTools::mkvpropeditPath() const { if (m_mkvpropeditPath.isEmpty()) m_mkvpropeditPath = findTool("mkvpropedit"); return m_mkvpropeditPath; }
-
-QString ExternalTools::vlcPath() const
-{
-	if (m_vlcSearched) return m_vlcPath;
-	m_vlcSearched = true;
-#ifdef Q_OS_WIN
-	for (const QString& candidate : {
-			QStringLiteral("C:/Program Files/VideoLAN/VLC/vlc.exe"),
-			QStringLiteral("C:/Program Files (x86)/VideoLAN/VLC/vlc.exe"),
-		}) {
-		if (QFile::exists(candidate)) {
-			m_vlcPath = candidate;
-			return m_vlcPath;
-		}
-	}
-#endif
-	m_vlcPath = QStandardPaths::findExecutable(QStringLiteral("vlc"));
-	return m_vlcPath;
-}
 
 bool ExternalTools::validateAll() { return true; }
 

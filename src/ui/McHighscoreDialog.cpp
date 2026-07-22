@@ -46,17 +46,34 @@ McHighscoreDialog::McHighscoreDialog(const QList<HighscoreEntry>& entries,
 	root->addWidget(m_table, 1);
 
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
+	m_joinButton = buttons->addButton(tr("Join Leaderboard"), QDialogButtonBox::ActionRole);
+	connect(m_joinButton, &QPushButton::clicked, this, &McHighscoreDialog::joinRequested);
 	auto* refreshBtn = buttons->addButton(tr("Refresh"), QDialogButtonBox::ActionRole);
 	connect(refreshBtn, &QPushButton::clicked, this, &McHighscoreDialog::refreshRequested);
 	connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 	root->addWidget(buttons);
 
-	rebuildTable(entries);
+	updateJoinButtonVisibility();
+	m_entries = entries;
+	rebuildTable(m_entries);
 }
 
 void McHighscoreDialog::setEntries(const QList<HighscoreEntry>& entries)
 {
-	rebuildTable(entries);
+	m_entries = entries;
+	rebuildTable(m_entries);
+}
+
+void McHighscoreDialog::setLocalPlayerName(const QString& name)
+{
+	m_localPlayerName = name;
+	updateJoinButtonVisibility();
+	rebuildTable(m_entries);
+}
+
+void McHighscoreDialog::updateJoinButtonVisibility()
+{
+	m_joinButton->setVisible(m_localPlayerName.isEmpty());
 }
 
 void McHighscoreDialog::rebuildTable(const QList<HighscoreEntry>& entries)

@@ -24,7 +24,7 @@ Edit `CMakeLists.txt`:
 
 ```cmake
 project(MediaCurator
-    VERSION 1.8.0
+    VERSION 1.8.1
     ...
 )
 ```
@@ -40,11 +40,11 @@ The tag **must** match the version in `CMakeLists.txt`, prefixed with `v`:
 
 ```powershell
 git add CMakeLists.txt
-git commit -m "Release 1.8.0"
+git commit -m "Release 1.8.1"
 git push origin main
 
-git tag v1.8.0
-git push origin v1.8.0
+git tag v1.8.1
+git push origin v1.8.1
 ```
 
 #### Step 3 — Let CI do the rest

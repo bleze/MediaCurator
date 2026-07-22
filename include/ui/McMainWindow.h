@@ -117,9 +117,10 @@ private:
 	void updateRemuxStatusBar();
 	void updateHighscoreVisibility();
 	void submitHighscoreIfDue();
+	QString promptForHighscoreName(qint64 mb);
 	void onHighscoreLeaderboardReady(QList<HighscoreEntry> entries);
 	[[nodiscard]] qint64 currentReclaimedMb() const;
-	void launchInVlc(const QString& rawPath);
+	void launchInDefaultPlayer(const QString& rawPath);
 	bool analyzeSingleFile(qint64 fileId);
 	void setSubtitleLanguage(const FileRecord& file, const StreamRecord& stream, const QString& langCode);
 #ifdef Q_OS_WIN
@@ -196,7 +197,6 @@ private:
 	McHighscoreDialog* m_highscoreDialog     = nullptr;
 	QTimer*            m_highscoreDebounce   = nullptr;
 	bool               m_highscoreBandPinned = false;
-	bool               m_highscoreDeclinedThisSession = false;
 	QList<HighscoreEntry> m_lastHighscoreEntries;
 	bool             m_firstShowDone       = false;
 	bool             m_startupCompleteDone = false;
