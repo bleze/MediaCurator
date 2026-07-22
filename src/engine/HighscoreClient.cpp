@@ -6,6 +6,7 @@
 #define MC_HAS_DREAMLO_PRIVATE_CODE 1
 #endif
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -28,6 +29,13 @@ QString privateCode()
 #else
 	return {};
 #endif
+}
+
+// dreamlo's "date" field, e.g. "7/22/2026 3:45:12 PM". Returns an invalid
+// QDateTime (caller must check isValid()) if the format ever changes on us.
+QDateTime parseDreamloDate(const QString& s)
+{
+	return QDateTime::fromString(s, QStringLiteral("M/d/yyyy h:mm:ss AP"));
 }
 
 } // namespace
@@ -125,7 +133,8 @@ QList<HighscoreEntry> HighscoreClient::parseLeaderboard(const QByteArray& json)
 		// score may come back as a JSON string or number depending on
 		// dreamlo's converter — QVariant::toLongLong() handles both.
 		out.append({ o.value(QStringLiteral("name")).toString(),
-		             o.value(QStringLiteral("score")).toVariant().toLongLong() });
+		             o.value(QStringLiteral("score")).toVariant().toLongLong(),
+		             parseDreamloDate(o.value(QStringLiteral("date")).toString()) });
 	}
 
 	// Defensive — dreamlo documents descending order, but don't trust it blindly.

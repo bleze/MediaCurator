@@ -1,4 +1,5 @@
 #pragma once
+#include <QDateTime>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -8,8 +9,10 @@ class QNetworkAccessManager;
 namespace Mc {
 
 struct HighscoreEntry {
-	QString name;
-	qint64  score = 0;   // MB reclaimed
+	QString   name;
+	qint64    score = 0;   // MB reclaimed
+	QDateTime lastActive;  // dreamlo's "date" field — last submit time, NOT first-joined
+	                       // (dreamlo overwrites it on every /add call). Invalid if unparsable.
 };
 
 /**
