@@ -17,6 +17,7 @@
 #include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QSet>
+#include <QThread>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -735,6 +736,13 @@ void SubtitleDownloadWorker::run()
 			emit languageDone(lang, false, err);
 		emit done(0, m_languages.size(), err, -1, client.quotaExceeded(), client.retryAfterSeconds());
 		m_client = nullptr;
+		// Self-quit rather than relying solely on the done->QThread::quit connection:
+		// that signal crosses back to the thread that owns m_thread (see
+		// McSubtitleDownloadDialog), which only fires once that thread's event loop
+		// is free to process it. A caller synchronously wait()-ing on this thread
+		// (e.g. the dialog's destructor tearing down mid-download) would deadlock
+		// against its own blocked loop otherwise.
+		QThread::currentThread()->quit();
 		return;
 	}
 	qCDebug(lcOS) << "Login OK";
@@ -963,6 +971,8 @@ void SubtitleDownloadWorker::run()
 	emit done(downloaded, failed, statusMsg, client.remaining(), client.quotaExceeded(),
 	          client.retryAfterSeconds());
 	m_client = nullptr;
+	// See the self-quit comment on the login-failure return above.
+	QThread::currentThread()->quit();
 }
 
 } // namespace Mc

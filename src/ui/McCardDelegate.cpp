@@ -201,6 +201,15 @@ void McCardDelegate::drawGroupChip(QPainter* painter, int x, int y, int h, int g
 // credits, karaoke-style song lyrics) tend to be unrepresentative filler.
 static QStringList subtitlePreviewCues(const QString& path, int maxCues = 3)
 {
+	// Image-based sidecars (VobSub's .sub, matching ScanWorker's
+	// extractSubtitleSampleText()) have no dialogue text to sample — reading their
+	// binary MPEG2 image data as UTF-8 and running it through the cue parser below
+	// just produces garbage lines in the tooltip.
+	const QString ext = QFileInfo(path).suffix().toLower();
+	if (ext != QLatin1String("srt") && ext != QLatin1String("ass") &&
+	    ext != QLatin1String("ssa") && ext != QLatin1String("vtt"))
+		return {};
+
 	QFile f(path);
 	if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
 

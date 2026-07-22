@@ -140,6 +140,26 @@ McSubtitleDownloadDialog::McSubtitleDownloadDialog(const QString& apiKey,
 	setFixedSize(size());
 }
 
+McSubtitleDownloadDialog::~McSubtitleDownloadDialog()
+{
+	// reject() (Cancel/Esc/the window's close box) waits for the worker to actually
+	// stop before the dialog closes — but this dialog can also be torn down
+	// directly by its parent (e.g. MediaCurator itself closing while a download is
+	// still in flight), which bypasses reject() entirely and goes straight to
+	// ~QObject destroying m_thread. QThread's destructor terminates a still-running
+	// thread, which can hit mid network I/O and crash with "Cannot send events to
+	// objects owned by a different thread" (see SubtitleWorker::stop() for the same
+	// class of bug elsewhere). Cancel and wait here so that can never happen,
+	// regardless of how this dialog goes away. Safe to block on: SubtitleDownloadWorker
+	// now self-quits its thread once run() returns, so this doesn't depend on our own
+	// (currently blocked) event loop marshalling the done->QThread::quit connection.
+	if (m_thread && m_thread->isRunning()) {
+		if (m_worker)
+			QMetaObject::invokeMethod(m_worker, "cancel", Qt::QueuedConnection);
+		m_thread->wait(5000);
+	}
+}
+
 void McSubtitleDownloadDialog::onDownload()
 {
 	m_downloadBtn->setEnabled(false);

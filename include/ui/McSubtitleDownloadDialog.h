@@ -29,6 +29,7 @@ public:
 	                                   const QList<StreamRecord>& existingStreams,
 	                                   const QString& movieTitle,
 	                                   QWidget* parent = nullptr);
+	~McSubtitleDownloadDialog() override;
 
 	int downloadedCount() const { return m_downloaded; }
 
