@@ -2,6 +2,7 @@
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "ui/McLanguageFlags.h"
+#include "ui/McWindowGeometry.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -296,9 +297,10 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	{
 		QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 		const QByteArray geo = s.value("imdbSearchDialog/geometry").toByteArray();
-		if (!geo.isEmpty())
+		if (!geo.isEmpty()) {
 			restoreGeometry(geo);
-		else
+			ensureGeometryFitsScreen(this);
+		} else
 			resize(1000, 620);
 		m_galleryFilter = s.value("imdbSearchDialog/galleryFilter").toString();
 	}

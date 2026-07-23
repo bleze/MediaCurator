@@ -2,6 +2,7 @@
 #include "ui/McCardDelegate.h"
 #include "ui/McJobStatsBar.h"
 #include "ui/McLanguageFlags.h"
+#include "ui/McWindowGeometry.h"
 #include "core/AppSettings.h"
 #include "engine/TrackDecision.h"
 
@@ -162,9 +163,10 @@ void McPreviewDialog::setupUi(const FileDecision& decision, const QString& flagC
 	setMinimumSize(860, 500);
 
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
-	if (const QByteArray geo = s.value("previewDialog/geometry").toByteArray(); !geo.isEmpty())
+	if (const QByteArray geo = s.value("previewDialog/geometry").toByteArray(); !geo.isEmpty()) {
 		restoreGeometry(geo);
-	else
+		ensureGeometryFitsScreen(this);
+	} else
 		resize(1100, 620);
 
 	auto* root = new QVBoxLayout(this);

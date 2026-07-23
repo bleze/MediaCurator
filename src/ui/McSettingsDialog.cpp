@@ -1,6 +1,7 @@
 #include "ui/McSettingsDialog.h"
 #include "ui/McCardDelegate.h"
 #include "ui/McLanguageFlags.h"
+#include "ui/McWindowGeometry.h"
 #include "core/AppSettings.h"
 #include "core/StorageGroupSettings.h"
 #include "core/UserProfile.h"
@@ -217,8 +218,10 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	setMinimumSize(760, 701);
 
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
-	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty())
+	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty()) {
 		restoreGeometry(geo);
+		ensureGeometryFitsScreen(this);
+	}
 
 	auto* root = new QVBoxLayout(this);
 	root->setSpacing(10);

@@ -44,6 +44,7 @@ set(MC_SOURCES
     ui/McHighscoreDialog.cpp
     ui/SvgIcon.cpp
     ui/McStorageGroupChipToggle.cpp
+    ui/McWindowGeometry.cpp
 
     # Engine
     engine/RuleEngine.cpp

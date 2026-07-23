@@ -1,6 +1,7 @@
 #include "ui/McJobReviewDialog.h"
 #include "ui/McJobCardDelegate.h"
 #include "ui/McJobListModel.h"
+#include "ui/McWindowGeometry.h"
 #include "core/DatabaseManager.h"
 #include "engine/TrackDecision.h"
 
@@ -76,9 +77,10 @@ McJobReviewDialog::McJobReviewDialog(
 	{
 	    QSettings s(AppSettings::geometryFilePath(), QSettings::IniFormat);
 	    const QByteArray geo = s.value("jobReviewDialog/geometry").toByteArray();
-	    if (!geo.isEmpty())
+	    if (!geo.isEmpty()) {
 	        restoreGeometry(geo);
-	    else
+	        ensureGeometryFitsScreen(this);
+	    } else
 	        resize(960, 490);
 	}
 

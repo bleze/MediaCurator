@@ -10,6 +10,7 @@
 #include "ui/McLanguageFlags.h"
 #include "ui/McStorageGroupChipToggle.h"
 #include "ui/McTrackContextMenu.h"
+#include "ui/McWindowGeometry.h"
 #include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
 #include "engine/ActionEngine.h"
@@ -1177,8 +1178,10 @@ void McJobPanel::setupUi()
 				// Persist geometry and splitter ratio across sessions
 				{
 					QSettings s;
-					if (const QByteArray g = s.value(QStringLiteral("jobLogDialog/geometry")).toByteArray(); !g.isEmpty())
+					if (const QByteArray g = s.value(QStringLiteral("jobLogDialog/geometry")).toByteArray(); !g.isEmpty()) {
 						dlg->restoreGeometry(g);
+						ensureGeometryFitsScreen(dlg);
+					}
 					if (const QByteArray sp = s.value(QStringLiteral("jobLogDialog/splitter")).toByteArray(); !sp.isEmpty())
 						splitter->restoreState(sp);
 				}
