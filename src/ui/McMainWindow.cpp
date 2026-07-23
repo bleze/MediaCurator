@@ -531,6 +531,13 @@ McMainWindow::McMainWindow(QWidget* parent)
 		        this, &McMainWindow::onHighscoreLeaderboardReady);
 		connect(&HighscoreClient::instance(), &HighscoreClient::scoreSubmitted,
 		        this, [](bool ok) { if (ok) HighscoreClient::instance().fetchLeaderboard(); });
+
+		// Recover a submission a previous session's closeEvent flush didn't catch
+		// (crash, forced shutdown, killed process) — only for players who already
+		// joined, so this never surprises a first-time user with the join prompt
+		// before they've done anything this session.
+		if (!AppSettings::instance().value("highscore/playerName").toString().isEmpty())
+			QTimer::singleShot(0, this, &McMainWindow::submitHighscoreIfDue);
 	}
 
 	connect(m_jobQueue, &JobQueue::reviewRequested, this,
@@ -2189,6 +2196,17 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 			return;
 		}
 		m_jobQueue->cancel();
+	}
+
+	// Flush a pending highscore submission now rather than let it die with the
+	// debounce timer: quitting within its 5s window (e.g. right after a batch
+	// finishes) used to drop that batch's savings from the leaderboard forever,
+	// even though the local reclaimed-bytes counter (and statusbar) already
+	// counted it. Firing the GET here, before the slower teardown steps below,
+	// gives it the rest of closeEvent's wall-clock time to actually complete.
+	if (m_highscoreDebounce && m_highscoreDebounce->isActive()) {
+		m_highscoreDebounce->stop();
+		submitHighscoreIfDue();
 	}
 
 	// Release the single-instance lock now, before the slow teardown below —
