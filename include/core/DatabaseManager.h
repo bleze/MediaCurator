@@ -172,6 +172,7 @@ struct PosterRecord {
 	qint64  fetchedAt   = 0;
 	double  voteAverage = 0.0;
 	int     voteCount   = 0;
+	int     attemptCount = 0;  // consecutive no_poster resolve attempts; see kMaxPosterResolveAttempts
 };
 
 // For display in McJobPanel (jobs JOIN files JOIN poster_cache)

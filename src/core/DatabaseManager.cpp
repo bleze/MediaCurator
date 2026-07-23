@@ -481,6 +481,17 @@ bool DatabaseManager::initSchema()
 		m.exec("CREATE INDEX IF NOT EXISTS idx_files_media_type ON files(media_type)");
 	}
 
+	// Migration: consecutive failed-resolve counter for poster_cache. Files that
+	// will never get an imdb_id (e.g. "Extras" sub-clips, trailers) used to sit in
+	// 'no_poster' forever, re-entering the folder-scan path (findNfoImdbId/
+	// findLocalArt — real NAS directory listings) every time the retry cooldown
+	// lapsed, indefinitely. attempt_count lets processFile() give up permanently
+	// after kMaxPosterResolveAttempts instead of retrying forever.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE poster_cache ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0");
+	}
+
 	return true;
 }
 
@@ -2050,8 +2061,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count, attempt_count)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET
 			source=excluded.source,
 			status=excluded.status,
@@ -2061,7 +2072,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 			tmdb_id=CASE WHEN excluded.tmdb_id > 0 THEN excluded.tmdb_id ELSE tmdb_id END,
 			fetched_at=excluded.fetched_at,
 			vote_average=CASE WHEN excluded.vote_average > 0 THEN excluded.vote_average ELSE vote_average END,
-			vote_count=CASE WHEN excluded.vote_count > 0 THEN excluded.vote_count ELSE vote_count END
+			vote_count=CASE WHEN excluded.vote_count > 0 THEN excluded.vote_count ELSE vote_count END,
+			attempt_count=excluded.attempt_count
 	)");
 	// Bind empty string (not null) — Qt maps null QString → SQL NULL which violates NOT NULL
 	auto nn = [](const QString& s) { return s.isNull() ? QString("") : s; };
@@ -2075,6 +2087,7 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 	q.addBindValue(rec.fetchedAt);
 	q.addBindValue(rec.voteAverage);
 	q.addBindValue(rec.voteCount);
+	q.addBindValue(rec.attemptCount);
 	if (!q.exec())
 		qWarning() << "upsertPosterRecord failed:" << q.lastError().text();
 }
@@ -2082,7 +2095,7 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id FROM poster_cache WHERE file_id=?");
+	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id,attempt_count FROM poster_cache WHERE file_id=?");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return {};
 	PosterRecord r;
@@ -2096,11 +2109,15 @@ std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 	r.voteAverage = q.value(6).toDouble();
 	r.voteCount   = q.value(7).toInt();
 	r.tmdbId      = q.value(8).toInt();
+	r.attemptCount = q.value(9).toInt();
 	return r;
 }
 
 QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 {
+	// Rows with status='unresolvable' (permanently given up — see
+	// kMaxPosterResolveAttempts in PosterManager.cpp) deliberately match none of
+	// the clauses below, so they drop out of this list for good.
 	QSqlQuery q(connection());
 	q.exec(R"(
 		SELECT f.id FROM files f
@@ -2138,7 +2155,7 @@ void DatabaseManager::resetPosterForFile(qint64 fileId)
 		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, fetched_at)
 		VALUES(?, '', 'pending', '', '', '', 0)
 		ON CONFLICT(file_id) DO UPDATE SET
-			source = '', status = 'pending', image_path = '', fanart_path = '', fetched_at = 0
+			source = '', status = 'pending', image_path = '', fanart_path = '', fetched_at = 0, attempt_count = 0
 	)");
 	q.addBindValue(fileId);
 	q.exec();
@@ -2193,7 +2210,10 @@ void DatabaseManager::clearFanartPath(const QString& fanartPath)
 void DatabaseManager::resetNoPosterRecords()
 {
 	QSqlQuery q(connection());
-	q.exec("UPDATE poster_cache SET status='pending',source='',image_path='' WHERE status='no_poster'");
+	// Also clears 'unresolvable' (permanently-given-up) rows — a freshly-added
+	// TMDB key is a legitimate reason to give those another shot.
+	q.exec("UPDATE poster_cache SET status='pending',source='',image_path='',attempt_count=0 "
+	       "WHERE status='no_poster' OR status='unresolvable'");
 }
 
 QHash<qint64, QString> DatabaseManager::allDonePosterPaths() const

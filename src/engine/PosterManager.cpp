@@ -1,4 +1,4 @@
-﻿#include "engine/PosterManager.h"
+#include "engine/PosterManager.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "scanner/NfoParser.h"
@@ -29,6 +29,13 @@
 #include <optional>
 
 namespace Mc {
+
+// Consecutive failed-resolve attempts (each spaced out by the retry cooldown) a
+// 'no_poster' file gets before processFile() gives up permanently and marks it
+// 'unresolvable'. Content that will never get an imdb_id (trailers, behind-the-
+// scenes clips under an "Extras" folder, etc.) used to retry forever, re-running
+// the folder-scan path below every time the cooldown lapsed.
+static constexpr int kMaxPosterResolveAttempts = 2;
 
 // Verify cached poster/fanart files still exist; reset DB rows for missing files.
 static void resetMissingPosterMediaInDb()
@@ -378,6 +385,15 @@ private:
 		// the cooldown (always retry).
 		if (existing && existing->status == "no_poster" && m_retryCooldownDays > 0
 		    && existing->fetchedAt > 0) {
+			// Content that will never resolve (trailers, "Extras" sub-clips, etc.)
+			// would otherwise keep cycling through this cooldown forever — one more
+			// NAS-waking folder scan every time it lapses. Give up for good instead.
+			if (existing->attemptCount >= kMaxPosterResolveAttempts) {
+				PosterRecord pr = *existing;
+				pr.status = "unresolvable";
+				DatabaseManager::instance().upsertPosterRecord(pr);
+				return;
+			}
 			const qint64 cooldownMs = qint64(m_retryCooldownDays) * 24 * 60 * 60 * 1000;
 			if (QDateTime::currentMSecsSinceEpoch() - existing->fetchedAt < cooldownMs)
 				return;
@@ -462,7 +478,8 @@ private:
 
 		// Nothing on disk — need to download.  No API key → drain queue cleanly.
 		if (m_tmdbApiKey.isEmpty()) {
-			rec.status = "no_poster";
+			rec.status       = "no_poster";
+			rec.attemptCount = (existing ? existing->attemptCount : 0) + 1;
 			DatabaseManager::instance().upsertPosterRecord(rec);
 			return;
 		}
@@ -522,7 +539,8 @@ private:
 			DatabaseManager::instance().upsertPosterRecord(rec);
 			emit posterReady(fileId, imagePath);
 		} else {
-			rec.status = "no_poster";
+			rec.status       = "no_poster";
+			rec.attemptCount = (existing ? existing->attemptCount : 0) + 1;
 			DatabaseManager::instance().upsertPosterRecord(rec);
 		}
 	}
