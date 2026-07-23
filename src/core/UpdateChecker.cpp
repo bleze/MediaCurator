@@ -2,6 +2,7 @@
 #include "core/AppSettings.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -12,6 +13,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <QVersionNumber>
 
 #ifdef Q_OS_WIN
@@ -23,6 +25,22 @@ namespace Mc {
 
 namespace {
 constexpr const char* kApiUrl = "https://api.github.com/repos/bleze/MediaCurator/releases/latest";
+
+// Temporary instrumentation for the "auto-update finish-page Run checkbox
+// doesn't restart the app" regression (2026-07-23) — see the matching helper
+// in main.cpp. Gated on MC_DEBUG_LOG so it's silent in shipped installs.
+// Remove once the root cause is confirmed.
+void logRestartDebug(const QString& line)
+{
+	if (!qEnvironmentVariableIsSet("MC_DEBUG_LOG")) return;
+	static const QString logPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+	                                + QStringLiteral("/MediaCurator-restart_debug.log");
+	QFile f(logPath);
+	if (f.open(QIODevice::Append | QIODevice::Text)) {
+		QTextStream ts(&f);
+		ts << QDateTime::currentDateTime().toString(Qt::ISODate) << "  " << line << "\n";
+	}
+}
 
 QVersionNumber parseTag(const QString& tagName)
 {
@@ -195,8 +213,10 @@ bool UpdateChecker::launchInstaller(const QString& path)
 	sei.lpParameters = nullptr;
 	sei.nShow        = SW_SHOWNORMAL;
 
+	logRestartDebug(QStringLiteral("launchInstaller: ShellExecuteExW(runas) for %1").arg(path));
 	if (!ShellExecuteExW(&sei)) {
 		const DWORD err = GetLastError();
+		logRestartDebug(QStringLiteral("launchInstaller: ShellExecuteExW failed, error=%1").arg(err));
 		if (err == ERROR_CANCELLED)
 			emit downloadFailed(tr("Update cancelled — the elevation prompt was declined."));
 		else
@@ -204,6 +224,8 @@ bool UpdateChecker::launchInstaller(const QString& path)
 			                        "You can run it manually from %2.").arg(err).arg(path));
 		return false;
 	}
+	logRestartDebug(QStringLiteral("launchInstaller: elevated installer process started (hProcess=%1)")
+	                    .arg(sei.hProcess != nullptr ? "valid" : "null"));
 	if (sei.hProcess) CloseHandle(sei.hProcess);
 	return true;
 #else

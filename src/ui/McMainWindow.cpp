@@ -55,6 +55,8 @@
 #include <QShowEvent>
 #include <QPaintEvent>
 #include <QSplashScreen>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QTimer>
 #include <functional>
 #include <QAction>
@@ -68,6 +70,7 @@
 #include <QKeyEvent>
 #include <QDesktopServices>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -107,6 +110,22 @@
 #include <QSvgRenderer>
 
 namespace {
+
+// Temporary instrumentation for the "auto-update finish-page Run checkbox
+// doesn't restart the app" regression (2026-07-23) — see the matching helper
+// in main.cpp. Gated on MC_DEBUG_LOG so it's silent in shipped installs.
+// Remove once the root cause is confirmed.
+void logRestartDebug(const QString& line)
+{
+	if (!qEnvironmentVariableIsSet("MC_DEBUG_LOG")) return;
+	static const QString logPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+	                                + QStringLiteral("/MediaCurator-restart_debug.log");
+	QFile f(logPath);
+	if (f.open(QIODevice::Append | QIODevice::Text)) {
+		QTextStream ts(&f);
+		ts << QDateTime::currentDateTime().toString(Qt::ISODate) << "  " << line << "\n";
+	}
+}
 
 // Best title to pre-fill the TMDB search dialog for a given file.
 // If the file sits alone in its folder the folder name is almost always cleaner
@@ -2113,6 +2132,10 @@ void McMainWindow::keyPressEvent(QKeyEvent* event)
 
 void McMainWindow::closeEvent(QCloseEvent* event)
 {
+	logRestartDebug(QStringLiteral("closeEvent entered (closeHandled=%1, activeJob=%2)")
+	                    .arg(m_closeHandled ? "yes" : "no")
+	                    .arg(m_jobQueue->hasActiveJob() ? "yes" : "no"));
+
 	if (m_closeHandled) {
 		// Windows can re-deliver WM_QUERYENDSESSION/WM_CLOSE while this window is
 		// still unwinding after we already accepted the close once (a session-end
@@ -2155,10 +2178,13 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 					QTimer::singleShot(0, this, &McMainWindow::close);
 				}, Qt::SingleShotConnection);
 			}
+			logRestartDebug(QStringLiteral("closeEvent: job dialog -> deferring close until job finishes (shutdownOnClose=%1)")
+			                    .arg(m_shutdownOnClose ? "yes" : "no"));
 			event->ignore();
 			return;
 		}
 		if (msg.clickedButton() != closeBtn) {
+			logRestartDebug(QStringLiteral("closeEvent: job dialog -> cancelled, staying open"));
 			event->ignore();
 			return;
 		}
@@ -2169,6 +2195,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	// see setSingleInstanceLockReleaser() for why this can't wait until the
 	// process actually exits.
 	if (m_releaseSingleInstanceLock) m_releaseSingleInstanceLock();
+	logRestartDebug(QStringLiteral("closeEvent: single-instance lock released, starting teardown"));
 
 	// Stop the library loader if it is still paging through the database.
 	// cancel() sets an atomic flag; the worker checks it between every file emit.
@@ -2186,9 +2213,18 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	}
 
 	stopAllScanWorkers(/*waitForThreads=*/true);
+	logRestartDebug(QStringLiteral("closeEvent: scan workers stopped, stopping PosterManager"));
 
-	PosterManager::instance().stop();
-	SubtitleManager::instance().stop();
+	{
+		QElapsedTimer t; t.start();
+		PosterManager::instance().stop();
+		logRestartDebug(QStringLiteral("closeEvent: PosterManager stopped after %1 ms").arg(t.elapsed()));
+	}
+	{
+		QElapsedTimer t; t.start();
+		SubtitleManager::instance().stop();
+		logRestartDebug(QStringLiteral("closeEvent: SubtitleManager stopped after %1 ms").arg(t.elapsed()));
+	}
 
 	if (m_jobPanel->isVisible()) {
 		const QList<int> sz = m_splitter->sizes();
@@ -2214,6 +2250,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	// half-destroyed window. shutdownRequested() reports m_shutdownOnClose so
 	// main() knows to run it once we're actually gone.
 	m_closeHandled = true;
+	logRestartDebug(QStringLiteral("closeEvent: teardown complete, accepting close"));
 	event->accept();
 }
 
@@ -3876,6 +3913,8 @@ void McMainWindow::onUpdateDownloadFailed(QString error)
 
 void McMainWindow::onUpdateInstallerLaunched()
 {
+	logRestartDebug(QStringLiteral("installer launched by UpdateChecker — calling close() now (activeJob=%1)")
+	                    .arg(m_jobQueue->hasActiveJob() ? "yes" : "no"));
 	if (m_updateProgressDlg) {
 		m_updateProgressDlg->close();
 		m_updateProgressDlg->deleteLater();

@@ -11,6 +11,8 @@
 #include <QIcon>
 #include <QCoreApplication>
 #include <QColor>
+#include <QDateTime>
+#include <QFile>
 #include <QFont>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -24,6 +26,7 @@
 #include <QSplashScreen>
 #include <QStyleFactory>
 #include <QSvgRenderer>
+#include <QTextStream>
 #include <QWindow>
 #include <QDir>
 #include <QMessageBox>
@@ -31,7 +34,31 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <shlobj.h>
 #endif
+
+// Temporary instrumentation for the "auto-update finish-page Run checkbox
+// doesn't restart the app" regression (2026-07-23). Writes to its own plain-text
+// file (not qDebug — release builds have no attached console) so the sequence
+// of events across an update-triggered shutdown + relaunch can be inspected
+// after the fact. Gated on the MC_DEBUG_LOG env var so it stays silent for
+// every shipped install except a machine that explicitly opts in — set it once
+// via `setx MC_DEBUG_LOG 1` on the dev box, not shipped/enabled by default.
+// Remove entirely once the root cause is confirmed.
+static void logRestartDebug(const QString& line)
+{
+	if (!qEnvironmentVariableIsSet("MC_DEBUG_LOG")) return;
+	// TempLocation doesn't depend on QCoreApplication::applicationName/
+	// organizationName being set yet — this needs to work from the very first
+	// line of main(), before app.setApplicationName() runs.
+	static const QString logPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+	                                + QStringLiteral("/MediaCurator-restart_debug.log");
+	QFile f(logPath);
+	if (f.open(QIODevice::Append | QIODevice::Text)) {
+		QTextStream ts(&f);
+		ts << QDateTime::currentDateTime().toString(Qt::ISODate) << "  " << line << "\n";
+	}
+}
 
 // Qt widgets on Windows erase their native HWND to white before the first
 // QPainter frame. In dark mode that flash is visible across the whole main
@@ -262,6 +289,12 @@ int main(int argc, char* argv[])
 
 	QApplication app(argc, argv);
 
+#ifdef Q_OS_WIN
+	logRestartDebug(QStringLiteral("main() start pid=%1 elevated=%2")
+	                    .arg(GetCurrentProcessId())
+	                    .arg(IsUserAnAdmin() ? "yes" : "no"));
+#endif
+
 	// ── Single instance guard ────────────────────────────────────────────────
 	// A second process reading/writing the same SQLite DB (jobs, scans, subtitle
 	// downloads) races the first and can stomp its state — e.g. cleanupStalledJobs()
@@ -275,8 +308,11 @@ int main(int argc, char* argv[])
 		if (probe.waitForConnected(200)) {
 			probe.write("activate");
 			probe.waitForBytesWritten(200);
+			logRestartDebug(QStringLiteral("found a live instance answering — forwarded activate, exiting now"));
 			return 0;
 		}
+		logRestartDebug(QStringLiteral("single-instance probe: no live instance answered (error=%1)")
+		                    .arg(probe.errorString()));
 	}
 	// No live instance answered — become the primary. Remove any stale socket a
 	// crashed previous instance may have left behind before listening for real.
@@ -375,6 +411,7 @@ int main(int argc, char* argv[])
 	                     Qt::WindowStaysOnTopHint);
 	splash.show();
 	app.processEvents();   // ensure the splash paints before we block on DB
+	logRestartDebug(QStringLiteral("splash shown"));
 
 	// ── Startup ───────────────────────────────────────────────────────────────
 	Mc::AppSettings::instance().load();   // must be before any UI reads settings
@@ -400,9 +437,13 @@ int main(int argc, char* argv[])
 			QLocalServer::removeServer(kSingleInstanceServerName);
 		});
 
+		logRestartDebug(QStringLiteral("main window constructed, entering event loop"));
 		rc = app.exec();
 		shutdownRequested = window.shutdownRequested();
+		logRestartDebug(QStringLiteral("event loop exited rc=%1 shutdownRequested=%2")
+		                    .arg(rc).arg(shutdownRequested ? "yes" : "no"));
 	}
+	logRestartDebug(QStringLiteral("main window destroyed, main() about to return"));
 	// window is fully destroyed here — only now is it safe to tell the OS to shut
 	// down. Firing this any earlier (e.g. from closeEvent()) starts Windows'
 	// session-end sequence while our own process is still unwinding, which can

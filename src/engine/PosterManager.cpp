@@ -9,6 +9,7 @@
 #include <QUrl>
 #include <utility>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QImage>
@@ -23,8 +24,27 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QMutex>
+#include <QTextStream>
 #include <QThread>
 #include <QDebug>
+
+namespace {
+// Temporary instrumentation for the "auto-update finish-page Run checkbox
+// doesn't restart the app" regression (2026-07-23) — see the matching helper
+// in main.cpp. Gated on MC_DEBUG_LOG so it's silent in shipped installs.
+// Remove once the root cause is confirmed.
+void logRestartDebug(const QString& line)
+{
+	if (!qEnvironmentVariableIsSet("MC_DEBUG_LOG")) return;
+	static const QString logPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+	                                + QStringLiteral("/MediaCurator-restart_debug.log");
+	QFile f(logPath);
+	if (f.open(QIODevice::Append | QIODevice::Text)) {
+		QTextStream ts(&f);
+		ts << QDateTime::currentDateTime().toString(Qt::ISODate) << "  " << line << "\n";
+	}
+}
+} // namespace
 
 #include <optional>
 
@@ -1082,6 +1102,9 @@ void PosterManager::stopWorkerPool(bool wait)
 {
 	if (m_workers.isEmpty()) return;
 
+	logRestartDebug(QStringLiteral("PosterManager::stopWorkerPool: stopping %1 worker(s)")
+	                    .arg(m_workers.size()));
+
 	// Ask every worker to stop; each one quits its own thread's event loop once
 	// it's confirmed safe to (see PosterWorker::stop()/tryProcessNext()). Do NOT
 	// call slot.thread->quit() here — QThread::quit()/exit() only affects
@@ -1092,10 +1115,19 @@ void PosterManager::stopWorkerPool(bool wait)
 	// to terminate() — forcibly killing a thread mid network I/O, which crashed
 	// with "Cannot send events to objects owned by a different thread".
 	emit workerStop();
+	int i = 0;
 	for (WorkerSlot& slot : m_workers) {
+		++i;
 		if (!slot.thread) continue;
-		if (wait && !slot.thread->wait(20000))
+		QElapsedTimer t; t.start();
+		if (wait && !slot.thread->wait(20000)) {
 			qWarning() << "PosterManager: worker thread did not stop in time; abandoning it";
+			logRestartDebug(QStringLiteral("PosterManager::stopWorkerPool: worker %1 did NOT stop after %2 ms — abandoned, still running")
+			                    .arg(i).arg(t.elapsed()));
+		} else {
+			logRestartDebug(QStringLiteral("PosterManager::stopWorkerPool: worker %1 stopped after %2 ms")
+			                    .arg(i).arg(t.elapsed()));
+		}
 		slot.thread = nullptr;
 		slot.worker = nullptr;
 	}

@@ -26,6 +26,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStorageInfo>
+#include <QTextStream>
 #include <QThreadPool>
 
 #include <algorithm>
@@ -86,6 +87,27 @@ namespace Mc {
 // giving up and muxing without it — bounded deliberately short so an
 // unresponsive OpenSubtitles never turns into a long stall of the queue.
 static constexpr int kSubtitlePrefetchTimeoutMs = 6000;
+
+// TEMPORARY diagnostic logging for the "dispatch picks a smaller job than the
+// sorted top" investigation (2026-07-22). Writes to its own plain-text file
+// (not qDebug — release builds have no attached console, so that output is
+// invisible) next to the SQLite DB. Gated on MC_DEBUG_LOG so it's silent
+// in shipped installs — set it once via `setx MC_DEBUG_LOG 1` on the dev
+// box. Remove once the root cause is confirmed.
+static void logDispatchDebug(const QString& line)
+{
+	if (!qEnvironmentVariableIsSet("MC_DEBUG_LOG")) return;
+	static QString logPath;
+	if (logPath.isEmpty()) {
+		logPath = QFileInfo(DatabaseManager::instance().databasePath()).absolutePath()
+		          + QStringLiteral("/dispatch_debug.log");
+	}
+	QFile f(logPath);
+	if (f.open(QIODevice::Append | QIODevice::Text)) {
+		QTextStream ts(&f);
+		ts << QDateTime::currentDateTime().toString(Qt::ISODate) << "  " << line << "\n";
+	}
+}
 
 // A queued job's DB-frozen estimated_saved_bytes was computed at proposal time —
 // if the estimate formula has changed since (see calibration/estimate tuning), or
@@ -404,17 +426,42 @@ void JobQueue::dispatchJobs(qint64 excludeJobId)
 		return;
 	}
 
-	if (m_sortMode == JobSortMode::LargestSavingsFirst || m_goalBytes > 0)
+	const bool didLiveResort = (m_sortMode == JobSortMode::LargestSavingsFirst || m_goalBytes > 0);
+	if (didLiveResort)
 		sortQueuedJobsByLiveSavings(jobs);
+
+	logDispatchDebug(QStringLiteral(
+	    "dispatchJobs(excludeJobId=%1): sortMode=%2 goalBytes=%3 liveResorted=%4 queuedCount=%5")
+	    .arg(excludeJobId).arg(static_cast<int>(m_sortMode)).arg(m_goalBytes)
+	    .arg(didLiveResort).arg(jobs.size()));
+	{
+		auto& db = DatabaseManager::instance();
+		QStringList top;
+		for (int i = 0; i < qMin(5, jobs.size()); ++i) {
+			const auto fOpt = db.fileById(jobs[i].fileId);
+			top << QStringLiteral("#%1 job=%2 dbEstimate=%3 size=%4 \"%5\"")
+			           .arg(i).arg(jobs[i].id).arg(jobs[i].estimatedSavedBytes)
+			           .arg(fOpt ? fOpt->sizeBytes : -1)
+			           .arg(fOpt ? fOpt->filename : QStringLiteral("?"));
+		}
+		logDispatchDebug(QStringLiteral("  post-sort order: ") + top.join(QStringLiteral(" | ")));
+	}
 
 	QSet<int> startedThisRound;
 	for (const JobRecord& job : jobs) {
 		if (job.id == excludeJobId)
 			continue;
 		const int group = StorageGroupSettings::groupForFileId(job.fileId);
-		if (isGroupBusy(group) || startedThisRound.contains(group))
+		if (isGroupBusy(group) || startedThisRound.contains(group)) {
+			logDispatchDebug(QStringLiteral(
+			    "  skip job=%1 group=%2 (groupBusy=%3 startedThisRound=%4)")
+			    .arg(job.id).arg(group).arg(isGroupBusy(group)).arg(startedThisRound.contains(group)));
 			continue;
-		if (tryStartJob(job))
+		}
+		const bool started = tryStartJob(job);
+		logDispatchDebug(QStringLiteral("  tryStartJob job=%1 group=%2 -> %3")
+		    .arg(job.id).arg(group).arg(started ? QStringLiteral("STARTED") : QStringLiteral("returned false")));
+		if (started)
 			startedThisRound.insert(group);
 	}
 }
@@ -431,11 +478,16 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	const QString descriptionText = job.descriptionText;
 	const int     storageGroup    = StorageGroupSettings::groupForFileId(fileId);
 
-	if (isGroupBusy(storageGroup))
+	if (isGroupBusy(storageGroup)) {
+		logDispatchDebug(QStringLiteral("  tryStartJob job=%1: isGroupBusy(%2) re-check failed at entry")
+		    .arg(jobId).arg(storageGroup));
 		return false;
+	}
 
 	const FreshJobEstimate freshEstimate = estimateJobSavingWithBreakdown(job);
 	const qint64 estimatedSavings        = freshEstimate.bytes;
+	logDispatchDebug(QStringLiteral("  tryStartJob job=%1: fresh estimate=%2 (was dbEstimate=%3)")
+	    .arg(jobId).arg(estimatedSavings).arg(job.estimatedSavedBytes));
 
 	// tag_edit jobs have no commandArgsJson — that's expected; other types must have it.
 	const bool isTagEdit = (jobType == QLatin1String("tag_edit"));
@@ -539,6 +591,9 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 			} else if (storage.bytesAvailable() < fileOpt->sizeBytes) {
 				const double needed = fileOpt->sizeBytes / 1073741824.0;
 				const double avail  = storage.bytesAvailable() / 1073741824.0;
+				logDispatchDebug(QStringLiteral(
+				    "  tryStartJob job=%1: DISK SPACE GUARD skip — need %2 GB, have %3 GB free (\"%4\")")
+				    .arg(jobId).arg(needed, 0, 'f', 2).arg(avail, 0, 'f', 2).arg(fileOpt->filename));
 				emit warning(QStringLiteral(
 				    "Not enough disk space for \"%1\" — need %2 GB, have %3 GB free. Skipping for now.")
 				    .arg(fileOpt->filename)
@@ -582,11 +637,18 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 				           << "is stale vs the current on-disk track layout"
 				           << (sidecarMissing ? "(missing sidecar file)" : "(track drift)")
 				           << "— dropping and rescanning instead of remuxing";
+				logDispatchDebug(QStringLiteral(
+				    "  tryStartJob job=%1: PREFLIGHT STALENESS — deleting job (%2) and rescanning")
+				    .arg(jobId).arg(sidecarMissing ? QStringLiteral("missing sidecar")
+				                                   : QStringLiteral("track drift")));
 				db.deleteJob(jobId);
 				emit jobFinished(jobId, false, 0);
 				rescanFile(fileId, {}, /*triggerReanalysis=*/true);
 				return false;
 			}
+		} else {
+			logDispatchDebug(QStringLiteral(
+			    "  tryStartJob job=%1: preflight ffprobe scan FAILED — proceeding anyway").arg(jobId));
 		}
 		// If the pre-flight scan itself fails (locked file, transient I/O hiccup on
 		// a network share, etc.), don't block the job on it — proceed and let the
