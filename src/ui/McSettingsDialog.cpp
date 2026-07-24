@@ -220,7 +220,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	// scaling (e.g. 300% on a 4K display, whose logical resolution shrinks to
 	// ~1280x720) that can exceed what's actually on screen — clamp it so this
 	// minimum can never itself push the dialog past the screen's available area.
-	setMinimumSize(clampSizeToScreen(this, QSize(760, 701)));
+	setMinimumSize(clampSizeToScreen(this, QSize(760, 670)));
 
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty())
