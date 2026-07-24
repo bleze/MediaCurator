@@ -129,6 +129,7 @@ private:
 	bool                   m_writeNfoFiles = false;
 	QStringList            m_understoodLanguages;
 	int                    m_retryCooldownDays = 7;
+	QString                m_posterTmdbSize = QStringLiteral("w92");   // set in start(), see tmdbPosterSizeForDpr()
 
 	QSet<qint64>           m_batchIds;
 	int                    m_batchTotal  = 0;

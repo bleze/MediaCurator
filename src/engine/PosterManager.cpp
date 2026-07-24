@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QImage>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -21,6 +22,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QSet>
 #include <QStandardPaths>
 #include <QMutex>
@@ -29,6 +31,26 @@
 #include <QDebug>
 
 namespace {
+
+// Poster cards render at a fixed 100 logical px wide (McCardDelegate::kPosterW)
+// regardless of DPI scaling, so the physical pixels actually needed scale with
+// devicePixelRatio() alone — e.g. 300 at 300% scaling. Picks the smallest TMDB
+// poster tier within 10% of that (w92 already looks fine at 100% scaling even
+// though 92 < 100 — no need to bump every default-DPI user to a bigger download
+// over a practically invisible shortfall), falling back to "original" if even
+// TMDB's largest poster tier undershoots it.
+QString tmdbPosterSizeForDpr(qreal dpr)
+{
+	constexpr int   kCardPosterWidth = 100;
+	constexpr float kTolerance       = 0.9f;
+	const int       neededPx         = qRound(kCardPosterWidth * dpr * kTolerance);
+	for (const auto& [px, tag] : {std::pair{92, "w92"}, {154, "w154"}, {185, "w185"},
+	                               {342, "w342"}, {500, "w500"}, {780, "w780"}}) {
+		if (neededPx <= px)
+			return QLatin1String(tag);
+	}
+	return QStringLiteral("original");
+}
 // Temporary instrumentation for the "auto-update finish-page Run checkbox
 // doesn't restart the app" regression (2026-07-23) — see the matching helper
 // in main.cpp. Gated on MC_DEBUG_LOG so it's silent in shipped installs.
@@ -168,13 +190,15 @@ class PosterWorker : public QObject
 public:
 	explicit PosterWorker(PosterWorkQueue* queue, const QString& tmdbApiKey,
 	                      bool writeNfoFiles, const QStringList& understoodLanguages,
-	                      int retryCooldownDays, QObject* parent = nullptr)
+	                      int retryCooldownDays, const QString& posterTmdbSize,
+	                      QObject* parent = nullptr)
 	    : QObject(parent)
 	    , m_queue(queue)
 	    , m_tmdbApiKey(tmdbApiKey)
 	    , m_writeNfoFiles(writeNfoFiles)
 	    , m_understoodLanguages(understoodLanguages)
 	    , m_retryCooldownDays(retryCooldownDays)
+	    , m_posterTmdbSize(posterTmdbSize)
 	{
 		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 		m_cacheDir  = dataDir + "/posters";
@@ -372,7 +396,7 @@ private:
 				const bool diskHit   = QFile::exists(outPath);
 				const bool dlOk      = !diskHit && !info.backdropPath.isEmpty()
 				    && downloadImage(
-				           QStringLiteral("https://image.tmdb.org/t/p/w1280%1").arg(info.backdropPath),
+				           QStringLiteral("https://image.tmdb.org/t/p/original%1").arg(info.backdropPath),
 				           outPath, &fanartBytes);
 				if (diskHit || dlOk) {
 					PosterRecord pr = existing ? *existing : PosterRecord{};
@@ -520,7 +544,7 @@ private:
 		if (!imdbId.isEmpty() && !info.posterPath.isEmpty()) {
 			const QString outPath = m_cacheDir + "/" + imdbId + ".jpg";
 			if (downloadImage(
-			        QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(info.posterPath),
+			        QStringLiteral("https://image.tmdb.org/t/p/%1%2").arg(m_posterTmdbSize, info.posterPath),
 			        outPath))
 				imagePath = outPath;
 		}
@@ -530,7 +554,7 @@ private:
 			const bool diskHit = QFile::exists(outPath);
 			const bool dlOk    = !diskHit && !info.backdropPath.isEmpty()
 			    && downloadImage(
-			           QStringLiteral("https://image.tmdb.org/t/p/w1280%1").arg(info.backdropPath),
+			           QStringLiteral("https://image.tmdb.org/t/p/original%1").arg(info.backdropPath),
 			           outPath, &fanartBytes);
 			if (diskHit || dlOk) {
 				rec.fanartPath = outPath;
@@ -1001,6 +1025,7 @@ private:
 	bool                   m_writeNfoFiles = false;
 	QStringList            m_understoodLanguages;
 	int                    m_retryCooldownDays = 7;
+	QString                m_posterTmdbSize;   // see tmdbPosterSizeForDpr()
 	QString                m_cacheDir;
 	QString                m_fanartDir;
 	bool                   m_stopping   = false;
@@ -1028,6 +1053,11 @@ void PosterManager::start(const QString& tmdbApiKey)
 	    AppSettings::instance().value(QStringLiteral("poster/parallelWorkers"), 4).toInt(),
 	    12);
 
+	// Fixed for the process's lifetime — card posters aren't resized at runtime,
+	// so there's nothing to react to if the display scale changes later.
+	const QScreen* screen = QGuiApplication::primaryScreen();
+	m_posterTmdbSize = tmdbPosterSizeForDpr(screen ? screen->devicePixelRatio() : 1.0);
+
 	resetMissingPosterMediaInDb();
 
 	m_queue = new PosterWorkQueue(this);
@@ -1050,7 +1080,8 @@ void PosterManager::startWorkerPool()
 	while (m_workers.size() < m_parallelWorkers) {
 		auto* thread = new QThread(this);
 		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey, m_writeNfoFiles,
-		                                m_understoodLanguages, m_retryCooldownDays);
+		                                m_understoodLanguages, m_retryCooldownDays,
+		                                m_posterTmdbSize);
 		worker->moveToThread(thread);
 
 		connect(thread, &QThread::started,  worker, &PosterWorker::startProcessing);
@@ -1250,14 +1281,14 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 	if (rec && !rec->fanartPath.isEmpty())
 		QFile::remove(rec->fanartPath);
 
-	// Downloads the user-selected backdrop at w1280 and emits fanartReady.
-	// Only fires when the caller provided a TMDB fanart path (i.e. the user picked
-	// a specific backdrop in the dialog).  Captures all state by value so it is
-	// safe to copy into async reply lambdas.
+	// Downloads the user-selected backdrop at full TMDB resolution and emits
+	// fanartReady. Only fires when the caller provided a TMDB fanart path (i.e.
+	// the user picked a specific backdrop in the dialog). Captures all state by
+	// value so it is safe to copy into async reply lambdas.
 	auto schedFanart = [this, fanartTmdbPath, fanartDir, fanartOut, fileId]() {
 		if (fanartTmdbPath.isEmpty() || !m_nam) return;
 		QDir().mkpath(fanartDir);
-		QNetworkRequest req(QUrl(QStringLiteral("https://image.tmdb.org/t/p/w1280%1").arg(fanartTmdbPath)));
+		QNetworkRequest req(QUrl(QStringLiteral("https://image.tmdb.org/t/p/original%1").arg(fanartTmdbPath)));
 		req.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
 		req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
 		                 QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -1324,7 +1355,7 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 	// main-thread NAM whose TLS session with image.tmdb.org is pre-warmed at startup.
 	// Skips both the worker queue and the /find API round-trip — typically <200 ms.
 	if (!posterPath.isEmpty() && m_nam) {
-		const QUrl url(QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(posterPath));
+		const QUrl url(QStringLiteral("https://image.tmdb.org/t/p/%1%2").arg(m_posterTmdbSize, posterPath));
 		QNetworkRequest req(url);
 		req.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
 		req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
