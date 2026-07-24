@@ -365,15 +365,18 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 	FileEntry e = entry;
 	computeDerived(e);  // always recompute (cheap); ensures searchText + quick flags are fresh after rescan/update
 
-	bool foundInAll = false;
+	// m_allEntries must stay in sort order (see the invariant comment in applyFilter) —
+	// an update can change the very field being sorted on (e.g. rescan updates scanTime),
+	// so re-insert at the correct position rather than overwriting in place / appending.
 	for (int i = 0; i < m_allEntries.size(); ++i) {
 		if (m_allEntries[i].file.id == fileId) {
-			m_allEntries[i] = e;
-			foundInAll = true;
+			m_allEntries.removeAt(i);
 			break;
 		}
 	}
-	if (!foundInAll) m_allEntries.append(e);
+	auto allIt = std::lower_bound(m_allEntries.begin(), m_allEntries.end(), e,
+	                              [this](const FileEntry& a, const FileEntry& b) { return entryLessThan(a, b); });
+	m_allEntries.insert(allIt, e);
 
 	// Newly loaded/updated entries may introduce the first classified type.
 	notifyMediaCategoriesAvailability();

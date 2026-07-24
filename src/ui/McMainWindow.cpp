@@ -751,6 +751,14 @@ void McMainWindow::setupUi()
 		}
 	});
 
+	// A full model reset (e.g. applyFilter()'s rebuild-from-scratch fallback) replaces
+	// rows without emitting per-row dataChanged, so the size cache above never sees it —
+	// leaving cards sized for whatever their previous content was. Clear it wholesale.
+	connect(m_listModel, &QAbstractItemModel::modelReset, this, [this]() {
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->clearSizeCache();
+	});
+
 	// Double-click on the poster column → open IMDb search dialog
 	connect(m_listView, &QAbstractItemView::doubleClicked, this,
 	        [this](const QModelIndex& idx) {
