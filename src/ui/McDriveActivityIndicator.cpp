@@ -5,17 +5,18 @@
 
 #include <QDateTime>
 #include <QEasingCurve>
+#include <QHelpEvent>
 #include <QPainter>
 #include <QPropertyAnimation>
+#include <QToolTip>
 
 namespace Mc {
 
 McDriveActivityIndicator::McDriveActivityIndicator(QWidget* parent)
     : QWidget(parent)
 {
-	setToolTip(tr("Drive activity — lights up when MediaCurator touches a storage"
-	              " drive, then fades over that group's configured spin-down time"
-	              " (Manage Folders…)."));
+	// Tooltip text depends on elapsed time, so it's computed fresh in event()
+	// (QEvent::ToolTip) rather than set once here via setToolTip().
 
 	m_fade = new QPropertyAnimation(this, "level", this);
 	m_fade->setEasingCurve(QEasingCurve::Linear);
@@ -25,10 +26,12 @@ McDriveActivityIndicator::McDriveActivityIndicator(QWidget* parent)
 	// before the app last closed (see DriveActivityMonitor::persist()).
 	const auto last = DriveActivityMonitor::loadPersisted();
 	if (last.group >= 1) {
+		m_activeGroup    = last.group;
+		m_lastActivityMs = last.epochMs;
+
 		const qint64 totalMs   = qint64(StorageGroupSettings::spinDownMinutes(last.group)) * 60 * 1000;
 		const qint64 elapsedMs = QDateTime::currentMSecsSinceEpoch() - last.epochMs;
 		if (elapsedMs >= 0 && elapsedMs < totalMs) {
-			m_activeGroup = last.group;
 			const qreal level = 1.0 - double(elapsedMs) / double(totalMs);
 			setLevel(level);
 			m_fade->setStartValue(level);
@@ -55,7 +58,8 @@ QSize McDriveActivityIndicator::sizeHint() const
 
 void McDriveActivityIndicator::onActivity(int group)
 {
-	m_activeGroup = group;
+	m_activeGroup    = group;
+	m_lastActivityMs = QDateTime::currentMSecsSinceEpoch();
 
 	m_fade->stop();
 	setLevel(1.0);
@@ -63,6 +67,31 @@ void McDriveActivityIndicator::onActivity(int group)
 	m_fade->setEndValue(0.0);
 	m_fade->setDuration(StorageGroupSettings::spinDownMinutes(group) * 60 * 1000);
 	m_fade->start();
+}
+
+bool McDriveActivityIndicator::event(QEvent* e)
+{
+	if (e->type() == QEvent::ToolTip) {
+		auto* he = static_cast<QHelpEvent*>(e);
+		QToolTip::showText(he->globalPos(), tooltipText(), this);
+		return true;
+	}
+	return QWidget::event(e);
+}
+
+QString McDriveActivityIndicator::tooltipText() const
+{
+	const QString base = tr("Drive activity — lights up when MediaCurator touches a storage"
+	                        " drive, then fades over that group's configured spin-down time"
+	                        " (Manage Folders…).");
+	if (m_lastActivityMs <= 0)
+		return base;
+
+	const qint64 elapsedMin = qMax<qint64>(0, (QDateTime::currentMSecsSinceEpoch() - m_lastActivityMs) / 60000);
+	const QString sinceLine = StorageGroupSettings::multipleGroupsInUse()
+	    ? tr("Group %1 — %n minute(s) since last activity", "", int(elapsedMin)).arg(m_activeGroup)
+	    : tr("%n minute(s) since last activity", "", int(elapsedMin));
+	return base + QStringLiteral("\n\n") + sinceLine;
 }
 
 void McDriveActivityIndicator::paintEvent(QPaintEvent*)

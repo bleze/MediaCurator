@@ -26,6 +26,7 @@ public:
 
 protected:
 	void paintEvent(QPaintEvent*) override;
+	bool event(QEvent* e) override;
 
 private slots:
 	void onActivity(int group);
@@ -33,9 +34,12 @@ private slots:
 private:
 	static constexpr int kIconSize = 16;
 
-	int                  m_activeGroup = 1;
-	qreal                m_level       = 0.0;
-	QPropertyAnimation*  m_fade        = nullptr;
+	QString tooltipText() const;
+
+	int                  m_activeGroup    = 1;
+	qint64               m_lastActivityMs = 0;   // epoch ms; 0 = no activity recorded yet
+	qreal                m_level          = 0.0;
+	QPropertyAnimation*  m_fade           = nullptr;
 };
 
 } // namespace Mc
