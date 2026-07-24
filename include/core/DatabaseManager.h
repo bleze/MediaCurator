@@ -173,6 +173,7 @@ struct PosterRecord {
 	double  voteAverage = 0.0;
 	int     voteCount   = 0;
 	int     attemptCount = 0;  // consecutive no_poster resolve attempts; see kMaxPosterResolveAttempts
+	bool    nfoWritten   = false;  // MediaCurator has written this file's .nfo — see markNfoWritten()
 };
 
 // For display in McJobPanel (jobs JOIN files JOIN poster_cache)
@@ -347,6 +348,10 @@ public:
 	// ── Poster cache ─────────────────────────────────────────────────────────
 	void                        upsertPosterRecord(const PosterRecord& rec);
 	std::optional<PosterRecord> posterForFile(qint64 fileId) const;
+	// Records that MediaCurator has written this file's .nfo, so PosterManager
+	// never needs to stat the file's own (possibly NAS-hosted) folder to find out.
+	// Safe to call whether or not a poster_cache row exists yet for fileId.
+	void                        markNfoWritten(qint64 fileId);
 	QList<qint64>               fileIdsNeedingPosters() const;
 	QHash<qint64, QString>      allDonePosterPaths() const;
 	QHash<qint64, QString>      allDoneFanartPaths() const;

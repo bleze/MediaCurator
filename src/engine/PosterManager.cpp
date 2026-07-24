@@ -314,11 +314,17 @@ private:
 				emit tmdbDataReady(fileId, info.title, info.year, info.voteAverage, appliedMediaType);
 			}
 			// Write .nfo so imdbId (plus whatever TMDB metadata we have) survives
-			// future DB deletions — opt-in, and only for a not-yet-existing .nfo.
+			// future DB deletions — opt-in, and only if MediaCurator hasn't already
+			// written one for this file (nfo_written in poster_cache). This used to
+			// check QFile::exists() on the file's own folder instead, which meant a
+			// NAS stat for every already-"done" file on every single launch; the DB
+			// flag makes that a pure in-memory check from here on. A .nfo deleted
+			// out from under us stays un-rewritten until the user forces a re-save
+			// via the Identify Movie dialog, which writes unconditionally.
 			// TV still gets a movie-style NFO for now (IMDb/title tags); full tvshow
 			// NFO support can land later.
 			if (m_writeNfoFiles && !resolvedImdbId.isEmpty()
-			    && !QFile::exists(NfoParser::nfoPathFor(filePath))) {
+			    && !(existing && existing->nfoWritten)) {
 				NfoMovieMeta meta;
 				meta.tmdbId        = info.tmdbId;
 				meta.title         = info.title;
@@ -328,6 +334,7 @@ private:
 				meta.voteAverage   = info.voteAverage;
 				meta.voteCount     = info.voteCount;
 				NfoParser::writeMovieNfo(filePath, resolvedImdbId, meta);
+				DatabaseManager::instance().markNfoWritten(fileId);
 			}
 			// Newly-discovered imdbId (title-search recovery) needs to reach the live
 			// UI models too -- upsertPosterRecord() alone only updates the DB.
@@ -353,7 +360,7 @@ private:
 			const bool needsTitle     = fileOpt->displayTitle.isEmpty();
 			const bool needsMediaType = fileOpt->mediaType.isEmpty()
 			    || fileOpt->mediaType == QLatin1String(MediaTypes::Unknown);
-			const bool needsNfo       = m_writeNfoFiles && !QFile::exists(NfoParser::nfoPathFor(filePath));
+			const bool needsNfo       = m_writeNfoFiles && !existing->nfoWritten;
 			bool needsFanart          = existing->fanartPath.isEmpty()
 			                         || !QFile::exists(existing->fanartPath);
 
@@ -421,17 +428,13 @@ private:
 
 		// A file TMDB never matched (or that was processed with no API key set)
 		// stays 'no_poster' with an empty display_title forever, which keeps it
-		// selected by fileIdsNeedingPosters() on every future launch. Without this
-		// cooldown, that means re-running findNfoImdbId()/findLocalArt() below —
-		// both directory listings against the file's own folder — for the same
-		// permanently-unresolved file on every single startup, which is what was
-		// waking sleeping NAS drives and adding real per-launch delay. 0 disables
+		// selected by fileIdsNeedingPosters() on every future launch. 0 disables
 		// the cooldown (always retry).
 		if (existing && existing->status == "no_poster" && m_retryCooldownDays > 0
 		    && existing->fetchedAt > 0) {
 			// Content that will never resolve (trailers, "Extras" sub-clips, etc.)
-			// would otherwise keep cycling through this cooldown forever — one more
-			// NAS-waking folder scan every time it lapses. Give up for good instead.
+			// would otherwise keep cycling through this cooldown forever. Give up
+			// for good instead.
 			if (existing->attemptCount >= kMaxPosterResolveAttempts) {
 				PosterRecord pr = *existing;
 				pr.status = "unresolvable";
@@ -443,24 +446,30 @@ private:
 				return;
 		}
 
-		// Not fully done — resolve the imdbId (NFO first, DB fallback) and seed
-		// the poster/fanart cache from any local sidecar art before the
-		// disk-cache-reuse checks below run, so they can skip the network entirely.
-		QString imdbId = findNfoImdbId(filePath);
-		if (imdbId.isEmpty() && existing && !existing->imdbId.isEmpty())
-			imdbId = existing->imdbId;
+		// The video's own folder (NFO for imdbId, local poster/fanart sidecars) is
+		// only ever looked at for a file that has never been attempted before —
+		// i.e. one a scan just discovered. Once a PosterRecord exists, every later
+		// pass (retry after the no_poster cooldown, rating/title backfill, etc.)
+		// stays DB/cache/TMDB only and never re-lists the folder again. Sidecar art
+		// added to an existing folder after the fact is rare enough to disregard;
+		// re-listing on every retry was what woke sleeping NAS drives on every
+		// launch for each still-unresolved file.
+		QString imdbId = existing ? existing->imdbId : QString();
+		if (!existing) {
+			imdbId = findNfoImdbId(filePath);
 
-		// A "<basename>-poster.<ext>" / "<basename>-fanart.<ext>" file next to the
-		// video takes priority over TMDB — seed the cache from it before the
-		// disk-cache-reuse checks below run, so they pick it up and skip the network
-		// entirely. Fanart caching needs a known imdbId (same requirement the rest
-		// of this class already has for fanart, e.g. the lazy re-check just above).
-		const LocalArt localArt = findLocalArt(filePath);
-		cacheLocalImage(localArt.posterPath,
-		                imdbId.isEmpty() ? (m_cacheDir + "/" + baseStem + ".jpg")
-		                                 : (m_cacheDir + "/" + imdbId + ".jpg"));
-		if (!imdbId.isEmpty())
-			cacheLocalImage(localArt.fanartPath, m_fanartDir + "/" + imdbId + ".jpg");
+			// A "<basename>-poster.<ext>" / "<basename>-fanart.<ext>" file next to
+			// the video takes priority over TMDB — seed the cache from it before
+			// the disk-cache-reuse checks below run, so they pick it up and skip
+			// the network entirely. Fanart caching needs a known imdbId (same
+			// requirement the rest of this class already has for fanart).
+			const LocalArt localArt = findLocalArt(filePath);
+			cacheLocalImage(localArt.posterPath,
+			                imdbId.isEmpty() ? (m_cacheDir + "/" + baseStem + ".jpg")
+			                                 : (m_cacheDir + "/" + imdbId + ".jpg"));
+			if (!imdbId.isEmpty())
+				cacheLocalImage(localArt.fanartPath, m_fanartDir + "/" + imdbId + ".jpg");
+		}
 
 		PosterRecord rec;
 		rec.fileId    = fileId;

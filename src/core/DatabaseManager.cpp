@@ -261,7 +261,8 @@ bool DatabaseManager::initSchema()
 			image_path TEXT NOT NULL DEFAULT '',
 			imdb_id    TEXT NOT NULL DEFAULT '',
 			tmdb_id    INTEGER NOT NULL DEFAULT 0,
-			fetched_at INTEGER NOT NULL DEFAULT 0
+			fetched_at INTEGER NOT NULL DEFAULT 0,
+			nfo_written INTEGER NOT NULL DEFAULT 0
 		);
 
 		CREATE TABLE IF NOT EXISTS stream_overrides (
@@ -490,6 +491,14 @@ bool DatabaseManager::initSchema()
 	{
 		QSqlQuery m(connection());
 		m.exec("ALTER TABLE poster_cache ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0");
+	}
+
+	// Migration: track whether MediaCurator has already written a file's .nfo, so
+	// PosterManager can stop checking QFile::exists() on the file's own (possibly
+	// NAS-hosted) folder on every launch just to decide whether an .nfo is needed.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE poster_cache ADD COLUMN nfo_written INTEGER NOT NULL DEFAULT 0");
 	}
 
 	return true;
@@ -2061,8 +2070,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count, attempt_count)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count, attempt_count, nfo_written)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET
 			source=excluded.source,
 			status=excluded.status,
@@ -2073,7 +2082,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 			fetched_at=excluded.fetched_at,
 			vote_average=CASE WHEN excluded.vote_average > 0 THEN excluded.vote_average ELSE vote_average END,
 			vote_count=CASE WHEN excluded.vote_count > 0 THEN excluded.vote_count ELSE vote_count END,
-			attempt_count=excluded.attempt_count
+			attempt_count=excluded.attempt_count,
+			nfo_written=CASE WHEN excluded.nfo_written != 0 THEN 1 ELSE nfo_written END
 	)");
 	// Bind empty string (not null) — Qt maps null QString → SQL NULL which violates NOT NULL
 	auto nn = [](const QString& s) { return s.isNull() ? QString("") : s; };
@@ -2088,14 +2098,27 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 	q.addBindValue(rec.voteAverage);
 	q.addBindValue(rec.voteCount);
 	q.addBindValue(rec.attemptCount);
+	q.addBindValue(rec.nfoWritten ? 1 : 0);
 	if (!q.exec())
 		qWarning() << "upsertPosterRecord failed:" << q.lastError().text();
+}
+
+void DatabaseManager::markNfoWritten(qint64 fileId)
+{
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, nfo_written) VALUES(?, 1)
+		ON CONFLICT(file_id) DO UPDATE SET nfo_written=1
+	)");
+	q.addBindValue(fileId);
+	if (!q.exec())
+		qWarning() << "markNfoWritten failed:" << q.lastError().text();
 }
 
 std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id,attempt_count FROM poster_cache WHERE file_id=?");
+	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id,attempt_count,nfo_written FROM poster_cache WHERE file_id=?");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return {};
 	PosterRecord r;
@@ -2110,6 +2133,7 @@ std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 	r.voteCount   = q.value(7).toInt();
 	r.tmdbId      = q.value(8).toInt();
 	r.attemptCount = q.value(9).toInt();
+	r.nfoWritten  = q.value(10).toInt() != 0;
 	return r;
 }
 
