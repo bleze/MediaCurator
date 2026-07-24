@@ -27,4 +27,17 @@ void ensureGeometryFitsScreen(QWidget* widget)
 		widget->setGeometry(x, y, width, height);
 }
 
+QSize clampSizeToScreen(QWidget* widget, QSize desired, int margin)
+{
+	QScreen* screen = widget->screen();
+	if (!screen)
+		screen = QGuiApplication::primaryScreen();
+	if (!screen)
+		return desired;
+
+	const QRect avail = screen->availableGeometry();
+	return QSize(qMin(desired.width(),  avail.width()  - margin),
+	             qMin(desired.height(), avail.height() - margin));
+}
+
 } // namespace Mc

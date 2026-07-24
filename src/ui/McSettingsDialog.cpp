@@ -25,6 +25,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSize>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTabBar>
@@ -215,13 +216,16 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	: QDialog(parent), m_profile(profile)
 {
 	setWindowTitle(tr("Settings"));
-	setMinimumSize(760, 701);
+	// 760x701 is sized for the tallest tab's content at 100% scaling. At high DPI
+	// scaling (e.g. 300% on a 4K display, whose logical resolution shrinks to
+	// ~1280x720) that can exceed what's actually on screen — clamp it so this
+	// minimum can never itself push the dialog past the screen's available area.
+	setMinimumSize(clampSizeToScreen(this, QSize(760, 701)));
 
 	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
-	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty()) {
+	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty())
 		restoreGeometry(geo);
-		ensureGeometryFitsScreen(this);
-	}
+	ensureGeometryFitsScreen(this);
 
 	auto* root = new QVBoxLayout(this);
 	root->setSpacing(10);
