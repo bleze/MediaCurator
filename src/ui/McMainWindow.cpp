@@ -3421,6 +3421,17 @@ void McMainWindow::submitHighscoreIfDue()
 
 void McMainWindow::onHighscoreLeaderboardReady(QList<HighscoreEntry> entries)
 {
+	if (entries.isEmpty() && !m_lastHighscoreEntries.isEmpty()) {
+		// The board only ever grows (entries are added via submitScore(), never
+		// removed), so a real leaderboard never goes from non-empty to empty
+		// between fetches. dreamlo occasionally returns a transient empty/
+		// malformed body (rate limiting, eventual-consistency lag right after a
+		// write) — treat that as a bad response rather than clobbering good
+		// cached data and hiding the band.
+		qWarning() << "HighscoreClient: ignoring empty leaderboard response, keeping cached entries";
+		return;
+	}
+
 	m_lastHighscoreEntries = entries;   // already sorted by HighscoreClient
 
 	// Recovery floor: if our local counter reads 0 but we've clearly submitted
@@ -3456,12 +3467,12 @@ void McMainWindow::updateHighscoreVisibility()
 	if (m_actToggleHighscore) {
 		QSignalBlocker blocker(m_actToggleHighscore);
 		m_actToggleHighscore->setChecked(shouldShow);
-		m_actToggleHighscore->setEnabled(hasData);
+		m_actToggleHighscore->setEnabled(true);
 	}
 	if (m_menuHighscoreBtn) {
 		auto* toggle = static_cast<McQueueToggle*>(m_menuHighscoreBtn);
 		toggle->setChecked(shouldShow);
-		toggle->setEnabled(hasData);
+		toggle->setEnabled(true);
 	}
 	if (m_highscoreBand)
 		m_highscoreBand->setVisible(shouldShow);
