@@ -38,9 +38,42 @@
 
 namespace Mc {
 
-// Raw fanart pixmaps (full-res, unscaled).  Never evicted — populated on download
-// so paint() never decodes a JPEG from disk during active downloads.
+// Raw fanart pixmaps, height-cropped and width-capped (see capFanartRaw).  Never
+// evicted — populated on download so paint() never decodes a JPEG from disk
+// during active downloads.
 static QHash<QString, QPixmap> s_fanartRawCache;
+
+// Last fully smooth-scaled fanart pixmap per path, kept regardless of the width
+// it was scaled for. paint()'s fanartKey is width-keyed so the "real" cache
+// entry is invalidated on every pixel of an interactive resize; without this
+// fallback that meant a fresh Qt::SmoothTransformation per visible card on
+// every single paint tick of the drag. While m_resizeRelayoutTimer is pending
+// (see McCardDelegate::eventFilter's QEvent::Resize case), paint() draws this
+// stale-but-cheap pixmap instead of rescaling, accepting a few px of edge
+// mismatch until relayoutForResize() settles and triggers one real rescale.
+static QHash<QString, QPixmap> s_fanartLastScaled;
+
+// Backdrops now download at TMDB's "original" size (PosterManager, since the
+// 2026-07-24 fanart-quality change), which can be 3840px+ wide. paint() smooth-
+// scales this raw pixmap to the card's width on every resize tick (its
+// QPixmapCache key includes option.rect.width(), so it can't survive a resize
+// drag), so an uncapped source turned that into visible jank. Capping width
+// here keeps that per-tick scale cheap regardless of the source resolution;
+// 1920 is comfortably wider than any real card ever gets, even at high DPI.
+constexpr int kMaxFanartRawWidth = 1920;
+
+static QPixmap capFanartRaw(QPixmap raw)
+{
+	if (raw.isNull())
+		return raw;
+	if (raw.height() > 300) {
+		const int y = (raw.height() - 300) / 2;
+		raw = raw.copy(0, y, raw.width(), 300);
+	}
+	if (raw.width() > kMaxFanartRawWidth)
+		raw = raw.scaledToWidth(kMaxFanartRawWidth, Qt::SmoothTransformation);
+	return raw;
+}
 
 // Version counter per path: incremented each time a new raw pixmap is stored so
 // that the derived scaled entries in QPixmapCache (keyed by path+version+width) are
@@ -55,11 +88,7 @@ static void requestAsyncFanart(const QString& path, QWidget* viewport)
 		return;
 	s_asyncImagePending.insert(path);
 	(void)QtConcurrent::run([path, viewport]() {
-		QPixmap raw(path);
-		if (!raw.isNull() && raw.height() > 300) {
-			const int y = (raw.height() - 300) / 2;
-			raw = raw.copy(0, y, raw.width(), 300);
-		}
+		const QPixmap raw = capFanartRaw(QPixmap(path));
 		QMetaObject::invokeMethod(viewport, [path, raw, viewport]() {
 			s_asyncImagePending.remove(path);
 			if (!raw.isNull()) {
@@ -266,7 +295,7 @@ static QStringList subtitlePreviewCues(const QString& path, int maxCues = 3)
 void McCardDelegate::prefetchFanart(const QString& path, QPixmap raw)
 {
 	s_fanartVersions[path]++;          // bump → old QPixmapCache entries become unreachable
-	s_fanartRawCache.insert(path, std::move(raw));
+	s_fanartRawCache.insert(path, capFanartRaw(std::move(raw)));
 }
 
 void McCardDelegate::prefetchVisibleArtwork() const
@@ -325,12 +354,8 @@ void McCardDelegate::prefetchVisibleArtwork() const
 		const CardData d = fetchData(idx);
 
 		if (!d.fanartPath.isEmpty() && !s_fanartRawCache.contains(d.fanartPath)) {
-			QPixmap raw(d.fanartPath);
+			const QPixmap raw = capFanartRaw(QPixmap(d.fanartPath));
 			if (!raw.isNull()) {
-				if (raw.height() > 300) {
-					const int y = (raw.height() - 300) / 2;
-					raw = raw.copy(0, y, raw.width(), 300);
-				}
 				s_fanartRawCache.insert(d.fanartPath, raw);
 				s_fanartVersions[d.fanartPath]++;
 				changed = true;
@@ -1612,14 +1637,20 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		                              .arg(d.fanartPath)
 		                              .arg(s_fanartVersions.value(d.fanartPath, 0))
 		                              .arg(option.rect.width());
+		const bool resizing = m_resizeRelayoutTimer && m_resizeRelayoutTimer->isActive();
 		if (!QPixmapCache::find(fanartKey, &fanart)) {
-			QPixmap raw = s_fanartRawCache.value(d.fanartPath);
-			if (raw.isNull() && m_view && m_view->viewport())
-				requestAsyncFanart(d.fanartPath, m_view->viewport());
-			if (!raw.isNull()) {
-				fanart = raw.scaled(option.rect.size(), Qt::KeepAspectRatioByExpanding,
-				                    Qt::SmoothTransformation);
-				QPixmapCache::insert(fanartKey, fanart);
+			if (resizing) {
+				fanart = s_fanartLastScaled.value(d.fanartPath);
+			} else {
+				QPixmap raw = s_fanartRawCache.value(d.fanartPath);
+				if (raw.isNull() && m_view && m_view->viewport())
+					requestAsyncFanart(d.fanartPath, m_view->viewport());
+				if (!raw.isNull()) {
+					fanart = raw.scaled(option.rect.size(), Qt::KeepAspectRatioByExpanding,
+					                    Qt::SmoothTransformation);
+					QPixmapCache::insert(fanartKey, fanart);
+					s_fanartLastScaled.insert(d.fanartPath, fanart);
+				}
 			}
 		}
 		if (!fanart.isNull()) {
