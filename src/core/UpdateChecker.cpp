@@ -177,9 +177,10 @@ void UpdateChecker::downloadAndInstall(const QString& installerUrl)
 		f.write(reply->readAll());
 		f.close();
 
-		if (launchInstaller(savePath))
-			emit installerLaunched();
-		// launchInstaller() emits downloadFailed() itself on failure.
+		// Don't launch yet — the caller needs to release its own file locks
+		// first (see the comment on downloadAndInstall()). It calls
+		// launchInstaller() itself once that's actually done.
+		emit installerReady(savePath);
 	});
 }
 
@@ -201,15 +202,17 @@ bool UpdateChecker::launchInstaller(const QString& path)
 	const std::wstring filePath = path.toStdWString();
 	sei.lpFile       = filePath.c_str();
 	// Deliberately NOT /S. ShellExecuteExW returns as soon as the elevated
-	// installer process exists, racing this process's own closeEvent teardown
-	// (job-queue drain, thread shutdown) for the lock on MediaCurator.exe/its
-	// DLLs — the old uninstaller (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL)
-	// runs against those files first. A silent install can't prompt when a
-	// file is still locked, so it silently skips/no-ops and reports success,
-	// leaving the old version in place with no visible error. The normal
-	// wizard UI shows real progress and, if it does hit the lock, a blocking
-	// "close the application and click Retry" prompt instead of a silent
-	// partial install.
+	// installer process exists — CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL
+	// then runs the *old* uninstaller with its own implicit /S against
+	// MediaCurator.exe/its DLLs before the wizard's first page even shows. A
+	// silent install can't prompt when a file is still locked, so it silently
+	// skips/no-ops and reports success, leaving the old version in place with
+	// no visible error. The caller is responsible for calling launchInstaller()
+	// only after this process has actually released those locks (see
+	// downloadAndInstall()'s comment) — that's what closes this race; the
+	// wizard UI here is a second line of defense so a lock that somehow
+	// survives that shows a blocking "close the application and click Retry"
+	// prompt instead of another silent partial install.
 	sei.lpParameters = nullptr;
 	sei.nShow        = SW_SHOWNORMAL;
 

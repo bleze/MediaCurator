@@ -39,13 +39,23 @@ public:
 	void skipVersion(const QString& tagName);
 
 	// Download installerUrl (a release asset from updateAvailable's installerUrl
-	// param) and, once complete, launch it elevated (normal NSIS wizard UI, not
-	// silent — see the comment on the /S removal in launchInstaller() for why).
-	// Emits installerLaunched() on success — the caller must close the app
-	// immediately afterward so the elevated installer isn't blocked by files this
-	// process still has open. Windows-only; no-op elsewhere.
+	// param) and, once complete, emit installerReady(path) instead of launching
+	// it immediately. The elevated installer (and, via
+	// CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL, the *old* version's silent
+	// uninstall step) will try to overwrite MediaCurator.exe/its DLLs as soon as
+	// it starts — so the caller must fully tear down (release those file locks)
+	// before calling launchInstaller(), not just before closing the window.
+	// See main.cpp: it calls launchInstaller() only after the main window has
+	// been destroyed. Windows-only; no-op elsewhere.
 	void downloadAndInstall(const QString& installerUrl);
 	void cancelDownload();
+
+	// Launches path elevated (normal NSIS wizard UI, not silent — see the
+	// comment on the /S removal below for why). Public so the caller can defer
+	// this until its own teardown has actually released its file locks, rather
+	// than racing it the way emitting installerReady() and launching in the
+	// same step used to.
+	bool launchInstaller(const QString& path);
 
 signals:
 	// installerUrl is the matching Windows installer asset's browser_download_url,
@@ -57,13 +67,14 @@ signals:
 
 	void downloadProgress(qint64 received, qint64 total);
 	void downloadFailed(QString error);
-	void installerLaunched();
+	// path is the downloaded installer, ready to hand to launchInstaller() once
+	// the receiver has released its own file locks on the install directory.
+	void installerReady(QString path);
 
 private:
 	explicit UpdateChecker(QObject* parent = nullptr);
 
 	void onReplyFinished(QNetworkReply* reply, bool silent);
-	bool launchInstaller(const QString& path);
 
 	QNetworkAccessManager* m_nam           = nullptr;
 	QNetworkReply*         m_downloadReply = nullptr;

@@ -66,6 +66,14 @@ public:
 	// then runs the OS shutdown command, so it never races our own teardown.
 	bool shutdownRequested() const { return m_shutdownOnClose; }
 
+	// Set when the self-update flow has a downloaded installer waiting to be
+	// launched. main() checks this after app.exec() returns and the window is
+	// destroyed, and only then calls UpdateChecker::launchInstaller() — the same
+	// pattern as shutdownRequested() above, for the same reason: launching the
+	// installer any earlier races this process's own file locks on
+	// MediaCurator.exe/its DLLs.
+	QString pendingInstallerPath() const { return m_pendingInstallerPath; }
+
 protected:
 	void closeEvent(QCloseEvent* event) override;
 	void showEvent(QShowEvent* event) override;
@@ -100,7 +108,7 @@ private slots:
 	void onUpdateCheckFailed(QString error, bool silent);
 	void onUpdateDownloadProgress(qint64 received, qint64 total);
 	void onUpdateDownloadFailed(QString error);
-	void onUpdateInstallerLaunched();
+	void onUpdateInstallerReady(QString path);
 
 private:
 	void setupUi();
@@ -204,6 +212,7 @@ private:
 	int              m_savedJobPanelHeight = 0;
 	bool             m_jobPanelPinned     = false;
 	bool             m_shutdownOnClose    = false;   // set by the "Quit && Shut Down" job-wait path
+	QString          m_pendingInstallerPath;          // set by onUpdateInstallerReady(); see pendingInstallerPath()
 	bool             m_closeOnJobFinishPending = false; // guards against stacking duplicate jobFinished->close() hooks
 	bool             m_closeHandled       = false;   // true once closeEvent() has run its teardown once
 	std::function<void()> m_releaseSingleInstanceLock;   // see setSingleInstanceLockReleaser()

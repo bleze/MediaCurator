@@ -675,8 +675,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        this, &McMainWindow::onUpdateDownloadProgress);
 	connect(&UpdateChecker::instance(), &UpdateChecker::downloadFailed,
 	        this, &McMainWindow::onUpdateDownloadFailed);
-	connect(&UpdateChecker::instance(), &UpdateChecker::installerLaunched,
-	        this, &McMainWindow::onUpdateInstallerLaunched);
+	connect(&UpdateChecker::instance(), &UpdateChecker::installerReady,
+	        this, &McMainWindow::onUpdateInstallerReady);
 
 	startLibraryLoader();
 }
@@ -3936,19 +3936,21 @@ void McMainWindow::onUpdateDownloadFailed(QString error)
 	QMessageBox::warning(this, tr("Update Failed"), error);
 }
 
-void McMainWindow::onUpdateInstallerLaunched()
+void McMainWindow::onUpdateInstallerReady(QString path)
 {
-	logRestartDebug(QStringLiteral("installer launched by UpdateChecker — calling close() now (activeJob=%1)")
+	logRestartDebug(QStringLiteral("installer downloaded, deferring launch until teardown completes — calling close() now (activeJob=%1)")
 	                    .arg(m_jobQueue->hasActiveJob() ? "yes" : "no"));
 	if (m_updateProgressDlg) {
 		m_updateProgressDlg->close();
 		m_updateProgressDlg->deleteLater();
 		m_updateProgressDlg = nullptr;
 	}
-	// The elevated installer is starting; close now so it isn't blocked by files
-	// (the .exe itself, DLLs) this process still has open. close() runs the
-	// normal closeEvent cleanup path (stopping SubtitleManager/PosterManager/
-	// JobQueue) and quits the app since this is the last window.
+	// Stash the path rather than launching now — this process still has the
+	// .exe/DLLs open, and the elevated installer's uninstall-before-install
+	// step would race those locks the moment it starts. main() calls
+	// UpdateChecker::launchInstaller() with this path only after app.exec()
+	// returns and this window is fully destroyed (see pendingInstallerPath()).
+	m_pendingInstallerPath = path;
 	close();
 }
 

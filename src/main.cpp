@@ -1,6 +1,7 @@
 #include "ui/McMainWindow.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "core/UpdateChecker.h"
 
 #include <QHash>
 #include <QMetaType>
@@ -428,6 +429,7 @@ int main(int argc, char* argv[])
 
 	int  rc               = 0;
 	bool shutdownRequested = false;
+	QString pendingInstallerPath;
 	{
 		Mc::McMainWindow window;
 		activeMainWindow = &window;
@@ -439,11 +441,25 @@ int main(int argc, char* argv[])
 
 		logRestartDebug(QStringLiteral("main window constructed, entering event loop"));
 		rc = app.exec();
-		shutdownRequested = window.shutdownRequested();
-		logRestartDebug(QStringLiteral("event loop exited rc=%1 shutdownRequested=%2")
-		                    .arg(rc).arg(shutdownRequested ? "yes" : "no"));
+		shutdownRequested    = window.shutdownRequested();
+		pendingInstallerPath = window.pendingInstallerPath();
+		logRestartDebug(QStringLiteral("event loop exited rc=%1 shutdownRequested=%2 pendingInstaller=%3")
+		                    .arg(rc).arg(shutdownRequested ? "yes" : "no")
+		                    .arg(pendingInstallerPath.isEmpty() ? "no" : "yes"));
 	}
 	logRestartDebug(QStringLiteral("main window destroyed, main() about to return"));
+
+	// Only now — after the window is fully destroyed and this process has
+	// released its file handles on MediaCurator.exe/its DLLs — is it safe to
+	// launch the self-update installer. Launching any earlier (e.g. from
+	// onUpdateInstallerReady() or closeEvent()) raced the elevated installer's
+	// uninstall-before-install step against this process's own still-open
+	// locks, silently leaving a partial install in place.
+	if (!pendingInstallerPath.isEmpty()) {
+		logRestartDebug(QStringLiteral("launching deferred installer now that teardown is complete: %1")
+		                    .arg(pendingInstallerPath));
+		Mc::UpdateChecker::instance().launchInstaller(pendingInstallerPath);
+	}
 	// window is fully destroyed here — only now is it safe to tell the OS to shut
 	// down. Firing this any earlier (e.g. from closeEvent()) starts Windows'
 	// session-end sequence while our own process is still unwinding, which can
