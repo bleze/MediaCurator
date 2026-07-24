@@ -257,41 +257,28 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	spinDownRow->addWidget(spinDownDesc);
 	spinDownRow->addSpacing(8);
 
-	const auto rootsByGroup = StorageGroupSettings::partitionRootsByGroup(
-	    AppSettings::instance().value("scan/roots").toStringList());
-
+	constexpr int kSpinIconSize = 16;
 	for (int g = StorageGroupSettings::MinGroup; g <= StorageGroupSettings::uiMaxGroup(); ++g) {
 		if (g > StorageGroupSettings::MinGroup) spinDownRow->addSpacing(12);
 
-		const bool inUse = !rootsByGroup.value(g).isEmpty();
-
-		constexpr int kIconSize = 16;
-		const QString groupTip = tr("Group %1").arg(g);
-		const QColor  iconColor = inUse ? StorageGroupSettings::colorForGroup(g) : QColor(110, 110, 110);
 		auto* icon = new QLabel(this);
-		icon->setPixmap(McCardDelegate::renderSvgIcon(QStringLiteral(":/icons/storage_group.svg"),
-		                                              iconColor, kIconSize, devicePixelRatioF()));
-		icon->setFixedSize(kIconSize, kIconSize);
-		icon->setToolTip(inUse ? groupTip : tr("%1 — no folders currently assigned").arg(groupTip));
+		icon->setFixedSize(kSpinIconSize, kSpinIconSize);
 		spinDownRow->addWidget(icon);
+		m_groupIcons.insert(g, icon);
 
 		auto* spin = new QSpinBox(this);
 		spin->setRange(1, 240);
 		spin->setSuffix(tr(" min"));
 		spin->setValue(StorageGroupSettings::spinDownMinutes(g));
-		spin->setEnabled(inUse);
-		spin->setToolTip(inUse
-		    ? tr("%1 — minutes of drive inactivity before its NAS/disk is assumed"
-		         " to spin down. Matches your NAS's own spin-down setting for the"
-		         " indicator's fade to mean something.").arg(groupTip)
-		    : tr("%1 has no folders assigned — nothing to configure.").arg(groupTip));
 		connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this, [g](int minutes) {
 			StorageGroupSettings::setSpinDownMinutes(g, minutes);
 		});
 		spinDownRow->addWidget(spin);
+		m_groupSpins.insert(g, spin);
 	}
 	spinDownRow->addStretch(1);
 	root->addLayout(spinDownRow);
+	refreshSpinDownEnabled();
 
 	// ── Close button ──────────────────────────────────────────────────────────
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -300,6 +287,34 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	root->addWidget(buttons);
 
 	loadFolders();
+}
+
+void McManageFoldersDialog::refreshSpinDownEnabled()
+{
+	constexpr int kSpinIconSize = 16;
+	const auto rootsByGroup = StorageGroupSettings::partitionRootsByGroup(
+	    AppSettings::instance().value("scan/roots").toStringList());
+
+	for (auto it = m_groupSpins.constBegin(); it != m_groupSpins.constEnd(); ++it) {
+		const int     g       = it.key();
+		const bool    inUse   = !rootsByGroup.value(g).isEmpty();
+		const QString groupTip = tr("Group %1").arg(g);
+
+		if (auto* icon = m_groupIcons.value(g)) {
+			const QColor iconColor = inUse ? StorageGroupSettings::colorForGroup(g) : QColor(110, 110, 110);
+			icon->setPixmap(McCardDelegate::renderSvgIcon(QStringLiteral(":/icons/storage_group.svg"),
+			                                              iconColor, kSpinIconSize, devicePixelRatioF()));
+			icon->setToolTip(inUse ? groupTip : tr("%1 — no folders currently assigned").arg(groupTip));
+		}
+
+		QSpinBox* spin = it.value();
+		spin->setEnabled(inUse);
+		spin->setToolTip(inUse
+		    ? tr("%1 — minutes of drive inactivity before its NAS/disk is assumed"
+		         " to spin down. Matches your NAS's own spin-down setting for the"
+		         " indicator's fade to mean something.").arg(groupTip)
+		    : tr("%1 has no folders assigned — nothing to configure.").arg(groupTip));
+	}
 }
 
 void McManageFoldersDialog::loadFolders()
@@ -324,8 +339,9 @@ void McManageFoldersDialog::loadFolders()
 
 		auto* groupRow = new McGroupChipRow(StorageGroupSettings::uiMaxGroup(),
 		                                    StorageGroupSettings::groupForRoot(path), m_table);
-		groupRow->onGroupChanged = [path](int g) {
+		groupRow->onGroupChanged = [this, path](int g) {
 			StorageGroupSettings::setGroupForRoot(path, g);
+			refreshSpinDownEnabled();
 		};
 		m_table->setCellWidget(i, 2, groupRow);
 	}
@@ -369,10 +385,12 @@ void McManageFoldersDialog::onAddFolder()
 	auto* groupRow = new McGroupChipRow(StorageGroupSettings::uiMaxGroup(),
 	                                    StorageGroupSettings::DefaultGroup, m_table);
 	StorageGroupSettings::setGroupForRoot(folder, groupRow->selected());
-	groupRow->onGroupChanged = [folder](int g) {
+	groupRow->onGroupChanged = [this, folder](int g) {
 		StorageGroupSettings::setGroupForRoot(folder, g);
+		refreshSpinDownEnabled();
 	};
 	m_table->setCellWidget(row, 2, groupRow);
+	refreshSpinDownEnabled();
 
 	// Let McMainWindow's existing scan infrastructure handle this —
 	// no duplicate worker here.
@@ -424,6 +442,7 @@ void McManageFoldersDialog::onRemoveSelected()
 
 	AppSettings::instance().setValue("scan/roots", roots);
 	m_anyRemoved = true;
+	refreshSpinDownEnabled();
 
 	QList<int> rows;
 	rows.reserve(selected.size());

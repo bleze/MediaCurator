@@ -20,6 +20,7 @@
 #include "ui/McOnboardingDialog.h"
 #include "ui/McPreviewDialog.h"
 #include "ui/McJobReviewDialog.h"
+#include "ui/McScanCompleteDialog.h"
 #include "ui/McSettingsDialog.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
@@ -1214,7 +1215,7 @@ void McMainWindow::setupUi()
 			const int n = imdbFiles.size();
 			const QString title = n > 1
 			    ? tr("Remove %1 Files").arg(n)
-			    : tr("Remove \"%1\"").arg(imdbFiles.first().filename);
+			    : tr("Remove File");
 			const QString body = n > 1
 			    ? tr("%1 files will be removed from MediaCurator. "
 			         "You can re-add them by scanning the folder again.").arg(n)
@@ -2580,13 +2581,11 @@ void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*
 
 	setScanningState(false);
 
-	if (m_newFilesFound.isEmpty()) {
-		QMessageBox::information(this, tr("Scan Complete"), tr("No new files found."));
+	if (m_newFilesFound.isEmpty() && m_updatedSoFar == 0 && m_removedSoFar == 0) {
+		QMessageBox::information(this, tr("Scan Complete"), tr("No changes found."));
 	} else {
-		QMessageBox box(QMessageBox::Information, tr("Scan Complete"),
-			tr("Found %n new file(s).", "", m_newFilesFound.size()), QMessageBox::Ok, this);
-		box.setDetailedText(m_newFilesFound.join('\n'));
-		box.exec();
+		auto* dlg = new McScanCompleteDialog(m_newFilesFound, m_updatedSoFar, m_removedSoFar, this);
+		dlg->exec();
 	}
 
 	// A scan only invalidates existing jobs when a known file changed or a file

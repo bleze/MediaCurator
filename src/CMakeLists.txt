@@ -43,6 +43,7 @@ set(MC_SOURCES
     ui/McCalibrationDialog.cpp
     ui/McHighscoreBand.cpp
     ui/McHighscoreDialog.cpp
+    ui/McScanCompleteDialog.cpp
     ui/SvgIcon.cpp
     ui/McStorageGroupChipToggle.cpp
     ui/McWindowGeometry.cpp
@@ -139,6 +140,7 @@ set(MC_HEADERS
     ../include/ui/McCalibrationDialog.h
     ../include/ui/McHighscoreBand.h
     ../include/ui/McHighscoreDialog.h
+    ../include/ui/McScanCompleteDialog.h
     ../include/ui/SvgIcon.h
     ../include/ui/McFlagRowWidget.h
     ../include/ui/McStorageGroupChipToggle.h

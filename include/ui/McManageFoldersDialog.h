@@ -1,9 +1,12 @@
 #pragma once
 
 #include <QDialog>
+#include <QHash>
 
 class QAction;
+class QLabel;
 class QPoint;
+class QSpinBox;
 class QTableWidget;
 
 namespace Mc {
@@ -31,12 +34,20 @@ private slots:
 
 private:
 	void loadFolders();
+	// Re-evaluates which groups have folders assigned and updates each
+	// spin-down row's enabled state/tooltip/icon color accordingly. Must be
+	// called whenever a folder's group assignment or the root list changes —
+	// the row is only built once in the constructor otherwise.
+	void refreshSpinDownEnabled();
 
 	QTableWidget* m_table      = nullptr;
 	QAction*      m_actAdd     = nullptr;
 	QAction*      m_actRemove  = nullptr;
 	bool          m_anyRemoved = false;
 	bool          m_anyAdded   = false;
+
+	QHash<int, QLabel*>   m_groupIcons;
+	QHash<int, QSpinBox*> m_groupSpins;
 };
 
 } // namespace Mc
