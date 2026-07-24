@@ -1,5 +1,7 @@
 ﻿#include "scanner/ScanWorker.h"
 #include "core/DatabaseManager.h"
+#include "core/DriveActivityMonitor.h"
+#include "core/StorageGroupSettings.h"
 #include "scanner/NfoParser.h"
 #include "scanner/SubtitleLanguageDetector.h"
 #include "engine/ActionEngine.h"
@@ -400,6 +402,8 @@ void ScanWorker::run()
 
 	auto& db = DatabaseManager::instance();
 	const qint64 scanRunId = db.beginScanRun(m_rootPath);
+	const int storageGroup = StorageGroupSettings::groupForRoot(m_rootPath);
+	DriveActivityMonitor::touch(storageGroup);
 
 	FfprobeScanner scanner(m_ffprobePath);
 	const QStringList& exts = videoExtensions();
@@ -568,6 +572,7 @@ void ScanWorker::run()
 			const QString normDir = QDir::cleanPath(dir);
 			if (visitedDirs.contains(normDir)) return;
 			visitedDirs.insert(normDir);
+			DriveActivityMonitor::touch(storageGroup);
 			const QFileInfoList entries = QDir(normDir).entryInfoList(dirFilters);
 			for (const QFileInfo& fi : entries) {
 				if (m_cancelled.loadRelaxed()) return;
@@ -625,6 +630,7 @@ void ScanWorker::run()
 		while (it.hasNext()) {
 			const QString path = it.next();
 			if (m_cancelled.loadRelaxed()) break;
+			DriveActivityMonitor::touch(storageGroup);
 
 			const QFileInfo fi(path);
 			if (!fi.isFile()) continue;

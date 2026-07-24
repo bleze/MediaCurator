@@ -1,6 +1,7 @@
 #include "engine/TrackFlagService.h"
 
 #include "core/DatabaseManager.h"
+#include "core/DriveActivityMonitor.h"
 #include "core/ExternalTools.h"
 #include "engine/ActionEngine.h"
 
@@ -104,6 +105,7 @@ void TrackFlagService::runNext(qint64 fileId)
 	const QStringList args        = ActionEngine::buildPropEditArgs(fileOpt->path, json);
 	const QString     mkvpropedit = ExternalTools::instance().mkvpropeditPath();
 
+	DriveActivityMonitor::touchPath(fileOpt->path);
 	auto* proc = new QProcess(this);
 	m_running.insert(fileId, proc);
 	proc->setProcessChannelMode(QProcess::MergedChannels);

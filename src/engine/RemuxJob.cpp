@@ -1,5 +1,7 @@
 ﻿#include "engine/RemuxJob.h"
+#include "core/DriveActivityMonitor.h"
 #include "core/ExternalTools.h"
+#include "core/StorageGroupSettings.h"
 #include "engine/ActionEngine.h"
 #include "scanner/FfprobeScanner.h"
 
@@ -143,6 +145,12 @@ bool RemuxJob::copyFileWithProgress(const QString& srcPath, const QString& dstPa
 	constexpr qint64 kChunkSize = 8 * 1024 * 1024;
 	QByteArray buffer(kChunkSize, Qt::Uninitialized);
 
+	// The whole point of this copy is writing to dstPath (the NAS side of a
+	// staged remux) — keep the drive-activity indicator boosted for every
+	// chunk actually written, not just once at the start, so it doesn't fade
+	// mid-copy on a large file.
+	const int driveGroup = StorageGroupSettings::groupForFilePath(dstPath);
+
 	qint64 copied      = 0;
 	int    lastPercent = -1;
 	while (!in.atEnd()) {
@@ -153,6 +161,7 @@ bool RemuxJob::copyFileWithProgress(const QString& srcPath, const QString& dstPa
 		if (bytesRead < 0 || out.write(buffer.constData(), bytesRead) != bytesRead)
 			return false;
 
+		DriveActivityMonitor::touch(driveGroup);
 		copied += bytesRead;
 		const int percent = totalBytes > 0
 		    ? static_cast<int>(std::min<qint64>(100, copied * 100 / totalBytes))
@@ -169,6 +178,7 @@ bool RemuxJob::copyFileWithProgress(const QString& srcPath, const QString& dstPa
 
 void RemuxJob::run()
 {
+	DriveActivityMonitor::touchPath(m_inputPath);
 	m_originalSize = QFileInfo(m_inputPath).size();
 
 	m_process = new QProcess(this);
@@ -204,6 +214,12 @@ void RemuxJob::cancel()
 void RemuxJob::onReadyRead()
 {
 	static const QRegularExpression progressRe(R"(Progress:\s*(\d+)%)");
+
+	// mkvmerge is actively reading/writing for the entire run, not just at
+	// launch — re-touch on every chunk of its output so the drive-activity
+	// indicator stays lit for the whole mux instead of fading partway through
+	// a long one (touch() is internally rate-limited, safe to call this often).
+	DriveActivityMonitor::touchPath(m_inputPath);
 
 	m_readBuf += m_process->readAll();
 
@@ -285,6 +301,8 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 		     outputPath, finalOutputPath, inputPath, originalSize, log,
 		     writeLog, stagedLocally, mkvmergePath, args, descriptionText, exitCode,
 		     regexMismatch, ffprobePath, expectedStreams]() mutable {
+
+			DriveActivityMonitor::touchPath(inputPath);
 
 			// ── Verify before touching the source ──────────────────────────────
 			QList<StreamRecord> tmpStreams;

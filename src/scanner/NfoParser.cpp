@@ -1,5 +1,7 @@
 ﻿#include "scanner/NfoParser.h"
 #include "scanner/ScanWorker.h"
+#include "core/DriveActivityMonitor.h"
+#include "core/StorageGroupSettings.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -101,6 +103,7 @@ bool NfoParser::checkAndClearOwnWrite(const QString& nfoPath)
 bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
                               const NfoMovieMeta& meta)
 {
+	DriveActivityMonitor::touchPath(videoPath);
 	const QString nfoPath = nfoPathFor(videoPath);
 	// Register before the write so the watcher callback (if any) can skip it.
 	ownWrites().insert(nfoPath);

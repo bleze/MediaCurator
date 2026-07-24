@@ -37,6 +37,14 @@ public:
 	[[nodiscard]] static int uiMaxGroup();
 	static void setUiMaxGroup(int maxGroup);
 
+	// Minutes of drive inactivity a group's NAS/disk is assumed to take before
+	// spinning down — purely cosmetic, drives the status-bar drive-activity
+	// indicator's fade duration so it roughly tracks real spin-down timing.
+	// Default matches a common NAS default (Synology/QNAP ship at 20 min).
+	static constexpr int DefaultSpinDownMinutes = 20;
+	[[nodiscard]] static int  spinDownMinutes(int group);
+	static void setSpinDownMinutes(int group, int minutes);
+
 	// Fixed per-group accent color (group 1..MaxGroup), shared by the card
 	// badge (McCardDelegate) and the group picker (McManageFoldersDialog).
 	// Keyed by group number, not by how many groups are currently offered —

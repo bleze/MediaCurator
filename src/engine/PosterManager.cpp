@@ -1,6 +1,7 @@
 #include "engine/PosterManager.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "core/DriveActivityMonitor.h"
 #include "scanner/NfoParser.h"
 #include "scanner/ScanWorker.h"
 #include "ui/McLanguageFlags.h"
@@ -456,6 +457,7 @@ private:
 		// launch for each still-unresolved file.
 		QString imdbId = existing ? existing->imdbId : QString();
 		if (!existing) {
+			DriveActivityMonitor::touchPath(filePath);
 			imdbId = findNfoImdbId(filePath);
 
 			// A "<basename>-poster.<ext>" / "<basename>-fanart.<ext>" file next to
@@ -693,6 +695,7 @@ private:
 	{
 		if (sourcePath.isEmpty() || destPath.isEmpty() || QFile::exists(destPath))
 			return;
+		DriveActivityMonitor::touchPath(sourcePath);
 		if (!QFile::copy(sourcePath, destPath))
 			qWarning() << "PosterWorker: failed to cache local art" << sourcePath << "->" << destPath;
 	}

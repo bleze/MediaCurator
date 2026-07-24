@@ -1,5 +1,6 @@
 #include "engine/OpenSubtitlesClient.h"
 #include "core/DatabaseManager.h"
+#include "core/DriveActivityMonitor.h"
 #include "engine/SubtitleSyncMatcher.h"
 #include "scanner/ScanWorker.h"
 
@@ -476,6 +477,7 @@ bool OpenSubtitlesClient::downloadToFile(int fileId, const QString& savePath)
 	if (!downloadToBuffer(fileId, content))
 		return false;
 
+	DriveActivityMonitor::touchPath(savePath);
 	QFile f(savePath);
 	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
 		m_lastError = QStringLiteral("Cannot write to %1: %2").arg(savePath, f.errorString());
@@ -488,6 +490,7 @@ bool OpenSubtitlesClient::downloadToFile(int fileId, const QString& savePath)
 // static
 QString OpenSubtitlesClient::computeMovieHash(const QString& filePath)
 {
+	DriveActivityMonitor::touchPath(filePath);
 	QFile f(filePath);
 	if (!f.open(QIODevice::ReadOnly))
 		return {};

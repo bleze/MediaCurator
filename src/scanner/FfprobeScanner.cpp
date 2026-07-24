@@ -1,4 +1,5 @@
 ﻿#include "scanner/FfprobeScanner.h"
+#include "core/DriveActivityMonitor.h"
 #include "core/ExternalTools.h"
 #include "scanner/OriginalLanguageDetector.h"
 
@@ -78,6 +79,7 @@ FfprobeScanner::ScanResult FfprobeScanner::scanFile(const QString& filePath, qin
 
 QByteArray FfprobeScanner::invokeFfprobe(const QString& filePath) const
 {
+	DriveActivityMonitor::touchPath(filePath);
 	QProcess proc;
 	const QStringList args = {
 		"-v", "quiet",

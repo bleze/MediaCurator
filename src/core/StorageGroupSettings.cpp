@@ -129,6 +129,29 @@ void StorageGroupSettings::setUiMaxGroup(int maxGroup)
 	                                qBound(2, maxGroup, MaxGroup));
 }
 
+int StorageGroupSettings::spinDownMinutes(int group)
+{
+	const int key = qBound(MinGroup, group, MaxGroup);
+	auto& settings = AppSettings::instance();
+	const QJsonObject app = settings.rawRoot().value(QStringLiteral("app")).toObject();
+	const QJsonObject obj = app.value(QStringLiteral("storage/spinDownMinutes")).toObject();
+	const QString keyStr = QString::number(key);
+	if (!obj.contains(keyStr))
+		return DefaultSpinDownMinutes;
+	const int minutes = obj.value(keyStr).toInt(DefaultSpinDownMinutes);
+	return minutes > 0 ? minutes : DefaultSpinDownMinutes;
+}
+
+void StorageGroupSettings::setSpinDownMinutes(int group, int minutes)
+{
+	const int key = qBound(MinGroup, group, MaxGroup);
+	auto& settings = AppSettings::instance();
+	QJsonObject obj = settings.rawRoot().value(QStringLiteral("app")).toObject()
+	                      .value(QStringLiteral("storage/spinDownMinutes")).toObject();
+	obj.insert(QString::number(key), qMax(1, minutes));
+	settings.setValue(QStringLiteral("storage/spinDownMinutes"), obj);
+}
+
 QColor StorageGroupSettings::colorForGroup(int group)
 {
 	static const QColor kColors[MaxGroup] = {

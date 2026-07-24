@@ -7,7 +7,9 @@
 #include "ui/McHighscoreDialog.h"
 #include "ui/McManageFoldersDialog.h"
 #include "ui/SvgIcon.h"
+#include "core/DriveActivityMonitor.h"
 #include "ui/McCardDelegate.h"
+#include "ui/McDriveActivityIndicator.h"
 #include "ui/McFileCardDelegate.h"
 #include "ui/McFileListModel.h"
 #include "ui/McJobListModel.h"
@@ -2124,6 +2126,10 @@ void McMainWindow::setupStatusBar()
 	m_savedLabel = new QLabel(this);
 	m_savedLabel->setVisible(false);
 	statusBar()->addPermanentWidget(m_savedLabel);
+
+	// Last permanent widget added = rightmost in the status bar.
+	m_driveActivityIndicator = new McDriveActivityIndicator(this);
+	statusBar()->addPermanentWidget(m_driveActivityIndicator);
 }
 
 void McMainWindow::keyPressEvent(QKeyEvent* event)
@@ -2259,6 +2265,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	AppSettings::instance().setValue("mainWindow/queueHidden",    m_jobPanelPinned);
 	AppSettings::instance().setValue("mainWindow/highscoreHidden", m_highscoreBandPinned);
 	AppSettings::instance().setValue("library/sortOrder",         m_filterPanel->sortCombo()->currentData().toInt());
+	DriveActivityMonitor::persist();
 
 	// The actual OS shutdown command is issued from main(), after app.exec()
 	// returns and this window has been fully destroyed — not here. Firing

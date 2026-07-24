@@ -1,4 +1,5 @@
 ﻿#include "engine/ActionEngine.h"
+#include "core/DriveActivityMonitor.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -133,6 +134,7 @@ QStringList ActionEngine::buildCommand(const FileDecision& decision, const QStri
 
 QJsonArray ActionEngine::identifyAttachments(const QString& filePath) const
 {
+	DriveActivityMonitor::touchPath(filePath);
 	QProcess proc;
 	proc.start(m_mkvmergePath, {"-J", filePath});
 	if (!proc.waitForFinished(10000)) {
@@ -326,6 +328,7 @@ bool ActionEngine::fixMislabeledSidecarSubtitle(const QString& path, double fps)
 {
 	if (fps <= 0.0) return false;
 
+	DriveActivityMonitor::touchPath(path);
 	QFile f(path);
 	if (!f.open(QIODevice::ReadOnly)) return false;
 	const QString content = QString::fromUtf8(f.readAll());

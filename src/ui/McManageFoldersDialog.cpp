@@ -18,10 +18,12 @@
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
+#include <QHBoxLayout>
 #include <QModelIndex>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
+#include <QSpinBox>
 #include <QStyle>
 #include <QStyleOptionHeader>
 #include <QStyledItemDelegate>
@@ -242,6 +244,54 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	pal.setColor(QPalette::WindowText, pal.color(QPalette::PlaceholderText));
 	note->setPalette(pal);
 	root->addWidget(note);
+
+	// ── Drive spin-down timing ────────────────────────────────────────────────
+	// Purely cosmetic — drives how long the status-bar drive-activity indicator
+	// takes to fade back to idle after each group's drive is touched, so it
+	// roughly tracks when that NAS/disk is expected to actually spin down.
+	auto* spinDownRow = new QHBoxLayout();
+	spinDownRow->setContentsMargins(8, 4, 8, 4);
+	spinDownRow->setSpacing(6);
+	auto* spinDownDesc = new QLabel(tr("Drive spin-down (status bar indicator):"), this);
+	spinDownDesc->setMinimumWidth(spinDownDesc->sizeHint().width());
+	spinDownRow->addWidget(spinDownDesc);
+	spinDownRow->addSpacing(8);
+
+	const auto rootsByGroup = StorageGroupSettings::partitionRootsByGroup(
+	    AppSettings::instance().value("scan/roots").toStringList());
+
+	for (int g = StorageGroupSettings::MinGroup; g <= StorageGroupSettings::uiMaxGroup(); ++g) {
+		if (g > StorageGroupSettings::MinGroup) spinDownRow->addSpacing(12);
+
+		const bool inUse = !rootsByGroup.value(g).isEmpty();
+
+		constexpr int kIconSize = 16;
+		const QString groupTip = tr("Group %1").arg(g);
+		const QColor  iconColor = inUse ? StorageGroupSettings::colorForGroup(g) : QColor(110, 110, 110);
+		auto* icon = new QLabel(this);
+		icon->setPixmap(McCardDelegate::renderSvgIcon(QStringLiteral(":/icons/storage_group.svg"),
+		                                              iconColor, kIconSize, devicePixelRatioF()));
+		icon->setFixedSize(kIconSize, kIconSize);
+		icon->setToolTip(inUse ? groupTip : tr("%1 — no folders currently assigned").arg(groupTip));
+		spinDownRow->addWidget(icon);
+
+		auto* spin = new QSpinBox(this);
+		spin->setRange(1, 240);
+		spin->setSuffix(tr(" min"));
+		spin->setValue(StorageGroupSettings::spinDownMinutes(g));
+		spin->setEnabled(inUse);
+		spin->setToolTip(inUse
+		    ? tr("%1 — minutes of drive inactivity before its NAS/disk is assumed"
+		         " to spin down. Matches your NAS's own spin-down setting for the"
+		         " indicator's fade to mean something.").arg(groupTip)
+		    : tr("%1 has no folders assigned — nothing to configure.").arg(groupTip));
+		connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this, [g](int minutes) {
+			StorageGroupSettings::setSpinDownMinutes(g, minutes);
+		});
+		spinDownRow->addWidget(spin);
+	}
+	spinDownRow->addStretch(1);
+	root->addLayout(spinDownRow);
 
 	// ── Close button ──────────────────────────────────────────────────────────
 	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);

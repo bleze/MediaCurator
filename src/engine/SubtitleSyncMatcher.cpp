@@ -1,5 +1,6 @@
 #include "engine/SubtitleSyncMatcher.h"
 #include "core/DatabaseManager.h"
+#include "core/DriveActivityMonitor.h"
 #include "core/ExternalTools.h"
 
 #include <QElapsedTimer>
@@ -61,6 +62,7 @@ static QString buildSampledReadIntervals(double durationSec)
 QList<CueTiming> extractCueTimingsViaFfprobe(const QString& sourcePath, int streamIndex,
                                               double durationSec, const QAtomicInt* cancelFlag)
 {
+	DriveActivityMonitor::touchPath(sourcePath);
 	QProcess proc;
 	QStringList args = {"-v", "quiet", "-print_format", "json", "-show_packets"};
 	if (streamIndex >= 0)

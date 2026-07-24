@@ -4,6 +4,7 @@
 #include "engine/SubtitleManager.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "core/DriveActivityMonitor.h"
 #include "core/StorageGroupSettings.h"
 #include "core/ExternalTools.h"
 #include "scanner/FfprobeScanner.h"
@@ -542,6 +543,7 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 		const QStringList args        = ActionEngine::buildPropEditArgs(fileOpt->path, internalFlags);
 		const QString mkvpropeditPath = ExternalTools::instance().mkvpropeditPath();
 
+		DriveActivityMonitor::touch(storageGroup);
 		auto* proc = new QProcess(this);
 		m_runningByGroup[storageGroup].propEdit = proc;
 		proc->setProcessChannelMode(QProcess::MergedChannels);

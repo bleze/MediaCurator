@@ -29,6 +29,7 @@ namespace Mc {
 class AnalyzeWorker;
 class JobQueue;
 class LibraryLoader;
+class McDriveActivityIndicator;
 class McFileListModel;
 class McFilterPanel;
 class McHighscoreBand;
@@ -163,6 +164,7 @@ private:
 	JobQueue*        m_jobQueue    = nullptr;
 	QLabel*          m_statusLabel  = nullptr;
 	QLabel*          m_savedLabel   = nullptr;
+	McDriveActivityIndicator* m_driveActivityIndicator = nullptr;
 	QProgressBar*    m_progressBar  = nullptr;
 	QProgressBar*    m_posterProgressBar   = nullptr;
 	QPushButton*     m_btnCancelScan       = nullptr;

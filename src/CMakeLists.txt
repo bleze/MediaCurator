@@ -9,6 +9,7 @@ set(MC_SOURCES
     core/LibraryLoader.cpp
     core/UserProfile.cpp
     core/UpdateChecker.cpp
+    core/DriveActivityMonitor.cpp
 
     # Scanner
     scanner/FfprobeScanner.cpp
@@ -45,6 +46,7 @@ set(MC_SOURCES
     ui/SvgIcon.cpp
     ui/McStorageGroupChipToggle.cpp
     ui/McWindowGeometry.cpp
+    ui/McDriveActivityIndicator.cpp
 
     # Engine
     engine/RuleEngine.cpp
@@ -78,6 +80,7 @@ set(MC_HEADERS
     ../include/core/UserProfile.h
     ../include/core/ExternalTools.h
     ../include/core/UpdateChecker.h
+    ../include/core/DriveActivityMonitor.h
 
     # Scanner
     ../include/scanner/FfprobeScanner.h
@@ -139,6 +142,7 @@ set(MC_HEADERS
     ../include/ui/SvgIcon.h
     ../include/ui/McFlagRowWidget.h
     ../include/ui/McStorageGroupChipToggle.h
+    ../include/ui/McDriveActivityIndicator.h
 )
 
 if(WIN32)
