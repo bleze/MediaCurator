@@ -1,6 +1,7 @@
 #include "ui/McMainWindow.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "scanner/ScanWorker.h"
 #include "core/UpdateChecker.h"
 
 #include <QHash>
@@ -287,6 +288,8 @@ int main(int argc, char* argv[])
 	qRegisterMetaType<Mc::FileRecordList>("QList<Mc::FileRecord>");
 	qRegisterMetaType<Mc::FileStreamMap>("Mc::FileStreamMap");
 	qRegisterMetaType<Mc::FileIdList>("QList<qint64>");
+	qRegisterMetaType<Mc::ScanChangeEntry>("Mc::ScanChangeEntry");
+	qRegisterMetaType<Mc::ScanChangeList>("Mc::ScanChangeList");
 
 	QApplication app(argc, argv);
 

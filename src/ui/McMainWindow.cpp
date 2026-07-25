@@ -2317,6 +2317,7 @@ void McMainWindow::onScanFolder()
 
 	if (!isScanning()) {
 		m_newFilesFound.clear();
+		m_removedFilesFound.clear();
 		m_scannedSoFar = 0;
 	}
 	enqueueScanRoot(folder, /*quickScan=*/false);
@@ -2367,6 +2368,7 @@ void McMainWindow::onRemoveFolder()
 	connect(&dlg, &McManageFoldersDialog::folderAdded, this, [this](const QString& path) {
 		if (!isScanning()) {
 			m_newFilesFound.clear();
+			m_removedFilesFound.clear();
 			m_scannedSoFar = 0;
 		}
 		enqueueScanRoot(path, /*quickScan=*/false);
@@ -2401,6 +2403,7 @@ void McMainWindow::startScanRoots(const QStringList& roots, bool quickScan)
 {
 	m_scanGroups.clear();
 	m_newFilesFound.clear();
+	m_removedFilesFound.clear();
 	m_scannedSoFar = 0;
 	m_updatedSoFar = 0;
 	m_removedSoFar = 0;
@@ -2478,9 +2481,9 @@ void McMainWindow::createScanWorkerForGroup(int groupId, const QString& folderPa
 	});
 	connect(worker, &ScanWorker::finished, this,
 	        [this, groupId](int scanned, int added, int updated, int failed, int skipped, int removed,
-	                        QStringList newFiles) {
+	                        ScanChangeList newFiles, ScanChangeList removedFiles) {
 		onScanFinishedForGroup(groupId, scanned, added, updated, failed, skipped, removed,
-		                       std::move(newFiles));
+		                       std::move(newFiles), std::move(removedFiles));
 	});
 	connect(worker, &ScanWorker::fileProcessed,  m_listModel, &McFileListModel::applyFileUpdate);
 	connect(worker, &ScanWorker::imdbIdFound,    m_listModel, &McFileListModel::onImdbIdSaved);
@@ -2552,7 +2555,7 @@ void McMainWindow::updateScanStatusLabel()
 
 void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*/, int updated,
                                           int /*failed*/, int /*skipped*/, int removed,
-                                          QStringList newFiles)
+                                          ScanChangeList newFiles, ScanChangeList removedFiles)
 {
 	auto it = m_scanGroups.find(groupId);
 	if (it == m_scanGroups.end())
@@ -2561,6 +2564,7 @@ void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*
 	it->thread = nullptr;
 	it->worker = nullptr;
 	m_newFilesFound << newFiles;
+	m_removedFilesFound << removedFiles;
 	m_scannedSoFar += scanned;
 	m_updatedSoFar += updated;
 	m_removedSoFar += removed;
@@ -2584,7 +2588,8 @@ void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*
 	if (m_newFilesFound.isEmpty() && m_updatedSoFar == 0 && m_removedSoFar == 0) {
 		QMessageBox::information(this, tr("Scan Complete"), tr("No changes found."));
 	} else {
-		auto* dlg = new McScanCompleteDialog(m_newFilesFound, m_updatedSoFar, m_removedSoFar, this);
+		auto* dlg = new McScanCompleteDialog(m_newFilesFound, m_removedFilesFound, m_updatedSoFar,
+		                                     this);
 		dlg->exec();
 	}
 

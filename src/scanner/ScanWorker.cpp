@@ -392,11 +392,24 @@ ScanWorker::ScanWorker(const QString& ffprobePath, QObject* parent)
 	, m_ffprobePath(ffprobePath)
 {}
 
+namespace {
+// First video track, or a default-constructed (empty codecType) StreamRecord if none —
+// callers treat an empty codecType as "no video track to badge."
+StreamRecord firstVideoStream(const QList<StreamRecord>& streams)
+{
+	for (const auto& s : streams) {
+		if (s.codecType == QLatin1String("video"))
+			return s;
+	}
+	return {};
+}
+}
+
 void ScanWorker::run()
 {
 	if (m_rootPath.isEmpty()) {
 		emit error("No scan path set");
-		emit finished(0, 0, 0, 0, 0, 0, {});
+		emit finished(0, 0, 0, 0, 0, 0, {}, {});
 		return;
 	}
 
@@ -410,7 +423,8 @@ void ScanWorker::run()
 
 	int added = 0, updated = 0, failed = 0, skipped = 0, removed = 0, index = 0;
 	QSet<QString> foundPaths;
-	QStringList newFiles;
+	ScanChangeList newFiles;
+	ScanChangeList removedFiles;
 
 	QElapsedTimer progressTimer;
 	progressTimer.start();
@@ -491,7 +505,8 @@ void ScanWorker::run()
 			db.deletePendingJobsForFile(*fileId);
 		} else {
 			++added;
-			newFiles << path;
+			newFiles << ScanChangeEntry{ *fileId, path, result.file.sizeBytes,
+			                             result.file.mediaType, firstVideoStream(allStreams) };
 		}
 
 		// Resolve IMDb ID: embedded container tag takes priority, then .nfo sidecar.
@@ -609,8 +624,11 @@ void ScanWorker::run()
 				for (const auto& dbFile : db.filesUnderPath(dir)) {
 					if (QDir::cleanPath(QFileInfo(dbFile.path).absolutePath()) != dir) continue;
 					if (foundPaths.contains(dbFile.path)) continue;
+					const StreamRecord videoStream = firstVideoStream(db.streamsForFile(dbFile.id));
 					db.deleteFile(dbFile.id);
 					emit fileRemoved(dbFile.id);
+					removedFiles << ScanChangeEntry{ dbFile.id, dbFile.path, dbFile.sizeBytes,
+					                                dbFile.mediaType, videoStream };
 					++removed;
 				}
 			}
@@ -651,8 +669,11 @@ void ScanWorker::run()
 		const auto dbFiles = db.filesUnderPath(m_rootPath);
 		for (const auto& dbFile : dbFiles) {
 			if (!foundPaths.contains(dbFile.path)) {
+				const StreamRecord videoStream = firstVideoStream(db.streamsForFile(dbFile.id));
 				db.deleteFile(dbFile.id);
 				emit fileRemoved(dbFile.id);
+				removedFiles << ScanChangeEntry{ dbFile.id, dbFile.path, dbFile.sizeBytes,
+				                                dbFile.mediaType, videoStream };
 				++removed;
 			}
 		}
@@ -668,7 +689,7 @@ void ScanWorker::run()
 	}
 
 	db.endScanRun(scanRunId, added, updated, removed);
-	emit finished(index, added, updated, failed, skipped, removed, newFiles);
+	emit finished(index, added, updated, failed, skipped, removed, newFiles, removedFiles);
 }
 
 } // namespace Mc

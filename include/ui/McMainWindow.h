@@ -15,6 +15,7 @@
 #include <functional>
 
 #include "engine/HighscoreClient.h"
+#include "scanner/ScanWorker.h"
 
 class QPaintEvent;
 class QProgressDialog;
@@ -126,7 +127,8 @@ private:
 	void createScanWorkerForGroup(int groupId, const QString& folderPath, bool quickScan);
 	void onScanProgressForGroup(int groupId, int current, int total, const QString& currentFile);
 	void onScanFinishedForGroup(int groupId, int scanned, int added, int updated, int failed,
-	                            int skipped, int removed, QStringList newFiles);
+	                            int skipped, int removed, ScanChangeList newFiles,
+	                            ScanChangeList removedFiles);
 	void stopAllScanWorkers(bool waitForThreads);
 	void updateScanStatusLabel();
 	[[nodiscard]] bool isScanning() const;
@@ -191,7 +193,8 @@ private:
 	};
 
 	QHash<int, ScanGroupState> m_scanGroups;
-	QStringList      m_newFilesFound;   // accumulated across chained roots within one scan session
+	ScanChangeList   m_newFilesFound;   // accumulated across chained roots within one scan session
+	ScanChangeList   m_removedFilesFound; // pruned from the DB across chained roots this session
 	int              m_scannedSoFar = 0;   // files scanned in already-finished roots this session
 	// Accumulated across chained roots this scan session — only an updated or removed
 	// file can invalidate an existing job (see ScanWorker::deletePendingJobsForFile),
