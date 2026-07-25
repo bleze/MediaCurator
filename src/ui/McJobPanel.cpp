@@ -558,6 +558,14 @@ void McJobPanel::setupUi()
 		if (mode != JobSortMode::MostRecentFirst) {
 			AppSettings::instance().setValue(QStringLiteral("jobPanel/sortMode"), idx);
 			m_lastQueueSortIdx = idx;  // remember for restore when leaving Done/Failed
+			// The live dispatcher must never see MostRecentFirst — it's a display-only
+			// mode for the Done/Failed tab. Without this guard, opening that tab while
+			// paused (which auto-switches this combo) silently corrupted the queue's
+			// actual sort mode until the user manually revisited the Queue tab, causing
+			// dispatchJobs() to fall through to size-ascending order on resume instead
+			// of largest-savings-first (root cause of the wrong-pick bug, confirmed via
+			// dispatch_debug.log on 2026-07-25).
+			if (m_queue) m_queue->setSortMode(mode);
 		}
 		// setSortMode() already re-sorts m_allEntries in place and re-applies the
 		// current filter — a full reload() here would be a redundant DB round-trip
@@ -566,7 +574,6 @@ void McJobPanel::setupUi()
 		// entry/exit of those tabs).
 		m_model->setSortMode(mode);
 		m_listView->scrollToTop();
-		if (m_queue) m_queue->setSortMode(mode);
 	});
 
 	m_listView = new QListView(this);
