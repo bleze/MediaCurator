@@ -904,14 +904,16 @@ QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
 	QList<FileRecord> result;
 	QSqlQuery q(connection());
 	const QString prefix = likeDirPrefix(rootPath);
-	q.prepare("SELECT id, path, mtime_ms FROM files WHERE path LIKE ? ESCAPE '\\'");
+	q.prepare("SELECT id, path, mtime_ms, size_bytes, media_type FROM files WHERE path LIKE ? ESCAPE '\\'");
 	q.addBindValue(prefix);
 	if (!q.exec()) return result;
 	while (q.next()) {
 		FileRecord r;
-		r.id      = q.value("id").toLongLong();
-		r.path    = q.value("path").toString();
-		r.mtimeMs = q.value("mtime_ms").toLongLong();
+		r.id        = q.value("id").toLongLong();
+		r.path      = q.value("path").toString();
+		r.mtimeMs   = q.value("mtime_ms").toLongLong();
+		r.sizeBytes = q.value("size_bytes").toLongLong();
+		r.mediaType = MediaTypes::normalize(q.value("media_type").toString());
 		result.append(r);
 	}
 	return result;
