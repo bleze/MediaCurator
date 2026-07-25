@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QString>
 #include <algorithm>
+#include <optional>
 
 namespace Mc {
 
@@ -23,6 +24,10 @@ struct TrackDecision {
 	Decision        decision = Decision::Keep;
 	QString         reason;             // Human-readable explanation
 	bool            userOverride = false; // User manually changed this decision
+	// Set when this (kept) track's container FlagOriginal disagrees with what it
+	// should be given file.originalLanguage — true = should be set, false = should
+	// be cleared. Absent = flag already matches, nothing to fix. See RuleEngine::evaluateFile.
+	std::optional<bool> desiredIsOriginal;
 };
 
 // Default fallback bitrates (bps) used when ffprobe reports none.
@@ -266,6 +271,13 @@ struct FileDecision {
 		for (const auto& t : tracks)
 			if (t.decision == Decision::Remove) ++n;
 		return n;
+	}
+
+	/** Whether any kept track's container Original flag needs correcting */
+	bool hasFlagFixes() const {
+		for (const auto& t : tracks)
+			if (t.desiredIsOriginal.has_value()) return true;
+		return false;
 	}
 
 	qint64 estimatedSavingBytes() const {

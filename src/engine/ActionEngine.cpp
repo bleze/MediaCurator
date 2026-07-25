@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPair>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
@@ -270,6 +271,26 @@ QString ActionEngine::filterInternalFlagChanges(const QString& flagChangesJson,
 	}
 	if (output.size() == input.size()) return flagChangesJson;
 	return output.isEmpty() ? QString{} : QString::fromUtf8(QJsonDocument(output).toJson(QJsonDocument::Compact));
+}
+
+QString ActionEngine::mergeFlagChanges(const QString& base, const QString& overrides)
+{
+	if (overrides.isEmpty()) return base;
+	if (base.isEmpty())      return overrides;
+
+	QHash<QPair<int, QString>, QJsonObject> merged;
+	auto insertAll = [&merged](const QString& json) {
+		for (const QJsonValue& v : QJsonDocument::fromJson(json.toUtf8()).array()) {
+			const QJsonObject o = v.toObject();
+			merged.insert({ o[QLatin1String("streamIndex")].toInt(), o[QLatin1String("flag")].toString() }, o);
+		}
+	};
+	insertAll(base);
+	insertAll(overrides); // inserted second — wins over a same-key entry from base
+
+	QJsonArray result;
+	for (const auto& o : merged) result.append(o);
+	return result.isEmpty() ? QString{} : QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
 }
 
 QStringList ActionEngine::buildSidecarArgsForRemux(const QList<StreamRecord>& streams,

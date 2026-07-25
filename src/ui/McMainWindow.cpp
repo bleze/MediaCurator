@@ -191,22 +191,6 @@ static QList<Mc::StreamRecord> streamsRemainingForFile(qint64 fileId,
 }
 
 
-// Convert TMDB's ISO 639-1 two-letter code to the ISO 639-2/T three-letter code
-// used in media file stream tags.  Falls back to the input if unknown.
-static QString tmdbLangToIso6392(const QString& iso1)
-{
-	static const QHash<QString, QString> m = {
-		{"en","eng"}, {"fr","fra"}, {"de","deu"}, {"es","spa"}, {"it","ita"},
-		{"pt","por"}, {"ja","jpn"}, {"zh","zho"}, {"ko","kor"}, {"ru","rus"},
-		{"ar","ara"}, {"nl","nld"}, {"pl","pol"}, {"sv","swe"}, {"nb","nor"},
-		{"da","dan"}, {"fi","fin"}, {"tr","tur"}, {"cs","ces"}, {"sk","slk"},
-		{"hu","hun"}, {"ro","ron"}, {"el","ell"}, {"he","heb"}, {"th","tha"},
-		{"id","ind"}, {"vi","vie"}, {"uk","ukr"}, {"hi","hin"}, {"bn","ben"},
-	};
-	const QString lc = iso1.toLower();
-	return (lc.length() == 2) ? m.value(lc, lc) : lc;  // pass 3-letter codes through unchanged
-}
-
 // Menu toggle widget that draws its own hover (full row) and checked indicator (inset pill).
 // Not Q_OBJECT — uses std::function callback instead of signals.
 class McQueueToggle final : public QWidget
@@ -801,7 +785,7 @@ void McMainWindow::setupUi()
 					m_listModel->setRatingForFile(file.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(file.id, dlg.selectedVoteAverage());
 				}
-				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				const QString origLang = McLanguageFlags::iso6392FromIso1(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(file.id, origLang);
 				const QString title = dlg.selectedTitle();
@@ -876,13 +860,22 @@ void McMainWindow::setupUi()
 				buildTrackFlagMenu(menu, streamCopy, devicePixelRatioF(), /*showFlagRowsForExternal=*/false,
 					[this, file, hitStreamIdx](const QString& flag, bool value) {
 						TrackFlagService::instance().apply(file.id, hitStreamIdx, flag, value,
-							[this, file](bool ok) {
+							[this, file, flag](bool ok) {
 								if (!ok) {
 									m_statusLabel->setText(
 										tr("Failed to update track flag for %1").arg(file.filename));
 									return;
 								}
 								m_listModel->reloadFile(file.id);
+								// "original" never changes a removal decision — RuleEngine's removal
+								// logic only consults file.originalLanguage, never the per-track flag
+								// — and re-analyzing immediately would fight the user: the flag-fix
+								// pass (RuleEngine::evaluateFile) would see the value they JUST set as
+								// "wrong" (still mismatched against file.originalLanguage) and propose
+								// flipping it right back, re-triggering the expensive job-panel
+								// refresh below on every single toggle. default/forced CAN change
+								// subtitle keep/remove decisions, so those still re-analyze.
+								if (flag == QLatin1String("original")) return;
 								// Flag toggles almost never change removal decisions, so most
 								// calls here return created=false — gate the expensive full-job-list
 								// refresh (McJobListModel::reload() re-queries every job in the DB)
@@ -1180,7 +1173,7 @@ void McMainWindow::setupUi()
 					m_listModel->setRatingForFile(f.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(f.id, dlg.selectedVoteAverage());
 				}
-				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				const QString origLang = McLanguageFlags::iso6392FromIso1(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(f.id, origLang);
 				const QString title = dlg.selectedTitle();
@@ -1443,7 +1436,7 @@ void McMainWindow::setupUi()
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 				}
-				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				const QString origLang = McLanguageFlags::iso6392FromIso1(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
 				const QString title = dlg.selectedTitle();
@@ -1517,7 +1510,7 @@ void McMainWindow::setupUi()
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 				}
-				const QString origLang = tmdbLangToIso6392(dlg.selectedOriginalLanguage());
+				const QString origLang = McLanguageFlags::iso6392FromIso1(dlg.selectedOriginalLanguage());
 				if (!origLang.isEmpty())
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
 				const QString title = dlg.selectedTitle();
@@ -2863,6 +2856,7 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 			td.decision      = Decision::Remove;
 			td.reason        = tr("Manually marked for removal");
 			td.userOverride  = true;
+			td.desiredIsOriginal.reset(); // being removed — no flag left on it to fix
 		}
 	}
 
@@ -2875,7 +2869,12 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 			if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
 	}
 
-	if (decision.removalCount() == 0 && unmuxedSidecars.isEmpty()) return false;
+	// hasFlagFixes: a kept audio track's container Original flag disagrees with
+	// file.originalLanguage (see RuleEngine::evaluateFile) — proposed even when
+	// there's nothing to remove, so a flag-only correction still reaches the queue.
+	const bool hasFlagFixes = decision.hasFlagFixes();
+	const bool needsRemux   = decision.removalCount() > 0 || !unmuxedSidecars.isEmpty();
+	if (!needsRemux && !hasFlagFixes) return false;
 
 	int audioRemoved = 0, subRemoved = 0;
 	for (const auto& td : decision.tracks) {
@@ -2884,16 +2883,29 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 		if (td.stream.codecType == "subtitle") ++subRemoved;
 	}
 
-	if (m_profile->skipSubtitleOnlyJobs() && audioRemoved == 0) return false;
+	if (m_profile->skipSubtitleOnlyJobs() && audioRemoved == 0 && !hasFlagFixes) return false;
+
+	QString inheritedFlagChanges;
+	if (const auto existingJob = db.activeJobForFile(f.id)) {
+		if (existingJob->jobType != QLatin1String("tag_edit")) return false;
+		inheritedFlagChanges = existingJob->flagChangesJson;
+		db.deleteJob(existingJob->id);
+	}
 
 	QStringList parts;
 	if (audioRemoved > 0) parts << tr("%1 audio").arg(audioRemoved);
 	if (subRemoved   > 0) parts << tr("%1 subtitle").arg(subRemoved);
-	const QString summary = parts.isEmpty()
-		? (unmuxedSidecars.size() == 1
-		       ? tr("Mux in external subtitle")
-		       : tr("Mux in %1 external subtitles").arg(unmuxedSidecars.size()))
-		: tr("Remove ") + parts.join(", ");
+	QString summary;
+	if (needsRemux) {
+		summary = parts.isEmpty()
+			? (unmuxedSidecars.size() == 1
+			       ? tr("Mux in external subtitle")
+			       : tr("Mux in %1 external subtitles").arg(unmuxedSidecars.size()))
+			: tr("Remove ") + parts.join(", ");
+		if (hasFlagFixes) summary += tr(" + fix Original flag");
+	} else {
+		summary = tr("Fix Original audio flag");
+	}
 
 	// Build human-readable description of removed tracks
 	QStringList descLines;
@@ -2918,31 +2930,48 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 	}
 	const QString descriptionText = descLines.join('\n');
 
-	const QString     outputPath      = f.path + ".tmp";
-	const QStringList args            = actions.buildCommand(decision, outputPath);
-	QJsonArray        arr;
-	for (const QString& a : args) arr.append(a);
-
-	QString inheritedFlagChanges;
-	if (const auto existingJob = db.activeJobForFile(f.id)) {
-		if (existingJob->jobType != QLatin1String("tag_edit")) return false;
-		inheritedFlagChanges = existingJob->flagChangesJson;
-		db.deleteJob(existingJob->id);
+	// Flag corrections this proposal wants, independent of track removal — merged
+	// with any flag edits inherited from a pre-existing job below.
+	QJsonArray flagFixArr;
+	for (const auto& td : decision.tracks) {
+		if (!td.desiredIsOriginal.has_value()) continue;
+		QJsonObject o;
+		o["streamIndex"] = td.stream.streamIndex;
+		o["flag"]        = QStringLiteral("original");
+		o["value"]       = *td.desiredIsOriginal;
+		flagFixArr.append(o);
 	}
-
-	const qint64 estimatedSavings = decision.estimatedSavingBytes();
+	const QString flagFixJson = flagFixArr.isEmpty()
+	    ? QString()
+	    : QString::fromUtf8(QJsonDocument(flagFixArr).toJson(QJsonDocument::Compact));
 
 	JobRecord job;
-	job.fileId              = f.id;
-	job.status              = "proposed";
-	job.jobType             = "remux";
-	job.commandArgsJson     = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-	job.summary             = summary;
-	job.descriptionText     = descriptionText;
-	job.savedBytes          = estimatedSavings;
-	job.estimatedSavedBytes = estimatedSavings;
-	job.streamEstimatesJson = decision.streamEstimatesJson();
-	job.flagChangesJson     = inheritedFlagChanges;
+	job.fileId          = f.id;
+	job.status          = "proposed";
+	job.summary         = summary;
+	job.descriptionText = descriptionText;
+	// Inherited (already user-edited) entries win over an auto-detected fix for
+	// the same track — a deliberate in-panel edit is more authoritative.
+	job.flagChangesJson = ActionEngine::mergeFlagChanges(flagFixJson, inheritedFlagChanges);
+
+	if (needsRemux) {
+		const QString     outputPath = f.path + ".tmp";
+		const QStringList args       = actions.buildCommand(decision, outputPath);
+		QJsonArray        arr;
+		for (const QString& a : args) arr.append(a);
+
+		const qint64 estimatedSavings = decision.estimatedSavingBytes();
+
+		job.jobType             = "remux";
+		job.commandArgsJson     = QJsonDocument(arr).toJson(QJsonDocument::Compact);
+		job.savedBytes          = estimatedSavings;
+		job.estimatedSavedBytes = estimatedSavings;
+		job.streamEstimatesJson = decision.streamEstimatesJson();
+	} else {
+		// Flag-only fix — no container tracks change, so no mkvmerge run is needed.
+		job.jobType         = "tag_edit";
+		job.commandArgsJson = QStringLiteral("[]");
+	}
 	// originalStreamsJson and sidecarDeletionsJson are (re)computed from live data
 	// right before the job actually runs (JobQueue::startJob) — a proposed job can
 	// sit in the queue long enough for the on-disk sidecar layout to change, so a

@@ -464,6 +464,21 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 		fd.tracks.append(td);
 	}
 
+	// Flag/language mismatch pass: propose correcting a kept audio track's container
+	// FlagOriginal when it disagrees with file.originalLanguage (now TMDB-sourced —
+	// see PosterManager). Only tracks staying in the file are worth fixing, and only
+	// when alwaysKeepOriginalAudio makes "original" mean anything to this app's policy.
+	// Multiple same-language tracks can all legitimately be original — no exclusivity.
+	if (m_profile && m_profile->alwaysKeepOriginalAudio() && !file.originalLanguage.isEmpty()) {
+		for (auto& td : fd.tracks) {
+			if (td.stream.codecType != "audio" || td.decision != Decision::Keep) continue;
+			const bool shouldBeOriginal =
+			    normalizeLang(td.stream.language) == normalizeLang(file.originalLanguage);
+			if (td.stream.isOriginal != shouldBeOriginal)
+				td.desiredIsOriginal = shouldBeOriginal;
+		}
+	}
+
 	return fd;
 }
 

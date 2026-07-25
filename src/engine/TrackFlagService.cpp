@@ -58,19 +58,6 @@ void TrackFlagService::runNext(qint64 fileId)
 	QHash<int, const StreamRecord*> streamByIndex;
 	for (const StreamRecord& s : streams) streamByIndex.insert(s.streamIndex, &s);
 
-	// Original-flag exclusivity: only one audio track may carry FlagOriginal.
-	// If this batch sets a new track as original, clear it from whichever
-	// other audio track currently has it — synthesized, no caller callback.
-	for (const PendingChange& c : batch) {
-		if (c.flag != QLatin1String("original") || !c.value.toBool()) continue;
-		for (const StreamRecord& s : streams) {
-			if (s.codecType == QLatin1String("audio") && s.isOriginal && s.streamIndex != c.streamIndex) {
-				batch.append(PendingChange{ s.streamIndex, QStringLiteral("original"), false, {} });
-			}
-		}
-		break; // at most one "set original" per batch is expected
-	}
-
 	// A sidecar subtitle isn't a track inside the container yet — there's nothing for
 	// mkvpropedit to edit. Its default/forced state lives only in the DB until it's
 	// actually muxed in (ActionEngine::buildSidecarArgsForRemux reads it from there).

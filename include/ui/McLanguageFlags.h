@@ -20,6 +20,11 @@ namespace McLanguageFlags {
 // Returns the ISO 639-1 (2-letter) code for any ISO 639-1/2 variant, or empty if unmapped.
 [[nodiscard]] QString toIso1(const QString& langCode);
 
+// Converts an ISO 639-1 (2-letter) code — e.g. from TMDB's original_language —
+// to the ISO 639-2/T (3-letter) code used in file/stream language fields.
+// Anything that isn't a recognized 2-letter code is returned unchanged.
+[[nodiscard]] QString iso6392FromIso1(const QString& iso1);
+
 // English language name ("Danish"), or the raw code if unknown.
 [[nodiscard]] QString displayName(const QString& lang);
 

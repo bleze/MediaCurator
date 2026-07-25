@@ -116,6 +116,24 @@ static const QHash<QString, QString>& iso1Map()
 	return map;
 }
 
+static const QHash<QString, QString>& iso6392Map()
+{
+	static const QHash<QString, QString> map = [] {
+		QHash<QString, QString> m;
+		for (const LangEntry& e : kLangTable) {
+			const QStringList codes = QString::fromLatin1(e.codes).split(QLatin1Char(','));
+			if (codes.size() < 2) continue;
+			QString iso6392;
+			for (const QString& code : codes) {
+				if (code.length() == 3) { iso6392 = code; break; }
+			}
+			if (!iso6392.isEmpty()) m.insert(codes.first(), iso6392);
+		}
+		return m;
+	}();
+	return map;
+}
+
 } // anonymous namespace
 
 namespace Mc {
@@ -136,6 +154,12 @@ QString displayName(const QString& lang)
 QString toIso1(const QString& langCode)
 {
 	return iso1Map().value(langCode.toLower().trimmed());
+}
+
+QString iso6392FromIso1(const QString& iso1)
+{
+	const QString lc = iso1.toLower().trimmed();
+	return (lc.length() == 2) ? iso6392Map().value(lc, lc) : lc;
 }
 
 QList<QPair<QString, QString>> commonLanguages()

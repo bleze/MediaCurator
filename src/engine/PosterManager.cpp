@@ -307,6 +307,16 @@ private:
 				DatabaseManager::instance().updateMediaType(fileId, info.mediaType);
 				appliedMediaType = info.mediaType;
 			}
+			// Unlike mediaType/displayTitle above, this always overwrites rather than
+			// only filling when empty: originalLanguage is near-always already set by
+			// OriginalLanguageDetector's scan-time heuristic (first audio track's
+			// language, wrong for dubs) by the time this async TMDB fetch completes, so
+			// a fill-only rule would never actually correct a wrong value. TMDB's own
+			// original_language is the authoritative source here.
+			if (!info.originalLanguage.isEmpty()) {
+				DatabaseManager::instance().updateFileOriginalLanguage(
+				    fileId, McLanguageFlags::iso6392FromIso1(info.originalLanguage));
+			}
 			if (!info.title.isEmpty()) {
 				if (fileOpt->displayTitle.isEmpty())
 					DatabaseManager::instance().updateDisplayTitle(fileId, info.title, info.year);
@@ -712,6 +722,7 @@ private:
 		QString imdbId;     // populated by fetchTmdbInfoByTitle; caller already has it for fetchTmdbInfo
 		int     tmdbId        = 0;
 		QString originalTitle; // TMDB's original_title / original_name — language-independent
+		QString originalLanguage; // TMDB's original_language — ISO 639-1, e.g. "en", "ja"
 		QString releaseDate;   // full YYYY-MM-DD, for <premiered>
 		QString mediaType;     // MediaTypes::* (movie/tv/documentary)
 		bool    isTv        = false; // true → use /tv/* endpoints for localized title / external ids
@@ -762,6 +773,7 @@ private:
 		info.imdbId        = imdbId;
 		info.tmdbId        = obj[QStringLiteral("id")].toInt();
 		info.originalTitle = obj[QStringLiteral("original_title")].toString();
+		info.originalLanguage = obj[QStringLiteral("original_language")].toString();
 		info.releaseDate   = releaseDate;
 		info.isTv          = false;
 		info.mediaType     = MediaTypes::classify(
@@ -784,6 +796,7 @@ private:
 		info.imdbId        = imdbId;
 		info.tmdbId        = obj[QStringLiteral("id")].toInt();
 		info.originalTitle = obj[QStringLiteral("original_name")].toString();
+		info.originalLanguage = obj[QStringLiteral("original_language")].toString();
 		info.releaseDate   = airDate;
 		info.isTv          = true;
 		info.mediaType     = MediaTypes::classify(

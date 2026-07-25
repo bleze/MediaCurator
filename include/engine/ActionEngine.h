@@ -34,6 +34,12 @@ public:
 	static QString filterInternalFlagChanges(const QString& flagChangesJson,
 	                                          const QList<StreamRecord>& streams);
 
+	// Merges two flagChangesJson arrays keyed by (streamIndex, flag) — entries in
+	// `overrides` win over `base` for the same key. Used to combine RuleEngine's
+	// auto-detected Original-flag fixes (base) with a user's own in-panel edits
+	// inherited from a pre-existing job (overrides) when re-proposing a job.
+	static QString mergeFlagChanges(const QString& base, const QString& overrides);
+
 	// Returns mkvmerge per-file args for sidecar subtitles that have pending flag changes.
 	// Append these AFTER the main input path in the mkvmerge command.
 	static QStringList buildSidecarArgsForRemux(const QList<StreamRecord>& streams,
