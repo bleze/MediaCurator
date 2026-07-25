@@ -424,8 +424,11 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        this, [this](qint64 fileId) {
 		if (m_analyzeThread) return;  // full analysis running — it'll cover this file
 		const bool created = analyzeSingleFile(fileId);
-		m_jobPanel->refresh();
-		m_listModel->refreshJobFilter();
+		const bool hasExistingJob = DatabaseManager::instance().activeJobForFile(fileId).has_value();
+		if (created || hasExistingJob) {
+			m_jobPanel->refresh();
+			m_listModel->refreshJobFilter();
+		}
 		if (created) {
 			updateJobPanelVisibility(/*forceShow=*/true);
 			m_jobPanel->scrollToFileJob(fileId);
@@ -861,7 +864,7 @@ void McMainWindow::setupUi()
 				const bool hasTmdb = idx.data(McFileListModel::TmdbRole).toInt() > 0;
 				hitStreamIdx = del->hitTestBadgeStream(vpPos, m_listView->visualRect(idx),
 				                                        streams, m_listView->font(),
-				                                        hasImdb, file.originalLanguage, hasTmdb);
+				                                        hasImdb, hasTmdb);
 			}
 			const StreamRecord* hitStream = nullptr;
 			for (const StreamRecord& s : streams) {
@@ -870,7 +873,7 @@ void McMainWindow::setupUi()
 			if (hitStream) {
 				QMenu menu(this);
 				const StreamRecord streamCopy = *hitStream;
-				buildTrackFlagMenu(menu, streamCopy, file.originalLanguage, devicePixelRatioF(), /*showFlagRowsForExternal=*/false,
+				buildTrackFlagMenu(menu, streamCopy, devicePixelRatioF(), /*showFlagRowsForExternal=*/false,
 					[this, file, hitStreamIdx](const QString& flag, bool value) {
 						TrackFlagService::instance().apply(file.id, hitStreamIdx, flag, value,
 							[this, file](bool ok) {
@@ -880,9 +883,18 @@ void McMainWindow::setupUi()
 									return;
 								}
 								m_listModel->reloadFile(file.id);
+								// Flag toggles almost never change removal decisions, so most
+								// calls here return created=false — gate the expensive full-job-list
+								// refresh (McJobListModel::reload() re-queries every job in the DB)
+								// on it actually being needed. Still refresh if this file already has
+								// a job in the queue, since its card's track badges may now be stale.
 								const bool created = analyzeSingleFile(file.id);
-								m_jobPanel->refresh();
-								m_listModel->refreshJobFilter();
+								const bool hasExistingJob =
+									DatabaseManager::instance().activeJobForFile(file.id).has_value();
+								if (created || hasExistingJob) {
+									m_jobPanel->refresh();
+									m_listModel->refreshJobFilter();
+								}
 								if (created) {
 									updateJobPanelVisibility(/*forceShow=*/true);
 									m_jobPanel->scrollToFileJob(file.id);
@@ -911,14 +923,16 @@ void McMainWindow::setupUi()
 		                                      tr("&Analyze File"));
 		connect(analyzeAction, &QAction::triggered, this, [this, file] {
 			const bool created = analyzeSingleFile(file.id);
-			m_jobPanel->refresh();
-			m_listModel->refreshJobFilter();
+			const auto existing = DatabaseManager::instance().activeJobForFile(file.id);
+			if (created || existing) {
+				m_jobPanel->refresh();
+				m_listModel->refreshJobFilter();
+			}
 			if (created) {
 				updateJobPanelVisibility(/*forceShow=*/true);
 				m_jobPanel->scrollToFileJob(file.id);
 				m_statusLabel->setText(tr("Proposed job for %1").arg(file.filename));
 			} else {
-				const auto existing = DatabaseManager::instance().activeJobForFile(file.id);
 				if (!existing || existing->jobType == QLatin1String("tag_edit"))
 					m_statusLabel->setText(tr("No removals found for %1").arg(file.filename));
 			}
@@ -2979,8 +2993,12 @@ void McMainWindow::setSubtitleLanguage(const FileRecord& file, const StreamRecor
 			}
 			m_listModel->reloadFile(fileId);
 			const bool created = analyzeSingleFile(fileId);
-			m_jobPanel->refresh();
-			m_listModel->refreshJobFilter();
+			const bool hasExistingJob =
+				DatabaseManager::instance().activeJobForFile(fileId).has_value();
+			if (created || hasExistingJob) {
+				m_jobPanel->refresh();
+				m_listModel->refreshJobFilter();
+			}
 			if (created) {
 				updateJobPanelVisibility(/*forceShow=*/true);
 				m_jobPanel->scrollToFileJob(fileId);

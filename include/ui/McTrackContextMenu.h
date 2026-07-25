@@ -20,7 +20,7 @@ namespace Mc {
 // but invisible and confusing as a Library-view edit. Pass false from the Library,
 // true from the Queue. Has no effect on embedded tracks (always shown) or the
 // language submenu (always shown for an unlabeled subtitle, external or not).
-void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream, const QString& fileOriginalLanguage,
+void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream,
                         qreal devicePixelRatio, bool showFlagRowsForExternal,
                         const std::function<void(const QString& flag, bool value)>& onFlagToggled,
                         const std::function<void(const QString& langCode)>& onLanguageChosen);

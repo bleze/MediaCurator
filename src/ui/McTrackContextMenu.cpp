@@ -10,7 +10,7 @@
 
 namespace Mc {
 
-void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream, const QString& fileOriginalLanguage,
+void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream,
                         qreal devicePixelRatio, bool showFlagRowsForExternal,
                         const std::function<void(const QString& flag, bool value)>& onFlagToggled,
                         const std::function<void(const QString& langCode)>& onLanguageChosen)
@@ -20,12 +20,6 @@ void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream, const QString& 
 	if (!stream.isExternal || showFlagRowsForExternal) {
 		const bool isAudio = stream.codecType == QLatin1String("audio");
 
-		// A track can look "original" either because the container explicitly flags
-		// it (isOriginal) or, for files scanned before that flag existed, because its
-		// language happens to match the file's detected original language.
-		const bool isOrigLang = isAudio && !fileOriginalLanguage.isEmpty()
-		    && stream.language.compare(fileOriginalLanguage, Qt::CaseInsensitive) == 0;
-
 		const QColor trackColor = [&] {
 			if (stream.codecType == QLatin1String("audio"))    return QColor(0x10, 0x6a, 0xc0);
 			if (stream.codecType == QLatin1String("subtitle")) return QColor(0x1a, 0x86, 0x4a);
@@ -34,9 +28,9 @@ void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream, const QString& 
 
 		struct FlagItem { QString flag; const char* badgeChar; bool current; QString label; };
 		const QList<FlagItem> flagItems = {
-			{ QStringLiteral("default"),  "\xe2\x98\x85", stream.isDefault,            QObject::tr("Default") },
-			{ QStringLiteral("forced"),   "\xe2\x97\x8f", stream.isForced,             QObject::tr("Forced") },
-			{ QStringLiteral("original"), "\xe2\x97\x8e", stream.isOriginal || isOrigLang, QObject::tr("Original") },
+			{ QStringLiteral("default"),  "\xe2\x98\x85", stream.isDefault,  QObject::tr("Default") },
+			{ QStringLiteral("forced"),   "\xe2\x97\x8f", stream.isForced,   QObject::tr("Forced") },
+			{ QStringLiteral("original"), "\xe2\x97\x8e", stream.isOriginal, QObject::tr("Original") },
 		};
 		// "Original" is only meaningful for audio tracks — skip it for subtitles/video.
 		for (const FlagItem& fi : flagItems) {

@@ -761,8 +761,7 @@ void McJobPanel::setupUi()
 		// Detect whether the right-click landed on a specific track badge.
 		// customContextMenuRequested gives pos in list-view widget coordinates;
 		// hitTestBadgeStream and visualRect() both work in viewport coordinates.
-		const QPoint  vpPos    = m_listView->viewport()->mapFrom(m_listView, pos);
-		const QString origLang = idx.data(McJobListModel::OriginalLanguageRole).toString();
+		const QPoint vpPos = m_listView->viewport()->mapFrom(m_listView, pos);
 		int hitStreamIdx = -1;
 		const bool isEditable = (status == QLatin1String("proposed") || status == QLatin1String("queued"));
 		if (isEditable) {
@@ -771,7 +770,7 @@ void McJobPanel::setupUi()
 				const bool hasImdb = !idx.data(McJobListModel::ImdbIdRole).toString().isEmpty();
 				const bool hasTmdb = idx.data(McJobListModel::TmdbIdRole).toInt() > 0;
 				hitStreamIdx = del->hitTestBadgeStream(
-					vpPos, m_listView->visualRect(idx), streams, m_listView->font(), hasImdb, origLang, hasTmdb);
+					vpPos, m_listView->visualRect(idx), streams, m_listView->font(), hasImdb, hasTmdb);
 			}
 		}
 
@@ -786,7 +785,7 @@ void McJobPanel::setupUi()
 			}
 			if (hitStream) {
 				const StreamRecord streamCopy = *hitStream;
-				buildTrackFlagMenu(menu, streamCopy, origLang, devicePixelRatioF(), /*showFlagRowsForExternal=*/true,
+				buildTrackFlagMenu(menu, streamCopy, devicePixelRatioF(), /*showFlagRowsForExternal=*/true,
 					[this, idx, hitStreamIdx](const QString& flag, bool value) {
 						m_model->setStreamFlag(idx, hitStreamIdx, flag, value);
 					},

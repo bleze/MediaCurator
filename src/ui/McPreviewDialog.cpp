@@ -409,10 +409,14 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 		const int row = table->rowCount();
 		table->insertRow(row);
 
-		const bool isOrig = td.stream.codecType == QLatin1String("audio")
+		const bool removed = td.decision == Decision::Remove;
+
+		// Distinct from displayS.isOriginal (the container/user flag driving the ◎
+		// badge below): this is RuleEngine's own language-match heuristic for which
+		// track alwaysKeepOriginalAudio protects, used only for the tint below.
+		const bool isPolicyOriginal = td.stream.codecType == QLatin1String("audio")
 		                 && !decision.file.originalLanguage.isEmpty()
 		                 && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
-		const bool removed = td.decision == Decision::Remove;
 
 		const QMap<QString, bool> streamFlags = pendingChanges.value(td.stream.streamIndex);
 		const StreamRecord displayS = applyPendingFlags(td.stream, streamFlags);
@@ -420,13 +424,13 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 		for (auto it = streamFlags.constBegin(); it != streamFlags.constEnd(); ++it)
 			flagsVariant[it.key()] = it.value();
 
-		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(displayS, isOrig));
+		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(displayS, displayS.isOriginal));
 		trackItem->setData(Qt::UserRole, td.stream.codecType);
 		trackItem->setData(Qt::UserRole + 1, removed);
 		trackItem->setData(Qt::UserRole + 2,
 		    td.stream.codecType == QLatin1String("video") ? QString() : td.stream.language);
 		trackItem->setData(Qt::UserRole + 3, flagsVariant);
-		trackItem->setToolTip(buildTrackTooltip(displayS, isOrig));
+		trackItem->setToolTip(buildTrackTooltip(displayS, displayS.isOriginal));
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
@@ -443,7 +447,7 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 
 		// Tint the original-language audio row so it's easy to spot which
 		// track is protected by the keep-original-audio policy.
-		if (isOrig) {
+		if (isPolicyOriginal) {
 			const QColor tint(0x40, 0x90, 0xe0, 35);
 			for (auto* item : { trackItem, bitrateItem, sizeItem })
 				item->setBackground(tint);
@@ -481,7 +485,10 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		const int row = table->rowCount();
 		table->insertRow(row);
 
-		const bool isOrig = td.stream.codecType == QLatin1String("audio")
+		// Distinct from displayS.isOriginal (the container/user flag driving the ◎
+		// badge below): this is RuleEngine's own language-match heuristic for which
+		// track alwaysKeepOriginalAudio protects, used only for the tint below.
+		const bool isPolicyOriginal = td.stream.codecType == QLatin1String("audio")
 		                 && !decision.file.originalLanguage.isEmpty()
 		                 && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
 
@@ -491,13 +498,13 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		for (auto it = streamFlags.constBegin(); it != streamFlags.constEnd(); ++it)
 			flagsVariant[it.key()] = it.value();
 
-		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(displayS, isOrig));
+		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(displayS, displayS.isOriginal));
 		trackItem->setData(Qt::UserRole, td.stream.codecType);
 		trackItem->setData(Qt::UserRole + 1, false);
 		trackItem->setData(Qt::UserRole + 2,
 		    td.stream.codecType == QLatin1String("video") ? QString() : td.stream.language);
 		trackItem->setData(Qt::UserRole + 3, flagsVariant);
-		trackItem->setToolTip(buildTrackTooltip(displayS, isOrig));
+		trackItem->setToolTip(buildTrackTooltip(displayS, displayS.isOriginal));
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
@@ -506,7 +513,7 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		bitrateItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-		if (isOrig) {
+		if (isPolicyOriginal) {
 			const QColor tint(0x40, 0x90, 0xe0, 35);
 			for (auto* item : { trackItem, bitrateItem, sizeItem })
 				item->setBackground(tint);

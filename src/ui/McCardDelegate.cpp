@@ -901,7 +901,6 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
                                   const QSet<int>& removedIndices,
                                   const QFont& badgeFont,
                                   const QColor& cardBg,
-                                  const QString& originalLang,
                                   int hoveredStreamIndex,
                                   const QString& flagChangesJson) const
 {
@@ -930,10 +929,7 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 	int       row  = 0;
 
 	for (int i = 0; i < sorted.size(); ++i) {
-		const StreamRecord& s       = sorted.at(i);
-		const bool          isOrig  = s.codecType == QLatin1String("audio")
-		                           && !originalLang.isEmpty()
-		                           && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
+		const StreamRecord& s = sorted.at(i);
 
 		// Apply pending flag changes to a copy so the badge text reflects desired state
 		// even when allStreams still holds the original DB values (e.g. after restart).
@@ -948,12 +944,12 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 			}
 		}
 
-		const QString text    = buildBadgeText(displayS, isOrig);
-		const int     bW      = badgeWidthFor(displayS, isOrig, fm);
+		const QString text    = buildBadgeText(displayS, displayS.isOriginal);
+		const int     bW      = badgeWidthFor(displayS, displayS.isOriginal, fm);
 		const bool    removed = removedIndices.contains(s.streamIndex);
 		const bool    isHov   = (s.streamIndex == hoveredStreamIndex);
 		const bool    hasTip  = !displayS.title.isEmpty() || displayS.isDefault || displayS.isForced
-		                     || displayS.isOriginal || displayS.isCommentary || displayS.isHearingImpaired || isOrig;
+		                     || displayS.isOriginal || displayS.isCommentary || displayS.isHearingImpaired;
 		const bool    isLast  = (i == sorted.size() - 1);
 		const bool    isSDH   = streamIsSDH(displayS);
 
@@ -988,7 +984,6 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
                                         const QList<StreamRecord>& tracks,
                                         const QFont& baseFont,
                                         bool hasImdb,
-                                        const QString& originalLang,
                                         bool hasTmdb) const
 {
 	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
@@ -1010,10 +1005,7 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 
 		int numRows = 1, rx = 0;
 		for (const auto& s : group) {
-			const bool isOrig = s.codecType == QLatin1String("audio")
-			                 && !originalLang.isEmpty()
-			                 && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
-			const int bW = badgeWidthFor(s, isOrig, fm);
+			const int bW = badgeWidthFor(s, s.isOriginal, fm);
 			if (rx > 0 && rx + bW > badgeAreaW) { numRows++; rx = 0; }
 			rx += bW + kBadgeGap;
 		}
@@ -1024,10 +1016,7 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 			if (typeRect.contains(pos)) {
 				int x = content.left(), row = 0;
 				for (const auto& s : group) {
-					const bool    isOrig = s.codecType == QLatin1String("audio")
-					                   && !originalLang.isEmpty()
-					                   && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
-					const int bW = badgeWidthFor(s, isOrig, fm);
+					const int bW = badgeWidthFor(s, s.isOriginal, fm);
 					if (x > content.left() && x + bW > content.left() + badgeAreaW)
 						{ row++; x = content.left(); }
 					const int by = y + row * (kBadgeH + kRowGap);
@@ -1091,10 +1080,9 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 			    && (cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
 			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("failed"))) {
-				const auto    streams  = cur.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
-				const QString origLang = cur.data(McJobListModel::OriginalLanguageRole).toString();
+				const auto streams = cur.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 				overInteractive = (hitTestBadgeStream(pos, m_view->visualRect(cur),
-				                                      streams, m_view->font(), hasImdb, origLang, hasTmdb) >= 0);
+				                                      streams, m_view->font(), hasImdb, hasTmdb) >= 0);
 			}
 			m_view->viewport()->setCursor(overInteractive ? Qt::PointingHandCursor : Qt::ArrowCursor);
 		} else {
@@ -1161,9 +1149,8 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 	    && (index.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
 	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("failed"))) {
-		const auto    streams  = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
-		const QString origLang = index.data(McJobListModel::OriginalLanguageRole).toString();
-		const int streamIdx = hitTestBadgeStream(pos, itemRect, streams, viewFont, hasImdb, origLang, hasTmdb);
+		const auto streams   = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+		const int  streamIdx = hitTestBadgeStream(pos, itemRect, streams, viewFont, hasImdb, hasTmdb);
 		if (streamIdx >= 0) {
 			emit streamToggleRequested(index, streamIdx);
 			return true;
@@ -1297,10 +1284,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 
 		int numRows = 1, rx = 0;
 		for (const auto& s : g) {
-			const bool isOrig = s.codecType == QLatin1String("audio")
-			                 && !d.originalLanguage.isEmpty()
-			                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-			const int bW = badgeWidthFor(s, isOrig, fm);
+			const int bW = badgeWidthFor(s, s.isOriginal, fm);
 			if (rx > 0 && rx + bW > badgeAreaW) { numRows++; rx = 0; }
 			rx += bW + kBadgeGap;
 		}
@@ -1310,10 +1294,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 		if (typeRect.contains(event->pos())) {
 			int x = content.left(), row = 0;
 			for (const auto& s : g) {
-				const bool    isOrig = s.codecType == QLatin1String("audio")
-				                   && !d.originalLanguage.isEmpty()
-				                   && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-				const int bW = badgeWidthFor(s, isOrig, fm);
+				const int bW = badgeWidthFor(s, s.isOriginal, fm);
 				if (x > content.left() && x + bW > content.left() + badgeAreaW)
 					{ row++; x = content.left(); }
 				const int by = y + row * (kBadgeH + kRowGap);
@@ -1357,8 +1338,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					}
 					if (s.isDefault)         lines << tr("\xE2\x98\x85  Default track");
 					if (s.isForced)          lines << tr("\xE2\x97\x8F  Forced");
-					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original language (flag)");
-					else if (isOrig)         lines << tr("\xE2\x97\x8E  Original audio language");
+					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original audio track");
 					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary");
 					const bool isSdhFlag = streamIsSDH(s);
 					if (isSdhFlag) lines << tr("SDH subtitle");
@@ -1485,10 +1465,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 			if (group.isEmpty()) continue;
 			int rows = 1, x = 0;
 			for (const auto& s : group) {
-				const bool isOrig = s.codecType == QLatin1String("audio")
-				                 && !d.originalLanguage.isEmpty()
-				                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-				const int bW = badgeWidthFor(s, isOrig, fm);
+				const int bW = badgeWidthFor(s, s.isOriginal, fm);
 				if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
 				x += bW + kBadgeGap;
 			}
@@ -1500,10 +1477,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 			if (group.isEmpty()) continue;
 			int rows = 1, x = 0;
 			for (const auto& s : group) {
-				const bool isOrig = s.codecType == QLatin1String("audio")
-				                 && !d.originalLanguage.isEmpty()
-				                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-				const int bW = badgeWidthFor(s, isOrig, fm);
+				const int bW = badgeWidthFor(s, s.isOriginal, fm);
 				if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
 				x += bW + kBadgeGap;
 			}
@@ -1995,7 +1969,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 	// Hover-highlight the badge under the mouse for toggleable job cards
 	const int hoveredStreamIdx = (m_mode == Mode::JobQueue && d.toggleable && m_lastMousePos.x() >= 0)
-		? hitTestBadgeStream(m_lastMousePos, option.rect, d.allStreams, option.font, hasImdb, d.originalLanguage, hasTmdb)
+		? hitTestBadgeStream(m_lastMousePos, option.rect, d.allStreams, option.font, hasImdb, hasTmdb)
 		: -1;
 
 	QFont badgeFont = option.font;
@@ -2017,8 +1991,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		const int rows = drawBadgeRow(painter,
 		                              QRect(content.left(), y, badgeAreaW, kBadgeH),
 		                              group, d.removedIndices, badgeFont, bg,
-		                              d.originalLanguage, hoveredStreamIdx,
-		                              d.flagChangesJson);
+		                              hoveredStreamIdx, d.flagChangesJson);
 		y += rows * (kBadgeH + kRowGap);
 	};
 

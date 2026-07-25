@@ -144,7 +144,6 @@ public:
 	                        const QList<StreamRecord>& tracks,
 	                        const QFont& baseFont,
 	                        bool hasImdb,
-	                        const QString& originalLang = {},
 	                        bool hasTmdb = false) const;
 
 private:
@@ -229,7 +228,6 @@ private:
 	                  const QSet<int>& removedIndices,
 	                  const QFont& badgeFont,
 	                  const QColor& cardBg,
-	                  const QString& originalLang  = {},
 	                  int hoveredStreamIndex        = -1,
 	                  const QString& flagChangesJson = {}) const;
 
