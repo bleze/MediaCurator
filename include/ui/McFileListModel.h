@@ -11,6 +11,28 @@
 
 namespace Mc {
 
+// One sibling file inside a "Group by Movie" mega card — everything a card's edition
+// row needs to render and act on (play/open/analyze all key off fileId elsewhere).
+struct GroupMember {
+	qint64  fileId = -1;
+	QString path;
+	QString filename;
+	QString edition;    // may be empty — undetected
+	qint64  sizeBytes = 0;
+	double  durationSec = 0.0;
+	// Non-terminal job status (proposed/queued/running), empty if this file has no
+	// active job — mirrors the Job Queue's own status pill so the mega card badge
+	// reads consistently with how the queue shows it. See DatabaseManager::activeJobForFile.
+	QString jobStatus;
+	// Pre-grouped so the mega card can draw real track badges per file (codec,
+	// resolution, HDR, audio format, ...) — same data FileEntry keeps for its own
+	// card, just copied per sibling instead of computed fresh.
+	QList<StreamRecord> videoStreams;
+	QList<StreamRecord> audioStreams;
+	QList<StreamRecord> subtitleStreams;
+};
+using GroupMemberList = QList<GroupMember>;
+
 struct FileEntry {
 	FileRecord          file;
 	QList<StreamRecord> streams;
@@ -28,6 +50,7 @@ struct FileEntry {
 	bool hasTrueHD = false;
 	bool hasDtsHD = false;
 	bool hasDtsX  = false;
+	bool hasEdition3D = false;  // file.edition == "3D" — see EditionDetector
 
 	// Pre-grouped streams (populated once) to avoid repeated type-grouping in delegate sizeHint/paint
 	QList<StreamRecord> videoStreams;
@@ -35,6 +58,14 @@ struct FileEntry {
 	QList<StreamRecord> subtitleStreams;
 
 	int storageGroup = StorageGroupSettings::DefaultGroup;  // 1-4, from StorageGroupSettings::groupForFilePath(file.path)
+
+	// Populated only in SortOrder::GroupedByEdition — this entry represents a whole
+	// movie (the largest file in the tmdb group), with every sibling file/edition
+	// listed here for the mega card's edition rows. Empty/false for the normal
+	// one-row-per-file views.
+	GroupMemberList groupMembers;
+	bool            isGroupCard      = false;
+	bool            isGroupRedundant = false;   // 2+ members share the same edition label
 };
 
 class McFileListModel : public QAbstractListModel
@@ -60,6 +91,9 @@ public:
 		FileIdRole         = Qt::UserRole + 16,  // qint64 for fast id lookup (avoids full FileRecord copy in sizeHint)
 		StorageGroupRole   = Qt::UserRole + 17,  // int 1-4 — see StorageGroupSettings
 		TmdbRole           = Qt::UserRole + 18,  // int — TMDB movie/tv numeric id, 0 if unknown
+		GroupMembersRole   = Qt::UserRole + 19,  // GroupMemberList — grouped mode only
+		IsGroupCardRole    = Qt::UserRole + 20,  // bool — true when this row is a mega card
+		GroupIsRedundantRole = Qt::UserRole + 21, // bool — 2+ members share the same edition
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -76,6 +110,7 @@ public:
 		QF_Tv           = 1 << 8,
 		QF_Documentary  = 1 << 9,
 		QF_Misc         = 1 << 10,
+		QF_3D           = 1 << 11,
 	};
 
 	enum SortOrder {
@@ -86,6 +121,7 @@ public:
 		SortByRatingHigh = 4,
 		SortByRatingLow  = 5,
 		SortByLastScanned= 6,
+		GroupedByEdition = 7,   // one "mega card" per movie (tmdb group) — see rebuildGroupedEntries()
 	};
 
 	explicit McFileListModel(QObject* parent = nullptr);
@@ -120,6 +156,9 @@ signals:
 	// Fired when the library goes from "no classified types" ↔ "has at least one".
 	// Filter bars use this to show/hide the Movies/TV/Docs/Misc pills.
 	void mediaCategoriesAvailabilityChanged(bool hasClassified);
+	// Fired whenever the grouped view is (re)built — lets the filter bar's redundant-
+	// versions chip show a live count without polling the model.
+	void redundantGroupCountChanged(int count);
 
 public slots:
 	void setFilterText(const QString& text);
@@ -131,6 +170,7 @@ public slots:
 	void setQuickFilters(quint32 flags);
 	void setStorageGroupFilter(quint32 groupMask);   // bit (1<<group) per StorageGroupSettings group; 0 = show all
 	void setSortOrder(int order);
+	void setRedundantOnlyFilter(bool on);   // GroupedByEdition only — hide non-redundant groups
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
@@ -154,14 +194,27 @@ private:
 	void sortAllEntries();
 	void applyEntry(const FileEntry& entry);
 	void computeDerived(FileEntry& e);
+	// Rebuilds m_groupedAllEntries from m_allEntries — one entry per tmdb group
+	// (files with no tmdb match yet become their own singleton group). Called
+	// whenever GroupedByEdition becomes active or the source data it depends on
+	// (files, tmdb ids) changes while it's already active.
+	void rebuildGroupedEntries();
+	// Throttles rebuildGroupedEntries() to at most once per m_groupRebuildTimer
+	// interval — onTmdbIdSaved() fires once per file as TMDB matches resolve
+	// (e.g. right after a rescan), and doing a full O(n) rebuild + model reset on
+	// every single one of those was a real perf bug (100% CPU, no disk I/O — easy
+	// to mistake for slow disk since the drive activity indicator stays idle).
+	void scheduleGroupRebuild();
 
 	QList<FileEntry>          m_allEntries;      // full unfiltered set
+	QList<FileEntry>          m_groupedAllEntries; // one mega-card entry per tmdb group; see rebuildGroupedEntries()
 	QList<FileEntry>          m_entries;         // visible (filtered) set
 	QSet<qint64>              m_filesWithJobs;
 	QHash<qint64, QString>    m_posterPaths;     // fileId → cached poster image path
 	QHash<qint64, QString>    m_fanartPaths;     // fileId → cached fanart (backdrop) path
 	QHash<qint64, QString>    m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer
 	QTimer                    m_fanartBatchTimer;
+	QTimer                    m_groupRebuildTimer; // see scheduleGroupRebuild()
 	QHash<qint64, int>        m_posterVersions;  // fileId → version counter (increments on update)
 	QHash<qint64, QString>    m_imdbIds;         // fileId → IMDb ID
 	QHash<qint64, int>        m_tmdbIds;         // fileId → TMDB numeric id
@@ -178,8 +231,11 @@ private:
 	double                    m_ratingMin          = 0.0;
 	double                    m_ratingMax          = 10.0;
 	bool                      m_hadClassifiedMedia = false;
+	bool                      m_redundantOnlyFilter = false;
 
 	void notifyMediaCategoriesAvailability();
 };
 
 } // namespace Mc
+
+Q_DECLARE_METATYPE(Mc::GroupMemberList)

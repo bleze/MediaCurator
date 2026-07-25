@@ -39,6 +39,7 @@
 #include "scanner/NfoParser.h"
 #include "scanner/OriginalLanguageDetector.h"
 #include "scanner/ScanWorker.h"
+#include "scanner/EditionBackfillWorker.h"
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
 #include "core/LibraryLoader.h"
@@ -286,6 +287,40 @@ private:
 	bool     m_hovered = false;
 	bool     m_checked = false;
 };
+
+// Opens the file's containing folder with the file itself selected/highlighted,
+// rather than just opening the folder with nothing selected. Windows-specific
+// (explorer.exe's /select switch); falls back to plain folder-open elsewhere,
+// since neither macOS's "open -R" nor Linux file managers have a portable
+// equivalent worth special-casing for a Windows-primary project.
+static void revealInExplorer(const QString& path)
+{
+#ifdef Q_OS_WIN
+	QProcess::startDetached(QStringLiteral("explorer.exe"),
+	                        { QStringLiteral("/select,"), QDir::toNativeSeparators(path) });
+#else
+	QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+#endif
+}
+
+// Deletes sidecar files that share the video's base filename (subtitles,
+// .nfo, thumbnails, etc.) — e.g. "Movie.srt"/"Movie.en.srt"/"Movie.nfo"
+// alongside "Movie.mkv" — so removing a file from disk doesn't leave orphaned
+// sidecars behind. Best-effort: failures are silently ignored, same as the
+// QFile::remove() call for the main file this runs alongside.
+static void removeSidecarFiles(const QString& videoPath)
+{
+	const QFileInfo info(videoPath);
+	const QDir dir = info.dir();
+	const QString base = info.completeBaseName();
+	if (base.isEmpty()) return;
+	const QStringList filters = { base + QStringLiteral(".*") };
+	const QStringList entries = dir.entryList(filters, QDir::Files);
+	for (const QString& entry : entries) {
+		if (entry.compare(info.fileName(), Qt::CaseInsensitive) == 0) continue;
+		QFile::remove(dir.filePath(entry));
+	}
+}
 
 // Repaint the full widget tree synchronously so the first visible frame is
 // already drawn — QListView delegates and other children don't paint until
@@ -667,6 +702,10 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        this, &McMainWindow::onUpdateInstallerReady);
 
 	startLibraryLoader();
+
+	// Delayed so it never competes with the initial library load for DB/CPU time —
+	// see the earlier startup-slowness bug caused by an unrelated per-file rebuild.
+	QTimer::singleShot(5000, this, &McMainWindow::startEditionBackfill);
 }
 
 McMainWindow::~McMainWindow()
@@ -695,6 +734,11 @@ void McMainWindow::setupUi()
 	connect(fileDelegate, &McFileCardDelegate::playRequested,
 	        this, [this](const QModelIndex& idx) {
 		launchInDefaultPlayer(idx.data(McFileListModel::FileRole).value<FileRecord>().path);
+	});
+	connect(fileDelegate, &McFileCardDelegate::groupMemberPlayRequested,
+	        this, [this](const QModelIndex&, qint64 fileId) {
+		if (const auto file = DatabaseManager::instance().fileById(fileId))
+			launchInDefaultPlayer(file->path);
 	});
 	connect(fileDelegate, &McFileCardDelegate::imdbPageRequested,
 	        this, [this](const QModelIndex& idx) {
@@ -817,7 +861,10 @@ void McMainWindow::setupUi()
 	// Pinning it removes that feedback loop entirely (see McCardDelegate's
 	// resize-relayout handling).
 	m_listView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-	m_listView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+	// Per-item (not per-pixel): each wheel notch/arrow-key press moves exactly one
+	// card regardless of its height, instead of a small fixed pixel amount that
+	// used to make tall mega cards feel like they barely moved per scroll tick.
+	m_listView->setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
 	m_listView->setAlternatingRowColors(true);
 	m_listView->setSpacing(0);
 	// Fixed, not Adjust: with setUniformItemSizes(false), Adjust mode forces a full
@@ -900,6 +947,316 @@ void McMainWindow::setupUi()
 				menu.exec(m_listView->viewport()->mapToGlobal(pos));
 				return;
 			}
+		}
+
+		// ── Mega card (Group by Movie) — trimmed, differently-scoped menu ────────
+		// Row click acts on one edition/file; a click elsewhere on the card acts on
+		// every file in the group. Deliberately separate from the flat-view menu
+		// below rather than threading group semantics through its selRows/
+		// selectedFileIds batch logic.
+		if (idx.data(McFileListModel::IsGroupCardRole).toBool()) {
+			qint64 memberFileId = -1;
+			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
+				const QPoint vpPos = m_listView->viewport()->mapFrom(m_listView, pos);
+				memberFileId = del->hitTestGroupMember(vpPos, m_listView->visualRect(idx), idx);
+			}
+
+			const auto members = idx.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
+			QList<qint64> allMemberIds;
+			for (const auto& m : members) allMemberIds << m.fileId;
+
+			QMenu menu(this);
+
+			if (memberFileId >= 0) {
+				const auto rowFileOpt = DatabaseManager::instance().fileById(memberFileId);
+				if (!rowFileOpt) return;
+				const FileRecord rowFile = *rowFileOpt;
+
+				auto* analyzeAction = menu.addAction(svgIcon(":/icons/manage_search.svg"), tr("&Analyze File"));
+				connect(analyzeAction, &QAction::triggered, this, [this, rowFile] {
+					const bool created = analyzeSingleFile(rowFile.id);
+					const auto existing = DatabaseManager::instance().activeJobForFile(rowFile.id);
+					if (created || existing) {
+						m_jobPanel->refresh();
+						m_listModel->refreshJobFilter();
+					}
+					if (created) {
+						updateJobPanelVisibility(/*forceShow=*/true);
+						m_jobPanel->scrollToFileJob(rowFile.id);
+						m_statusLabel->setText(tr("Proposed job for %1").arg(rowFile.filename));
+					} else if (!existing || existing->jobType == QLatin1String("tag_edit")) {
+						m_statusLabel->setText(tr("No removals found for %1").arg(rowFile.filename));
+					}
+				});
+
+				auto* previewAction = menu.addAction(svgIcon(":/icons/visibility.svg"), tr("&Preview Tracks…"));
+				connect(previewAction, &QAction::triggered, this, [this, rowFile] { onShowPreview(rowFile.id); });
+
+				menu.addSeparator();
+
+				if (rowFile.ignored) {
+					auto* act = menu.addAction(svgIcon(":/icons/visibility_off.svg"), tr("&Unignore File"));
+					connect(act, &QAction::triggered, this, [this, rowFile] {
+						DatabaseManager::instance().setFileIgnored(rowFile.id, false);
+						m_listModel->setIgnoredBatch({rowFile.id}, false);
+						m_statusLabel->setText(tr("Unignored file"));
+					});
+				} else {
+					auto* act = menu.addAction(svgIcon(":/icons/block.svg"), tr("&Ignore File"));
+					connect(act, &QAction::triggered, this, [this, rowFile] {
+						DatabaseManager::instance().setFileIgnored(rowFile.id, true);
+						m_listModel->setIgnoredBatch({rowFile.id}, true);
+						m_statusLabel->setText(tr("Ignored file — switch to \"Ignored files\" filter to manage it"));
+					});
+				}
+
+				menu.addSeparator();
+
+				auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"), tr("&Download Subtitles…"));
+				connect(dlSubsAction, &QAction::triggered, this, [this, rowFile] {
+					if (m_profile->openSubtitlesApiKey().isEmpty()) {
+						QMessageBox::information(this, tr("Download Subtitles"),
+							tr("No OpenSubtitles API key configured.\n"
+							   "Go to Settings → OpenSubtitles to add your key."));
+						return;
+					}
+					QString imdbId;
+					if (const auto pr = DatabaseManager::instance().posterForFile(rowFile.id))
+						imdbId = pr->imdbId;
+					if (imdbId.isEmpty())
+						imdbId = NfoParser::readImdbId(rowFile.path);
+					if (imdbId.isEmpty()) {
+						QMessageBox::information(this, tr("Download Subtitles"),
+							tr("No IMDb ID found for \"%1\".\n"
+							   "Use \"Edit Movie Metadata\" to identify the movie first.").arg(rowFile.filename));
+						return;
+					}
+					const auto streams   = DatabaseManager::instance().streamsForFile(rowFile.id);
+					const auto remaining = streamsRemainingForFile(rowFile.id, streams, m_listModel);
+					const QStringList missingIso6392 =
+						Mc::missingSubtitleLanguages(remaining, m_profile->understoodLanguages());
+					if (missingIso6392.isEmpty()) {
+						QMessageBox::information(this, tr("Download Subtitles"),
+							tr("All subtitle languages are already covered for \"%1\".").arg(rowFile.filename));
+						return;
+					}
+					const qint64  fileId   = rowFile.id;
+					const QString filePath = rowFile.path;
+					const QString movieTitle = rowFile.displayTitle.isEmpty()
+					    ? QFileInfo(filePath).completeBaseName()
+					    : (rowFile.displayYear > 0
+					        ? QStringLiteral("%1 (%2)").arg(rowFile.displayTitle).arg(rowFile.displayYear)
+					        : rowFile.displayTitle);
+					auto* dlg = new Mc::McSubtitleDownloadDialog(
+						m_profile->openSubtitlesApiKey(),
+						m_profile->openSubtitlesUsername(),
+						m_profile->openSubtitlesPassword(),
+						imdbId, missingIso6392, filePath, rowFile.durationSec,
+						m_profile->editionTokens(), m_profile->computeSubtitleMovieHash(),
+						streams, movieTitle, this);
+					dlg->setAttribute(Qt::WA_DeleteOnClose);
+					connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
+						[this, fileId, filePath](int downloaded) {
+							if (downloaded == 0) return;
+							auto& db = DatabaseManager::instance();
+							const auto existing = db.streamsForFile(fileId);
+							QList<StreamRecord> containerStreams;
+							for (const auto& s : existing)
+								if (!s.isExternal) containerStreams << s;
+							const auto sidecars = ScanWorker::scanSidecarSubtitles(
+								filePath, ScanWorker::nextSidecarStreamIndex(containerStreams),
+								m_profile->detectSidecarSubtitleLanguage());
+							auto allStreams = containerStreams;
+							allStreams.append(sidecars);
+							db.insertStreams(fileId, allStreams);
+							m_listModel->reloadFile(fileId);
+							m_listView->viewport()->repaint();
+							m_statusLabel->setText(
+								tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
+									.arg(QFileInfo(filePath).fileName()));
+						});
+					dlg->open();
+				});
+
+				menu.addSeparator();
+
+				auto* openFolderAction = menu.addAction(svgIcon(":/icons/folder_open.svg"),
+				                                         tr("Open &Containing Folder"));
+				connect(openFolderAction, &QAction::triggered, this, [rowFile] {
+					revealInExplorer(rowFile.path);
+				});
+
+				menu.addSeparator();
+
+				auto* removeAction = menu.addAction(svgIcon(":/icons/delete.svg"), tr("Remove &Edition from Library…"));
+				connect(removeAction, &QAction::triggered, this, [this, rowFile] {
+					QMessageBox dlg(this);
+					dlg.setWindowTitle(tr("Remove Edition"));
+					dlg.setText(tr("\"%1\" will be removed from MediaCurator. "
+					                "You can re-add it by scanning the folder again.").arg(rowFile.filename));
+					dlg.setIcon(QMessageBox::Question);
+					auto* deleteBtn = dlg.addButton(tr("Delete File from Disk"), QMessageBox::DestructiveRole);
+					auto* removeBtn = dlg.addButton(tr("Remove from Library Only"), QMessageBox::AcceptRole);
+					dlg.addButton(QMessageBox::Cancel);
+					dlg.setDefaultButton(QMessageBox::Cancel);
+					dlg.exec();
+					if (dlg.clickedButton() != deleteBtn && dlg.clickedButton() != removeBtn) return;
+
+					auto& db = DatabaseManager::instance();
+					db.deleteJobsForFile(rowFile.id);
+					if (db.deleteFile(rowFile.id)) {
+						if (dlg.clickedButton() == deleteBtn) {
+							QFile::remove(rowFile.path);
+							removeSidecarFiles(rowFile.path);
+						}
+						m_listModel->removeEntry(rowFile.id);
+						m_jobPanel->removeJobsForFile(rowFile.id);
+						m_statusLabel->setText(tr("Removed \"%1\" from library").arg(rowFile.filename));
+					}
+				});
+			} else {
+				// Card-level click (poster/backdrop/title area) — acts on every file
+				// in the group, not just the representative shown on the card.
+				const FileRecord repFile = idx.data(McFileListModel::FileRole).value<FileRecord>();
+
+				{
+					auto* catMenu = menu.addMenu(tr("Set &Category"));
+					const QString currentType = MediaTypes::normalize(repFile.mediaType);
+					struct CatOpt { const char* type; const char* label; };
+					const CatOpt cats[] = {
+						{ MediaTypes::Movie,       "Movie" },
+						{ MediaTypes::Tv,          "TV Series" },
+						{ MediaTypes::Documentary, "Documentary" },
+						{ MediaTypes::Misc,        "Misc" },
+						{ MediaTypes::Unknown,     "Unknown" },
+					};
+					for (const CatOpt& c : cats) {
+						auto* act = catMenu->addAction(tr(c.label));
+						act->setCheckable(true);
+						act->setChecked(currentType == QLatin1String(c.type));
+						const QString typeStr = QString::fromLatin1(c.type);
+						connect(act, &QAction::triggered, this, [this, allMemberIds, typeStr] {
+							auto& db = DatabaseManager::instance();
+							for (qint64 fid : allMemberIds) {
+								db.updateMediaType(fid, typeStr);
+								m_jobPanel->setMediaTypeForFile(fid, typeStr);
+							}
+							m_listModel->setMediaTypeBatch(allMemberIds, typeStr);
+							m_statusLabel->setText(tr("Set category to “%1” for %2 file(s)")
+							    .arg(typeStr, QString::number(allMemberIds.size())));
+							m_listView->viewport()->repaint();
+						});
+					}
+				}
+
+				menu.addSeparator();
+
+				auto* refreshPosterAction = menu.addAction(svgIcon(":/icons/refresh.svg"), tr("Refresh &Poster"));
+				connect(refreshPosterAction, &QAction::triggered, this, [allMemberIds] {
+					PosterManager::instance().refreshBatch(allMemberIds);
+				});
+
+				auto* imdbAction = menu.addAction(svgIcon(":/icons/link.svg"), tr("Edit &Movie Metadata…"));
+				connect(imdbAction, &QAction::triggered, this, [this, repFile] {
+					const QString suggested = smartSuggestedTitle(repFile);
+					QString existing, exPoster, exFanart;
+					if (const auto pr = DatabaseManager::instance().posterForFile(repFile.id)) {
+						existing = pr->imdbId;
+						exPoster = pr->imagePath;
+						exFanart = pr->fanartPath;
+					}
+					if (existing.isEmpty()) existing = NfoParser::readImdbId(repFile.path);
+					ImdbSearchDialog dlg(repFile.path, suggested, existing, m_profile->tmdbApiKey(), this,
+					                     exPoster, exFanart);
+					dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
+					if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
+					if (dlg.exec() != QDialog::Accepted) return;
+					const QString imdbId = dlg.selectedImdbId();
+					if (imdbId.isEmpty()) return;
+					if (m_profile->writeNfoFiles()) {
+						NfoMovieMeta meta;
+						meta.tmdbId        = dlg.selectedTmdbId();
+						meta.title         = dlg.selectedTitle();
+						meta.originalTitle = dlg.selectedOriginalTitle();
+						meta.year          = dlg.selectedYear();
+						meta.premiered     = dlg.selectedReleaseDate();
+						meta.voteAverage   = dlg.selectedVoteAverage();
+						meta.voteCount     = dlg.selectedVoteCount();
+						NfoParser::writeMovieNfo(repFile.path, imdbId, meta);
+					}
+					PosterManager::instance().refresh(repFile.id, dlg.selectedPosterPath(), dlg.selectedImageData(),
+					                                 imdbId, dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
+					                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
+					if (dlg.selectedVoteAverage() > 0) {
+						m_listModel->setRatingForFile(repFile.id, dlg.selectedVoteAverage());
+						m_jobPanel->setRatingForFile(repFile.id, dlg.selectedVoteAverage());
+					}
+					const QString origLang = McLanguageFlags::iso6392FromIso1(dlg.selectedOriginalLanguage());
+					if (!origLang.isEmpty())
+						DatabaseManager::instance().updateFileOriginalLanguage(repFile.id, origLang);
+					const QString title = dlg.selectedTitle();
+					if (!title.isEmpty()) {
+						DatabaseManager::instance().updateDisplayTitle(repFile.id, title, dlg.selectedYear());
+						m_listModel->setDisplayTitleForFile(repFile.id, title, dlg.selectedYear());
+						m_jobPanel->setTitleForFile(repFile.id, title, dlg.selectedYear());
+					}
+					const QString mediaType = dlg.selectedMediaType();
+					if (!mediaType.isEmpty() && mediaType != QLatin1String(MediaTypes::Unknown)) {
+						DatabaseManager::instance().updateMediaType(repFile.id, mediaType);
+						m_listModel->setMediaTypeForFile(repFile.id, mediaType);
+						m_jobPanel->setMediaTypeForFile(repFile.id, mediaType);
+					}
+					m_listView->viewport()->repaint();
+				});
+
+				menu.addSeparator();
+
+				const QString removeLabel = allMemberIds.size() > 1
+				    ? tr("Remove Movie (%1 Files) from Library…").arg(allMemberIds.size())
+				    : tr("Remove from Library…");
+				auto* removeAction = menu.addAction(svgIcon(":/icons/delete.svg"), removeLabel);
+				connect(removeAction, &QAction::triggered, this, [this, allMemberIds, repFile] {
+					const int n = allMemberIds.size();
+					const QString body = n > 1
+					    ? tr("All %1 editions of \"%2\" will be removed from MediaCurator. "
+					         "You can re-add them by scanning the folder again.")
+					          .arg(n).arg(repFile.displayTitle.isEmpty() ? repFile.filename : repFile.displayTitle)
+					    : tr("\"%1\" will be removed from MediaCurator. "
+					         "You can re-add it by scanning the folder again.").arg(repFile.filename);
+					QMessageBox dlg(this);
+					dlg.setWindowTitle(n > 1 ? tr("Remove Movie") : tr("Remove File"));
+					dlg.setText(body);
+					dlg.setIcon(QMessageBox::Question);
+					auto* deleteBtn = dlg.addButton(tr("Delete Files from Disk"), QMessageBox::DestructiveRole);
+					auto* removeBtn = dlg.addButton(tr("Remove from Library Only"), QMessageBox::AcceptRole);
+					dlg.addButton(QMessageBox::Cancel);
+					dlg.setDefaultButton(QMessageBox::Cancel);
+					dlg.exec();
+					if (dlg.clickedButton() != deleteBtn && dlg.clickedButton() != removeBtn) return;
+
+					const bool deleteFromDisk = (dlg.clickedButton() == deleteBtn);
+					auto& db = DatabaseManager::instance();
+					int removed = 0;
+					for (qint64 fid : allMemberIds) {
+						const auto fOpt = db.fileById(fid);
+						db.deleteJobsForFile(fid);
+						if (!db.deleteFile(fid)) continue;
+						if (deleteFromDisk && fOpt) {
+							QFile::remove(fOpt->path);
+							removeSidecarFiles(fOpt->path);
+						}
+						m_listModel->removeEntry(fid);
+						m_jobPanel->removeJobsForFile(fid);
+						++removed;
+					}
+					m_statusLabel->setText(deleteFromDisk
+					    ? tr("Deleted %1 file(s) from disk and library").arg(removed)
+					    : tr("Removed %1 file(s) from library").arg(removed));
+				});
+			}
+
+			menu.exec(m_listView->viewport()->mapToGlobal(pos));
+			return;
 		}
 
 		QSet<int> selRows;
@@ -1208,8 +1565,7 @@ void McMainWindow::setupUi()
 		auto* openFolderAction = menu.addAction(svgIcon(":/icons/folder_open.svg"),
 		                                         tr("Open &Containing Folder"));
 		connect(openFolderAction, &QAction::triggered, this, [file] {
-			QDesktopServices::openUrl(
-				QUrl::fromLocalFile(QFileInfo(file.path).absolutePath()));
+			revealInExplorer(file.path);
 		});
 
 		menu.addSeparator();
@@ -1248,7 +1604,10 @@ void McMainWindow::setupUi()
 			for (const FileRecord& f : imdbFiles) {
 				db.deleteJobsForFile(f.id);
 				if (!db.deleteFile(f.id)) continue;
-				if (deleteFromDisk) QFile::remove(f.path);
+				if (deleteFromDisk) {
+					QFile::remove(f.path);
+					removeSidecarFiles(f.path);
+				}
 				m_listModel->removeEntry(f.id);
 				// Targeted removal — m_jobPanel->refresh() would re-query and re-derive
 				// the entire jobs table (posters, streams, kept-track diffs for every
@@ -1306,6 +1665,10 @@ void McMainWindow::setupUi()
 	        m_listModel, &McFileListModel::setRatingFilter);
 	connect(m_filterPanel, &McFilterPanel::storageGroupFilterChanged,
 	        m_listModel, &McFileListModel::setStorageGroupFilter);
+	connect(m_filterPanel, &McFilterPanel::redundantOnlyFilterChanged,
+	        m_listModel, &McFileListModel::setRedundantOnlyFilter);
+	connect(m_listModel, &McFileListModel::redundantGroupCountChanged,
+	        m_filterPanel, &McFilterPanel::setRedundantGroupCount);
 	// Hide Movies/TV/Docs/Misc until the library has at least one classified type.
 	connect(m_listModel, &McFileListModel::mediaCategoriesAvailabilityChanged,
 	        m_filterPanel, &McFilterPanel::setMediaCategoryFiltersVisible);
@@ -2252,6 +2615,20 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		delete m_loadThread; m_loadThread = nullptr;
 	}
 
+	// Same idea for the edition backfill pass — interrupting it is always safe,
+	// since progress is committed to the DB in batches as it goes (see
+	// EditionBackfillWorker) and it just resumes from edition_checked=0 next launch.
+	if (m_editionBackfillThread && m_editionBackfillThread->isRunning()) {
+		if (m_editionBackfillWorker) m_editionBackfillWorker->cancel();
+		m_editionBackfillThread->quit();
+		if (!m_editionBackfillThread->wait(3000)) {
+			m_editionBackfillThread->terminate();
+			m_editionBackfillThread->wait(500);
+		}
+		delete m_editionBackfillWorker; m_editionBackfillWorker = nullptr;
+		delete m_editionBackfillThread; m_editionBackfillThread = nullptr;
+	}
+
 	stopAllScanWorkers(/*waitForThreads=*/true);
 	logRestartDebug(QStringLiteral("closeEvent: scan workers stopped, stopping PosterManager"));
 
@@ -2470,6 +2847,7 @@ void McMainWindow::createScanWorkerForGroup(int groupId, const QString& folderPa
 	worker->setRootPath(folderPath);
 	worker->setQuickScan(quickScan);
 	worker->setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
+	worker->setEditionTokens(m_profile->editionTokens());
 	worker->moveToThread(thread);
 
 	state.thread = thread;
@@ -2823,6 +3201,33 @@ void McMainWindow::startLibraryLoader()
 	});
 
 	// Thread start is deferred to startBackgroundLibraryLoad() after the window is shown.
+}
+
+void McMainWindow::startEditionBackfill()
+{
+	if (m_editionBackfillThread) return;   // already running (shouldn't happen, but be safe)
+
+	m_editionBackfillThread = new QThread;   // no parent — lifetime controlled explicitly, same as m_loadThread
+	m_editionBackfillWorker = new EditionBackfillWorker;
+	m_editionBackfillWorker->setEditionTokens(m_profile->editionTokens());
+	m_editionBackfillWorker->moveToThread(m_editionBackfillThread);
+
+	connect(m_editionBackfillThread, &QThread::started, m_editionBackfillWorker, &EditionBackfillWorker::run);
+	connect(m_editionBackfillWorker, &EditionBackfillWorker::finished,
+	        m_editionBackfillThread, &QThread::quit);
+	connect(m_editionBackfillWorker, &EditionBackfillWorker::finished,
+	        m_editionBackfillWorker, &QObject::deleteLater);
+	connect(m_editionBackfillThread, &QThread::finished,
+	        m_editionBackfillThread, &QObject::deleteLater);
+	connect(m_editionBackfillWorker, &QObject::destroyed, this, [this] { m_editionBackfillWorker = nullptr; });
+	connect(m_editionBackfillThread, &QObject::destroyed, this, [this] { m_editionBackfillThread = nullptr; });
+
+	// Refresh just this one card (throttled automatically if the library happens to
+	// be in "Group by Movie" — see McFileListModel::scheduleGroupRebuild()).
+	connect(m_editionBackfillWorker, &EditionBackfillWorker::fileEditionFound, this,
+	        [this](qint64 fileId, const QString&) { m_listModel->reloadFile(fileId); });
+
+	m_editionBackfillThread->start();
 }
 
 bool McMainWindow::analyzeSingleFile(qint64 fileId)

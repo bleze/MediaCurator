@@ -9,6 +9,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <QDir>
 #include <QDateTime>
 #include <QDebug>
@@ -482,6 +483,44 @@ bool DatabaseManager::initSchema()
 		m.exec("CREATE INDEX IF NOT EXISTS idx_files_media_type ON files(media_type)");
 	}
 
+	// Migration: detected edition/cut (Theatrical, Director's Cut, 3D, ...), for
+	// grouping multiple files of the same movie in the library's "Group by Movie"
+	// view. Filled heuristically once at first scan (EditionDetector) or by user
+	// override; blank means undetected, not "no edition" — never re-touched by
+	// later rescans of the same file so a manual correction sticks.
+	//
+	// edition_checked distinguishes "blank because never checked" from "blank
+	// because checked and nothing was found" — EditionBackfillWorker uses it to
+	// walk files scanned before edition detection existed exactly once, resumable
+	// across app restarts (it just re-queries WHERE edition_checked=0). updateEdition()
+	// always sets this alongside edition, whichever path called it.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN edition TEXT NOT NULL DEFAULT ''");
+		m.exec("ALTER TABLE files ADD COLUMN edition_checked INTEGER NOT NULL DEFAULT 0");
+		m.exec("CREATE INDEX IF NOT EXISTS idx_files_edition_checked ON files(edition_checked)");
+	}
+
+	// One-time migration: reset edition_checked whenever EditionDetector's matching
+	// logic changes meaningfully (e.g. the synonym-grouping rework below), so
+	// EditionBackfillWorker relabels files that were already checked under the old
+	// logic instead of leaving their stale label in place forever. Same pattern as
+	// poster_scan_version above — bump kEditionDetectorVersion on the next such change.
+	{
+		static constexpr const char* kEditionDetectorVersion = "7"; // "7": allow 2-letter edition abbreviations (e.g. "DC" for Director's Cut)
+		QSqlQuery pv(connection());
+		pv.exec("SELECT value FROM preferences WHERE key='edition_detector_version'");
+		const QString currentVersion = pv.next() ? pv.value(0).toString() : QString();
+		if (currentVersion != QLatin1String(kEditionDetectorVersion)) {
+			QSqlQuery reset(connection());
+			reset.exec("UPDATE files SET edition_checked=0");
+			QSqlQuery setv(connection());
+			setv.prepare("INSERT OR REPLACE INTO preferences(key,value) VALUES('edition_detector_version',?)");
+			setv.addBindValue(QString::fromLatin1(kEditionDetectorVersion));
+			setv.exec();
+		}
+	}
+
 	// Migration: consecutive failed-resolve counter for poster_cache. Files that
 	// will never get an imdb_id (e.g. "Extras" sub-clips, trailers) used to sit in
 	// 'no_poster' forever, re-entering the folder-scan path (findNfoImdbId/
@@ -625,6 +664,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.scanRunId        = q.value("scan_run_id").toLongLong();
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 	r.containerTitle   = q.value("container_title").toString();
+	r.edition          = q.value("edition").toString();
 	r.displayTitle     = q.value("display_title").toString();
 	r.displayYear      = q.value("display_year").toInt();
 	r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
@@ -656,6 +696,7 @@ QHash<qint64, FileRecord> DatabaseManager::filesByIds(const QList<qint64>& ids) 
 		r.scanRunId        = q.value("scan_run_id").toLongLong();
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
+		r.edition          = q.value("edition").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
@@ -704,6 +745,7 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 	r.scanTime         = q.value("scan_time").toLongLong();
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 	r.containerTitle   = q.value("container_title").toString();
+	r.edition          = q.value("edition").toString();
 	r.displayTitle     = q.value("display_title").toString();
 	r.displayYear      = q.value("display_year").toInt();
 	r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
@@ -730,6 +772,7 @@ QList<FileRecord> DatabaseManager::allFiles() const
 		r.scanTime         = q.value("scan_time").toLongLong();
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
+		r.edition          = q.value("edition").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
@@ -760,6 +803,7 @@ QList<FileRecord> DatabaseManager::filesWithoutAnyJob() const
 		r.scanTime         = q.value("scan_time").toLongLong();
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
+		r.edition          = q.value("edition").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
@@ -812,6 +856,7 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit, int sort
 		r.scanTime         = q.value("scan_time").toLongLong();
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
+		r.edition          = q.value("edition").toString();
 		r.displayTitle     = q.value("display_title").toString();
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
@@ -1691,6 +1736,57 @@ bool DatabaseManager::updateMediaType(qint64 fileId, const QString& mediaType)
 	return q.exec();
 }
 
+QList<FileRecord> DatabaseManager::filesNeedingEditionCheck() const
+{
+	QList<FileRecord> result;
+	QSqlQuery q(connection());
+	q.exec("SELECT id, filename, container_title FROM files WHERE edition_checked = 0");
+	while (q.next()) {
+		FileRecord r;
+		r.id             = q.value(0).toLongLong();
+		r.filename       = q.value(1).toString();
+		r.containerTitle = q.value(2).toString();
+		result.append(r);
+	}
+	return result;
+}
+
+bool DatabaseManager::updateEdition(qint64 fileId, const QString& edition)
+{
+	// Always marks edition_checked too — this is the one place both a genuine scan
+	// and EditionBackfillWorker write through, so "checked, found nothing" (blank
+	// edition) and "never checked yet" stay distinguishable via edition_checked
+	// alone, without needing a separate write for each call site.
+	//
+	// edition.isEmpty() ? "" : edition, not just `edition`: EditionDetector::detect()
+	// returns a null QString ({}) when nothing is found, and Qt's SQLite driver binds
+	// a null QString as SQL NULL rather than '' — which violates this NOT NULL
+	// column. Coercing to an explicit non-null empty string here fixes it at the one
+	// place responsible for the column's contract, rather than relying on every
+	// caller to remember not to pass a null QString.
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET edition=?, edition_checked=1 WHERE id=?");
+	q.addBindValue(edition.isEmpty() ? QStringLiteral("") : edition);
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
+void DatabaseManager::updateEditionsBatch(const QHash<qint64, QString>& editionsByFileId)
+{
+	if (editionsByFileId.isEmpty()) return;
+	auto db = connection();
+	db.transaction();
+	QSqlQuery q(db);
+	q.prepare("UPDATE files SET edition=?, edition_checked=1 WHERE id=?");
+	for (auto it = editionsByFileId.cbegin(); it != editionsByFileId.cend(); ++it) {
+		// See updateEdition() above for why isEmpty() is coerced to a non-null "".
+		q.addBindValue(it.value().isEmpty() ? QStringLiteral("") : it.value());
+		q.addBindValue(it.key());
+		if (!q.exec()) { db.rollback(); return; }
+	}
+	db.commit();
+}
+
 bool DatabaseManager::setFileIgnored(qint64 fileId, bool ignored)
 {
 	QSqlQuery q(connection());
@@ -1845,6 +1941,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.displayTitle       = q.value("display_title").toString();
 		r.displayYear        = q.value("display_year").toInt();
 		r.mediaType          = MediaTypes::normalize(q.value("media_type").toString());
+		r.edition            = q.value("edition").toString();
 		result.append(r);
 	}
 }
@@ -1873,7 +1970,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
-		"       COALESCE(f.media_type, 'unknown') AS media_type"
+		"       COALESCE(f.media_type, 'unknown') AS media_type,"
+		"       COALESCE(f.edition, '') AS edition"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -1908,7 +2006,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
-		"       COALESCE(f.media_type, 'unknown') AS media_type"
+		"       COALESCE(f.media_type, 'unknown') AS media_type,"
+		"       COALESCE(f.edition, '') AS edition"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	// The panel's "running" filter tab means "actively running OR queued to run
@@ -1953,7 +2052,8 @@ std::optional<JobDisplayRecord> DatabaseManager::jobDisplayRecordById(qint64 job
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
-		"       COALESCE(f.media_type, 'unknown') AS media_type"
+		"       COALESCE(f.media_type, 'unknown') AS media_type,"
+		"       COALESCE(f.edition, '') AS edition"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.id = ?"));
@@ -1985,7 +2085,8 @@ QList<JobDisplayRecord> DatabaseManager::liveJobsForPanel() const
 		"       COALESCE(f.container_title, '') AS container_title,"
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
-		"       COALESCE(f.media_type, 'unknown') AS media_type"
+		"       COALESCE(f.media_type, 'unknown') AS media_type,"
+		"       COALESCE(f.edition, '') AS edition"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.status IN ('running', 'queued')"

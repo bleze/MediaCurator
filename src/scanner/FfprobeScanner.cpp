@@ -171,6 +171,9 @@ FfprobeScanner::ScanResult FfprobeScanner::parseJsonOutput(
 	}
 
 	file.originalLanguage = OriginalLanguageDetector::detect(file, streamList);
+	// Edition detection needs UserProfile::editionTokens(), which FfprobeScanner has
+	// no access to — done centrally in ScanWorker instead, right after scanFile()
+	// returns (see ScanWorker.cpp).
 
 	ScanResult result;
 	result.file    = file;

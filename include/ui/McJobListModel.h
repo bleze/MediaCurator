@@ -52,6 +52,7 @@ public:
 		FinishedAtRole        = Qt::UserRole + 27,  // qint64 epoch seconds job last left "running"; 0 if never
 		MediaTypeRole         = Qt::UserRole + 28,  // QString MediaTypes::* (movie/tv/documentary/misc/unknown)
 		TmdbIdRole            = Qt::UserRole + 29,  // int — TMDB movie/tv numeric id, 0 if unknown
+		EditionRole           = Qt::UserRole + 30,  // QString from files.edition; empty = undetected — see EditionDetector
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -80,8 +81,6 @@ public:
 	/** Count of jobs per status string across the full (unfiltered) list. */
 	QHash<QString, int> countsByStatus() const;
 
-	/** IDs of jobs whose check state is Qt::Checked. */
-	QList<qint64> checkedJobIds() const;
 	/** IDs of all jobs with a given status. */
 	QList<qint64> jobIdsByStatus(const QString& status) const;
 	/** fileId of every job with a given status (deduplicated). */

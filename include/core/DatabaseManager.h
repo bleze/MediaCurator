@@ -80,6 +80,8 @@ struct FileRecord {
 	QString     mediaType = QStringLiteral("unknown"); // MediaTypes::* value
 	bool        ignored = false;  // user-hidden; excluded from library view by default
 	qint64      subtitleAttemptedMs = 0; // last time an OpenSubtitles lookup was attempted (0 = never)
+	QString     edition; // e.g. "Theatrical", "Director's Cut", "3D"; blank = undetected. Heuristically
+	                      // filled once at first scan or user override; never re-touched by rescans.
 };
 
 // Mirrors the 'streams' table row
@@ -201,6 +203,7 @@ struct JobDisplayRecord {
 	QString displayTitle;     // TMDB/user-assigned override; preferred over all others
 	int     displayYear = 0;  // release year from TMDB (0 = unknown)
 	QString mediaType = QStringLiteral("unknown"); // MediaTypes::* from files.media_type
+	QString edition;           // from files.edition; empty = undetected — see EditionDetector
 };
 
 enum class JobSortMode {
@@ -329,6 +332,15 @@ public:
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
 	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
 	bool updateMediaType(qint64 fileId, const QString& mediaType);
+	bool updateEdition(qint64 fileId, const QString& edition);
+	// Files scanned before edition detection existed (edition_checked=0). Only
+	// id/filename/containerTitle are populated — that's all EditionDetector needs.
+	QList<FileRecord> filesNeedingEditionCheck() const;
+	// Same effect as calling updateEdition() once per entry, wrapped in a single
+	// transaction — EditionBackfillWorker may be writing hundreds/thousands of rows
+	// in one pass, and SQLite's per-statement autocommit fsync would make that
+	// noticeably slow otherwise.
+	void updateEditionsBatch(const QHash<qint64, QString>& editionsByFileId);
 	bool setFileIgnored(qint64 fileId, bool ignored);
 	void deleteJobsForFile(qint64 fileId);
 	void deletePendingJobsForFile(qint64 fileId);

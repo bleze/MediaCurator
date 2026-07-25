@@ -52,6 +52,8 @@ public:
 	void setQuickScan(bool quick) { m_quickScan = quick; }
 	// Off by default — see UserProfile::detectSidecarSubtitleLanguage().
 	void setDetectSubtitleLanguage(bool detect) { m_detectSubtitleLanguage = detect; }
+	// Shared with OpenSubtitles release-name matching — see UserProfile::editionTokens().
+	void setEditionTokens(const QStringList& tokens) { m_editionTokens = tokens; }
 	void cancel() { m_cancelled.storeRelaxed(1); }
 
 	// File extensions considered as video files
@@ -93,6 +95,7 @@ private:
 	QString        m_ffprobePath;
 	bool           m_quickScan{false};
 	bool           m_detectSubtitleLanguage{false};
+	QStringList    m_editionTokens;
 	QAtomicInt     m_cancelled{0};
 };
 

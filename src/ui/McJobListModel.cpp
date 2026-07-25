@@ -639,6 +639,9 @@ void McJobListModel::applyFilter(bool forceFullReset)
 				}
 				if (!ok) continue;
 			}
+			// "3D" or "3D (HSBS)"/"3D (VSBS)"/etc — see EditionDetector's packing-format qualifier.
+			if ((m_quickFilters & QF::QF_3D) && !e.job.edition.startsWith(QLatin1String("3D")))
+				continue;
 			if (m_quickFilters & (QF::QF_Atmos | QF::QF_TrueHD | QF::QF_DtsHD | QF::QF_DtsX)) {
 				bool ok = false;
 				for (const StreamRecord& s : e.allStreams) {
@@ -757,15 +760,6 @@ void McJobListModel::applyFilter(bool forceFullReset)
 	}
 }
 
-QList<qint64> McJobListModel::checkedJobIds() const
-{
-	QList<qint64> ids;
-	for (int i = 0; i < m_entries.size(); ++i)
-		if (m_checkStates[i] == Qt::Checked)
-			ids << m_entries[i].job.jobId;
-	return ids;
-}
-
 QList<qint64> McJobListModel::jobIdsByStatus(const QString& status) const
 {
 	QList<qint64> ids;
@@ -831,6 +825,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case FinishedAtRole:     return e.job.finishedAt;
 	case MediaTypeRole:      return e.job.mediaType;
 	case TmdbIdRole:         return e.job.tmdbId;
+	case EditionRole:        return e.job.edition;
 	default:                   return {};
 	}
 }

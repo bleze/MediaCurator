@@ -69,6 +69,8 @@ set(MC_SOURCES
     # Scanner extras
     scanner/OriginalLanguageDetector.cpp
     scanner/SubtitleLanguageDetector.cpp
+    scanner/EditionDetector.cpp
+    scanner/EditionBackfillWorker.cpp
     scanner/NfoParser.cpp
 
 )
@@ -88,6 +90,8 @@ set(MC_HEADERS
     ../include/scanner/ScanWorker.h
     ../include/scanner/OriginalLanguageDetector.h
     ../include/scanner/SubtitleLanguageDetector.h
+    ../include/scanner/EditionDetector.h
+    ../include/scanner/EditionBackfillWorker.h
     ../include/scanner/NfoParser.h
 
     # Engine

@@ -451,36 +451,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		"unmodified original release rip, so it's useless for files you've remuxed/edited "
 		"yourself, and reading every file up front slows down batch downloads. Off by default."));
 	osLayout->addWidget(m_chkComputeMovieHash);
-
-	auto* editionLabel = new QLabel(tr("Edition/cut tags:"), osGroup);
-	editionLabel->setToolTip(tr(
-		"Words that mark a distinct cut of a film (\"EXTENDED\", \"DIRECTORS CUT\", ...). Used to "
-		"penalize a subtitle whose release name claims a different edition than your filename.\n"
-		"Not exhaustive — release naming isn't standardized — add any tag you run into."));
-	osLayout->addWidget(editionLabel);
-
-	m_editionTokenList = new QListWidget(osGroup);
-	m_editionTokenList->setSelectionMode(QAbstractItemView::ExtendedSelection);
-	m_editionTokenList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	for (const QString& tok : profile->editionTokens())
-		new QListWidgetItem(tok, m_editionTokenList);
-	osLayout->addWidget(m_editionTokenList, 1);
-
-	auto* editionRow = new QHBoxLayout;
-	m_editEditionToken = new QLineEdit(osGroup);
-	m_editEditionToken->setPlaceholderText(tr("e.g. \"open matte\""));
-	auto* editionAddBtn    = new QPushButton(tr("Add"),    osGroup);
-	auto* editionRemoveBtn = new QPushButton(tr("Remove"), osGroup);
-	auto* editionResetBtn  = new QPushButton(tr("Reset to Defaults"), osGroup);
-	editionRow->addWidget(m_editEditionToken, 1);
-	editionRow->addWidget(editionAddBtn);
-	editionRow->addWidget(editionRemoveBtn);
-	editionRow->addWidget(editionResetBtn);
-	osLayout->addLayout(editionRow);
-	connect(editionAddBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddEditionToken);
-	connect(editionRemoveBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveEditionToken);
-	connect(editionResetBtn,  &QPushButton::clicked, this, &McSettingsDialog::onResetEditionTokens);
-	connect(m_editEditionToken, &QLineEdit::returnPressed, this, &McSettingsDialog::onAddEditionToken);
+	osLayout->addSpacing(16);   // edition-tags list used to occupy this space; now moved to its own tab
 
 	auto* osHint = new QLabel(
 		tr("Without credentials, up to 100 anonymous downloads per day are available. "
@@ -491,6 +462,10 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	osHint->setOpenExternalLinks(true);
 	osHint->setWordWrap(true);
 	osLayout->addWidget(osHint);
+	// Pin everything above to the top of the box and let the (now-empty, since the
+	// edition-tags list moved to its own tab) leftover space collect below the hint
+	// instead of getting redistributed around existing widgets by the layout engine.
+	osLayout->addStretch(1);
 	osGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 	subRight->addWidget(osGroup, 1);
 
@@ -538,14 +513,60 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subLeft->addWidget(subFmtGroup, 1);
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 3 — Performance
+	// Tab 3 — Editions
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* editionsPage   = new QWidget;
+	auto* editionsPageLo = new QVBoxLayout(editionsPage);
+	editionsPageLo->setSpacing(8);
+	editionsPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(editionsPage, tr("Editions"));
+	tabs->setTabColor(3, QColor(0x10, 0x90, 0x80));
+
+	auto* editionsHint = new QLabel(
+		tr("This list is used two ways: it scores OpenSubtitles candidates by whether their "
+		   "release name claims the same cut as your filename, and it detects each file's "
+		   "edition/cut for the library's \"Group by Movie\" view — the badge shown on each "
+		   "file, and how duplicate versions of the same movie are found.\n\n"
+		   "An entry may list several spellings of the same cut separated by '|' — e.g. "
+		   "\"Director's Cut|Directors Cut|DC\" — matching any of them is treated as that one "
+		   "edition, labeled with whichever spelling is listed first. Not exhaustive — release "
+		   "naming isn't standardized — add any tag you run into."),
+		editionsPage);
+	editionsHint->setWordWrap(true);
+	editionsPageLo->addWidget(editionsHint);
+
+	m_editionTokenList = new QListWidget(editionsPage);
+	m_editionTokenList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+	m_editionTokenList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	for (const QString& tok : profile->editionTokens())
+		new QListWidgetItem(tok, m_editionTokenList);
+	editionsPageLo->addWidget(m_editionTokenList, 1);
+
+	auto* editionRow = new QHBoxLayout;
+	m_editEditionToken = new QLineEdit(editionsPage);
+	m_editEditionToken->setPlaceholderText(tr("e.g. \"Open Matte\" or \"Redux|Special Edition\""));
+	auto* editionAddBtn    = new QPushButton(tr("Add"),    editionsPage);
+	auto* editionRemoveBtn = new QPushButton(tr("Remove"), editionsPage);
+	auto* editionResetBtn  = new QPushButton(tr("Reset to Defaults"), editionsPage);
+	editionRow->addWidget(m_editEditionToken, 1);
+	editionRow->addWidget(editionAddBtn);
+	editionRow->addWidget(editionRemoveBtn);
+	editionRow->addWidget(editionResetBtn);
+	editionsPageLo->addLayout(editionRow);
+	connect(editionAddBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddEditionToken);
+	connect(editionRemoveBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveEditionToken);
+	connect(editionResetBtn,  &QPushButton::clicked, this, &McSettingsDialog::onResetEditionTokens);
+	connect(m_editEditionToken, &QLineEdit::returnPressed, this, &McSettingsDialog::onAddEditionToken);
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 4 — Performance
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* perfPage   = new QWidget;
 	auto* perfPageLo = new QVBoxLayout(perfPage);
 	perfPageLo->setSpacing(8);
 	perfPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(perfPage, tr("Performance"));
-	tabs->setTabColor(3, QColor(0xc0, 0x20, 0x20));
+	tabs->setTabColor(4, QColor(0xc0, 0x20, 0x20));
 
 	auto* perfGroup  = new QGroupBox(tr("Performance"), perfPage);
 	auto* perfLayout = new QVBoxLayout(perfGroup);
@@ -617,7 +638,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	ifacePageLo->setSpacing(8);
 	ifacePageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(ifacePage, tr("Interface"));
-	tabs->setTabColor(4, QColor(0x7a, 0x4a, 0xb0));
+	tabs->setTabColor(5, QColor(0x7a, 0x4a, 0xb0));
 
 	// Job Queue
 	auto* jobGroup  = new QGroupBox(tr("Job Queue"), ifacePage);
@@ -673,7 +694,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	genScroll->setWidgetResizable(true);
 	genScroll->setFrameShape(QFrame::NoFrame);
 	tabs->addTab(genScroll, tr("Other"));
-	tabs->setTabColor(5, QColor(0x55, 0x55, 0x65));
+	tabs->setTabColor(6, QColor(0x55, 0x55, 0x65));
 
 	// Understood Languages
 	auto* langGroup  = new QGroupBox(tr("Understood Languages"), genPage);

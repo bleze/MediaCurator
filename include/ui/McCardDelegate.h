@@ -1,5 +1,6 @@
 #pragma once
 #include "core/DatabaseManager.h"
+#include "ui/McFileListModel.h"
 #include <QColor>
 #include <QFont>
 #include <QFontMetrics>
@@ -138,6 +139,10 @@ signals:
 	void streamToggleRequested(const QModelIndex& index, int streamIndex);
 	void streamFlagChangeRequested(const QModelIndex& index, int streamIndex,
 	                               const QString& flag, bool value);
+	// Mega card (Group by Movie) only — a specific edition row's play icon was
+	// clicked; fileId identifies which sibling file, unlike playRequested's index
+	// (which only ever identified the representative file).
+	void groupMemberPlayRequested(const QModelIndex& index, qint64 fileId);
 
 public:
 	int  hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
@@ -145,6 +150,13 @@ public:
 	                        const QFont& baseFont,
 	                        bool hasImdb,
 	                        bool hasTmdb = false) const;
+
+	// Mega card only: returns the fileId of the specific edition row under pos, or
+	// -1 if pos is elsewhere on the card (a card-level click). Used both for the
+	// play-icon click above and by McMainWindow's context-menu code to decide
+	// row-level vs. card-level actions.
+	qint64 hitTestGroupMember(const QPoint& pos, const QRect& itemRect,
+	                          const QModelIndex& index) const;
 
 private:
 	// Normalised card data populated from whichever model is in use.
@@ -160,6 +172,7 @@ private:
 		double              rating         = 0.0;   // TMDB vote_average; 0 = unknown
 		QString             displayTitle;           // TMDB/user override (Library only)
 		int                 displayYear    = 0;    // release year from TMDB, 0 = unknown (Library only)
+		QString             edition;                // detected/user edition (e.g. "3D"); empty = undetected (Library only)
 		QString             mediaType;              // MediaTypes::* (Library only; empty = unknown)
 		QString             containerTitle;         // ffprobe format tags title (Library only)
 		int                 folderCount    = 1;     // files sharing the same parent folder (Library only)
@@ -179,9 +192,13 @@ private:
 		qint64              savedBytes     = 0;
 		qint64              outputSizeBytes = 0;  // live .tmp size while running
 		QString             phaseLabel;             // sub-phase label (e.g. "Copying to NAS"), empty = default "Running"
-		bool                checked        = false;
 		bool                toggleable     = false;  // true for proposed jobs
 		qint64              finishedAt     = 0;      // epoch seconds job last left "running"; 0 if never (status pill tooltip)
+
+		// Library "Group by Movie" mode only — see McFileListModel::rebuildGroupedEntries.
+		bool            isGroupCard      = false;
+		bool            isGroupRedundant = false;
+		GroupMemberList groupMembers;
 	};
 
 	// Animation state for the live size bar, keyed by jobId. Two independent bars, both
@@ -209,6 +226,35 @@ private:
 	void relayoutForResize();
 
 	static QRect   playButtonRect(const QRect& contentRect);
+
+	// Mega card layout: each GroupMember gets a header row (edition badge + filename
+	// + play icon) followed by its own real track-badge rows (video/audio/subtitle),
+	// so height varies per member depending on how many tracks it has. Computed once
+	// and shared by sizeHint(), paint(), and hit-testing so they can never disagree.
+	struct GroupMemberLayout {
+		QRect headerRect;     // edition badge + filename + play icon
+		int   badgeRows = 0;  // combined video+audio+subtitle row count below headerRect
+		int   blockH    = 0;  // headerRect.height() + badge-row area — this member's full row span
+	};
+	struct GroupCardLayout {
+		QList<GroupMemberLayout> members;
+		int totalContentH = 0;   // height consumed below the title row, from content.top()+kFolderH+kFolderGap
+	};
+	// IMDb/TMDB buttons are drawn once for the whole card (it doesn't make sense
+	// per-edition) in the shared title row, so they don't factor into this layout —
+	// every member gets the full row width for its own track badges.
+	static GroupCardLayout layoutGroupCard(const QRect& contentRect,
+	                                       const GroupMemberList& members,
+	                                       const QFontMetrics& fm);
+	// Shared by the normal single-file layout and the mega card (drawn once, using
+	// the representative file's ids) — same rects as imdbButtonRect()/tmdbButtonRect().
+	void drawImdbTmdbButtons(QPainter* painter, const QRect& content, bool hasImdb, bool hasTmdb) const;
+	// Dry-run wrap count for one codec-type group at the given width — mirrors
+	// drawBadgeRow()'s own wrap condition exactly, so counts never drift from what
+	// actually gets drawn.
+	static int     badgeRowCount(const QList<StreamRecord>& group, int areaW,
+	                             const QFontMetrics& fm);
+	static QRect   groupMemberPlayButtonRect(const QRect& headerRect);
 	static QRect   imdbButtonRect(const QRect& contentRect);
 	// hasImdb: whether the IMDb button is also present — shifts the TMDB button
 	// one slot left so the two never overlap. IMDb always anchors the rightmost slot.
@@ -232,7 +278,8 @@ private:
 	                  const QString& flagChangesJson = {}) const;
 
 	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect,
-	                        bool hasImdb = false, bool hasTmdb = false) const;
+	                        bool hasImdb = false, bool hasTmdb = false,
+	                        const QModelIndex& index = {}) const;
 
 	// Left inset of the content area from the card's left edge — kPosterW + kPosterGap
 	// when TMDB is configured, otherwise just enough for a checkbox column (job queue)
@@ -296,10 +343,14 @@ private:
 	static constexpr int kRowGap    = 4;  // vertical gap between badge rows
 	static constexpr int kBadgeGap  = 4;  // horizontal gap between adjacent badges within a row
 	static constexpr int kPlayBtnW  = 24; // width and height of the play (▶) button on the right
-	static constexpr int kImdbBtnW  = 24; // width and height of the IMDb shortcut button on the right
+	static constexpr int kImdbBtnW  = 20; // width and height of the IMDb/TMDB buttons — matches the play icon's visual size
+	// Fixed estimate of the rating text's rendered width ("★ 8.4/10"), reserved in
+	// the title row whether or not a given card actually has a rating — lets
+	// imdbButtonRect()/tmdbButtonRect() anchor purely from contentRect (needed for
+	// hit-testing) while still sitting to the left of wherever rating ends up.
+	static constexpr int kRatingReserveW = 46;
 	static constexpr int kPosterGap = 8;  // gap between the poster column right edge and the content area
 	static constexpr int kMinRowH   = 140; // minimum card height; ensures the poster column never looks cramped
-	static constexpr int kCheckboxColW = 24; // poster-column width when TMDB isn't configured but a per-row checkbox (job queue) still needs room
 };
 
 } // namespace Mc

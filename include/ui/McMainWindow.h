@@ -28,6 +28,7 @@ struct ITaskbarList3;
 namespace Mc {
 
 class AnalyzeWorker;
+class EditionBackfillWorker;
 class JobQueue;
 class LibraryLoader;
 class McDriveActivityIndicator;
@@ -120,6 +121,9 @@ private:
 	void applyDarkBackgrounds();
 	void startLibraryLoader();
 	void startBackgroundLibraryLoad();
+	// Delayed a few seconds past startup so it never competes with the initial
+	// library load — see EditionBackfillWorker.
+	void startEditionBackfill();
 	void ensureOnScreen();
 	void setNativeWindowBackground();
 	void startScanRoots(const QStringList& roots, bool quickScan);
@@ -206,6 +210,8 @@ private:
 	QTimer*          m_analyzeRefreshTimer = nullptr;
 	QThread*         m_loadThread      = nullptr;
 	LibraryLoader*   m_loader          = nullptr;
+	QThread*                 m_editionBackfillThread = nullptr;
+	EditionBackfillWorker*   m_editionBackfillWorker = nullptr;
 	QThread*         m_analyzeThread   = nullptr;
 	AnalyzeWorker*   m_analyzeWorker   = nullptr;
 	QThread*         m_simulateThread  = nullptr;

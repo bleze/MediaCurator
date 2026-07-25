@@ -445,6 +445,7 @@ void McJobPanel::setupUi()
 
 	filterLayout->addWidget(vSep(filterBar));
 	addPill("4K",     videoColor, "4K files only (width >= 3840)", QF::QF_4K);
+	addPill("3D",     videoColor, "Files detected as a 3D release", QF::QF_3D);
 	filterLayout->addWidget(vSep(filterBar));
 	addPill("DV",     hdrColor,   "Dolby Vision only",                       QF::QF_DV);
 	addPill("HDR",    hdrColor,   "HDR10 / HLG / HDR10+ only",              QF::QF_HDR);
@@ -592,7 +593,9 @@ void McJobPanel::setupUi()
 	// Pinning it removes that feedback loop entirely (see McCardDelegate's
 	// resize-relayout handling).
 	m_listView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-	m_listView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+	// Per-item (not per-pixel): each wheel notch/arrow-key press moves exactly one
+	// card regardless of its height, instead of a small fixed pixel amount.
+	m_listView->setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
 	m_listView->setAlternatingRowColors(true);
 	m_listView->setSpacing(0);
 	// Fixed, not Adjust: with setUniformItemSizes(false), Adjust mode forces a full

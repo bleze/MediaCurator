@@ -4,6 +4,7 @@
 #include "core/StorageGroupSettings.h"
 #include "scanner/NfoParser.h"
 #include "scanner/SubtitleLanguageDetector.h"
+#include "scanner/EditionDetector.h"
 #include "engine/ActionEngine.h"
 
 #include <QDateTime>
@@ -451,12 +452,16 @@ void ScanWorker::run()
 			progressTimer.restart();
 		}
 
-		const auto existing = db.fileByPath(path);
+		auto existing = db.fileByPath(path);
 		if (existing.has_value()) {
 			const qint64 curMtime = fi.lastModified().toMSecsSinceEpoch();
 			const qint64 curSize  = fi.size();
 			if (existing->mtimeMs == curMtime && existing->sizeBytes == curSize) {
 				++skipped;
+				// Backfilling edition for files that predate edition detection is
+				// EditionBackfillWorker's job (driven by the edition_checked flag, so
+				// it covers the whole library exactly once regardless of whether/when
+				// each file gets rescanned) — not repeated here on every skip.
 				if (refreshSidecarStreamsIfChanged(db, existing->id, path, m_detectSubtitleLanguage))
 					emit fileProcessed(*existing, db.streamsForFile(existing->id));
 				// Enqueue even for unchanged files so PosterManager can backfill
@@ -508,6 +513,15 @@ void ScanWorker::run()
 			newFiles << ScanChangeEntry{ *fileId, path, result.file.sizeBytes,
 			                             result.file.mediaType, firstVideoStream(allStreams) };
 		}
+
+		// Like media_type, edition is heuristically filled once and never re-touched
+		// afterward, so a manual correction (once that UI exists) survives — only
+		// (re-)detect when the DB's current value is still blank, whether this file
+		// is brand new or an existing one whose content just changed. Written via
+		// updateEdition() even when nothing was detected, since that call also marks
+		// the file as edition_checked so EditionBackfillWorker doesn't redo this.
+		if (!existing || existing->edition.isEmpty())
+			db.updateEdition(*fileId, EditionDetector::detect(result.file, m_editionTokens));
 
 		// Resolve IMDb ID: embedded container tag takes priority, then .nfo sidecar.
 		// Store immediately so the poster worker can begin TMDB lookup without delay.

@@ -225,18 +225,29 @@ QStringList UserProfile::defaultEditionTokens()
 	// per-title edition names (e.g. "Snyder Cut") appear all the time. Deliberately
 	// excludes PROPER/REPACK: those mark a corrected re-encode of the same cut, not
 	// a different edit, so treating them as edition tokens would cause false mismatches.
+	//
+	// An entry may list several spellings of the same cut separated by '|' (e.g.
+	// "Director's Cut|Directors Cut|DC") — matching any of them (for both
+	// OpenSubtitles release-name matching and the library's "Group by Movie"
+	// edition detection) resolves to the first spelling listed, so variant
+	// spellings of the same cut aren't treated as two different editions.
 	return {
-		"extended", "extended cut", "extended edition",
-		"theatrical", "theatrical cut",
-		"unrated", "uncut",
-		"directors cut", "director's cut", "dc",
-		"special edition", "se",
-		"ultimate edition", "collectors edition", "collector's edition",
-		"deluxe edition", "anniversary edition",
-		"remastered", "restored", "redux",
-		"final cut", "assembly cut", "alternate cut", "international cut",
-		"workprint", "fan edit",
-		"imax", "imax enhanced",
+		"Extended Cut|Extended|Extended Edition",
+		"Theatrical|Theatrical Cut",
+		"Unrated", "Uncut", "Uncensored", "Encore",
+		"Director's Cut|Directors Cut|DC",
+		"Special Edition|SE",
+		"Ultimate Edition",
+		"Collector's Edition|Collectors Edition",
+		"Deluxe Edition", "Anniversary Edition",
+		"Rich Mahogany Edition|Rich Mahogany",   // Anchorman's extended cut
+		"Scratch Free",   // Planet Terror's clean (Grindhouse damage removed) cut
+		"Remastered", "Restored", "Redux",
+		"Final Cut", "Assembly Cut", "Alternate Cut", "International Cut",
+		"Ulysses Cut",   // Waterworld's extended cut
+		"Rogue Cut",     // X-Men: Days of Future Past's extended cut
+		"Workprint", "Fan Edit",
+		"IMAX|IMAX Enhanced",
 	};
 }
 
@@ -350,7 +361,7 @@ QJsonObject UserProfile::toJson() const
 	o["opensubtitles_password"]          = m_openSubtitlesPassword;
 	o["auto_download_subtitles"]         = m_autoDownloadSubtitles;
 	o["detect_sidecar_subtitle_language"] = m_detectSidecarSubtitleLanguage;
-	o["edition_tokens"]                  = QJsonArray::fromStringList(m_editionTokens);
+	o["edition_tokens_v2"]               = QJsonArray::fromStringList(m_editionTokens);
 	o["compute_subtitle_moviehash"]      = m_computeSubtitleMovieHash;
 	o["subtitle_retry_cooldown_days"]    = m_subtitleRetryCooldownDays;
 	return o;
@@ -397,9 +408,14 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_computeSubtitleMovieHash   = json["compute_subtitle_moviehash"].toBool(false);
 	m_subtitleRetryCooldownDays  = qMax(0, json["subtitle_retry_cooldown_days"].toInt(7));
 
-	if (json.contains("edition_tokens")) {
+	// Renamed from "edition_tokens" when synonym-grouping was introduced: a profile
+	// saved under the old key predates '|'-grouped entries and proper casing, and
+	// simply won't have this new key — it falls through to defaultEditionTokens()
+	// (the member initializer) exactly like a first-ever launch, rather than
+	// needing to detect/migrate the old value in place.
+	if (json.contains("edition_tokens_v2")) {
 		QStringList tokens;
-		for (const auto& v : json["edition_tokens"].toArray())
+		for (const auto& v : json["edition_tokens_v2"].toArray())
 			tokens << v.toString();
 		m_editionTokens = tokens;
 	}

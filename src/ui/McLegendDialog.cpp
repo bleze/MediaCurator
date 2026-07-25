@@ -46,6 +46,27 @@ QLabel* groupChipLabel(QWidget* parent, int group)
 	return lbl;
 }
 
+// Renders a plain dark-gray badge (edition/3D/4K style — McCardDelegate's
+// drawBadge with the same background color those badges use) into a label.
+QLabel* plainBadgeLabel(QWidget* parent, const QString& text)
+{
+	const qreal dpr = parent->devicePixelRatioF();
+	QFont font = parent->font();
+	font.setPointSizeF(font.pointSizeF() * 0.82);
+	const int w = QFontMetrics(font).horizontalAdvance(text) + 2 * McCardDelegate::kBadgePad;
+	const int h = McCardDelegate::kBadgeH;
+
+	QPixmap pm(qRound(w * dpr), qRound(h * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	McCardDelegate::drawBadge(&p, 0, 0, h, text, QColor(0x50, 0x50, 0x58), font);
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
+	return lbl;
+}
+
 QLabel* glyphLabel(QWidget* parent, const QString& glyph)
 {
 	auto* lbl = new QLabel(glyph, parent);
@@ -232,6 +253,12 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	addRow(g, { groupChipLabel(this, 1), groupChipLabel(this, 2),
 	            groupChipLabel(this, 3), groupChipLabel(this, 4) },
 	       tr("Storage group — shown when library spans more than one"));
+	addRow(g, { plainBadgeLabel(this, tr("Director's Cut")), plainBadgeLabel(this, tr("Theatrical")) },
+	       tr("Edition/cut, detected from filename or container tag"));
+	addRow(g, { plainBadgeLabel(this, QStringLiteral("3D (HSBS)")) },
+	       tr("3D format, detected the same way as edition"));
+	addRow(g, { plainBadgeLabel(this, QStringLiteral("4K")) },
+	       tr("Resolution is 4K/UHD (3840\xC3\x97" "2160 or higher)"));
 
 	// ── Assembly: Audio + Icons left, Video + Subtitles + Badges right ───────
 	auto* columns  = new QHBoxLayout;

@@ -489,6 +489,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.rating           = index.data(McFileListModel::RatingRole).toDouble();
 		d.displayTitle      = index.data(McFileListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McFileListModel::DisplayYearRole).toInt();
+		d.edition           = file.edition;
 		d.mediaType         = file.mediaType;
 		d.containerTitle    = index.data(McFileListModel::ContainerTitleRole).toString();
 		d.folderCount       = index.data(McFileListModel::FolderCountRole).toInt();
@@ -500,6 +501,9 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.audioStreams       = index.data(McFileListModel::AudioStreamsRole).value<QList<StreamRecord>>();
 		d.subtitleStreams    = index.data(McFileListModel::SubtitleStreamsRole).value<QList<StreamRecord>>();
 		d.removedIndices    = index.data(McFileListModel::OverridesRole).value<QSet<int>>();
+		d.isGroupCard       = index.data(McFileListModel::IsGroupCardRole).toBool();
+		d.isGroupRedundant  = index.data(McFileListModel::GroupIsRedundantRole).toBool();
+		d.groupMembers      = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
 	} else {
 		d.jobId            = index.data(McJobListModel::JobIdRole).toLongLong();
 		d.filename         = index.data(McJobListModel::FilenameRole).toString();
@@ -516,16 +520,20 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.progress         = index.data(McJobListModel::ProgressRole).toInt();
 		d.outputSizeBytes  = index.data(McJobListModel::OutputSizeRole).toLongLong();
 		d.phaseLabel       = index.data(McJobListModel::PhaseLabelRole).toString();
-		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
 		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued") || d.status == QLatin1String("failed"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
 		d.storageGroup      = index.data(McJobListModel::StorageGroupRole).toInt();
 		d.displayTitle      = index.data(McJobListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McJobListModel::DisplayYearRole).toInt();
 		d.mediaType         = index.data(McJobListModel::MediaTypeRole).toString();
+		d.edition           = index.data(McJobListModel::EditionRole).toString();
 		d.containerTitle    = index.data(McJobListModel::ContainerTitleRole).toString();
 		d.fanartPath        = index.data(McJobListModel::FanartRole).toString();
 		d.allStreams         = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+		// Job Queue has no dedicated VideoStreamsRole (unlike McFileListModel) —
+		// derive it from allStreams so the 4K badge (hasVideo4K()) works here too.
+		for (const auto& s : d.allStreams)
+			if (s.codecType == QLatin1String("video")) d.videoStreams << s;
 		const auto kept    = index.data(McJobListModel::KeptStreamsRole).value<QList<StreamRecord>>();
 		QSet<int> keptIdx;
 		for (const auto& s : kept) keptIdx.insert(s.streamIndex);
@@ -608,6 +616,19 @@ QString McCardDelegate::channelStr(int ch)
 	case 8: return "7.1";
 	default: return ch > 0 ? QString::number(ch) + "ch" : QString();
 	}
+}
+
+// Same threshold McFileListModel::computeDerived() uses for the library's "4K"
+// quick-filter pill — real stream resolution, not a filename guess, so it's
+// reliable enough to show as its own badge (unlike edition/3D, which are both
+// filename heuristics).
+static bool hasVideo4K(const QList<StreamRecord>& videoStreams)
+{
+	// Width threshold has margin below the nominal 3840 — see McFileListModel::
+	// computeDerived()'s matching check for why (scope-ratio letterbox cropping).
+	for (const StreamRecord& s : videoStreams)
+		if (s.width >= 3600 || s.height >= 2160) return true;
+	return false;
 }
 
 static bool isCommentaryTrack(const StreamRecord& s)
@@ -725,15 +746,19 @@ QRect McCardDelegate::playButtonRect(const QRect& contentRect)
 
 QRect McCardDelegate::imdbButtonRect(const QRect& contentRect)
 {
-	const int y = contentRect.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
-	return QRect(contentRect.right() - kImdbBtnW, y, kImdbBtnW, kImdbBtnW);
+	// Sits in the title row, just left of the (fixed-width-reserved) rating —
+	// vertically centered against the row's nominal height even though the button
+	// itself is slightly taller (kImdbBtnW=24 vs kFolderH=20); a couple of px of
+	// visual overflow top/bottom is preferable to growing every row's layout math.
+	const int y = contentRect.top() + (kFolderH - kImdbBtnW) / 2;
+	return QRect(contentRect.right() - kRatingReserveW - kImdbBtnW, y, kImdbBtnW, kImdbBtnW);
 }
 
 QRect McCardDelegate::tmdbButtonRect(const QRect& contentRect, bool hasImdb)
 {
-	const int y = contentRect.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
+	const int y = contentRect.top() + (kFolderH - kImdbBtnW) / 2;
 	const int xOffset = hasImdb ? (kImdbBtnW + kBadgeGap) : 0;
-	return QRect(contentRect.right() - kImdbBtnW - xOffset, y, kImdbBtnW, kImdbBtnW);
+	return QRect(contentRect.right() - kRatingReserveW - kImdbBtnW - xOffset, y, kImdbBtnW, kImdbBtnW);
 }
 
 int McCardDelegate::rightButtonsReserve(bool hasImdb, bool hasTmdb)
@@ -741,6 +766,87 @@ int McCardDelegate::rightButtonsReserve(bool hasImdb, bool hasTmdb)
 	const int count = (hasImdb ? 1 : 0) + (hasTmdb ? 1 : 0);
 	if (count == 0) return 0;
 	return count * kImdbBtnW + (count - 1) * kBadgeGap + kBadgeGap;
+}
+
+int McCardDelegate::badgeRowCount(const QList<StreamRecord>& group, int areaW, const QFontMetrics& fm)
+{
+	if (group.isEmpty()) return 0;
+	int rows = 1, x = 0;
+	for (const auto& s : group) {
+		const int bW = badgeWidthFor(s, s.isOriginal, fm);
+		if (x > 0 && x + bW > areaW) { rows++; x = 0; }
+		x += bW + kBadgeGap;
+	}
+	return rows;
+}
+
+McCardDelegate::GroupCardLayout McCardDelegate::layoutGroupCard(const QRect& contentRect,
+                                                                 const GroupMemberList& members,
+                                                                 const QFontMetrics& fm)
+{
+	GroupCardLayout layout;
+	layout.members.reserve(members.size());
+	int y = contentRect.top() + kFolderH + kFolderGap;
+	const int areaW = contentRect.width();   // IMDb/TMDB live in the shared title row now, not here
+
+	for (int i = 0; i < members.size(); ++i) {
+		const auto& gm = members.at(i);
+		GroupMemberLayout ml;
+		ml.headerRect = QRect(contentRect.left(), y, contentRect.width(), kHeaderH);
+		ml.badgeRows  = badgeRowCount(gm.videoStreams, areaW, fm)
+		              + badgeRowCount(gm.audioStreams, areaW, fm)
+		              + badgeRowCount(gm.subtitleStreams, areaW, fm);
+		ml.blockH     = kHeaderH + kSepGap + ml.badgeRows * (kBadgeH + kRowGap);
+		layout.members.append(ml);
+		y += ml.blockH;
+	}
+	layout.totalContentH = y - (contentRect.top() + kFolderH + kFolderGap);
+	return layout;
+}
+
+QRect McCardDelegate::groupMemberPlayButtonRect(const QRect& headerRect)
+{
+	return QRect(headerRect.right() - kPlayBtnW,
+	            headerRect.top() + (headerRect.height() - kPlayBtnW) / 2, kPlayBtnW, kPlayBtnW);
+}
+
+void McCardDelegate::drawImdbTmdbButtons(QPainter* painter, const QRect& content,
+                                          bool hasImdb, bool hasTmdb) const
+{
+	if (hasImdb) {
+		const QRect ir = imdbButtonRect(content);
+		QPixmap logo;
+		if (!QPixmapCache::find("imdb_logo", &logo)) {
+			logo = QPixmap(":/icons/imdb.png").scaled(
+			    ir.width(), ir.height(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+			QPixmapCache::insert("imdb_logo", logo);
+		}
+		painter->save();
+		painter->setRenderHint(QPainter::Antialiasing);
+		// imdb.png is a plain square-cornered asset — clip to a rounded rect so it
+		// matches the rounding every other button/badge/pill in the app uses.
+		QPainterPath clip;
+		clip.addRoundedRect(ir, 4, 4);
+		painter->setClipPath(clip, Qt::IntersectClip);
+		painter->setOpacity(ir.contains(m_lastMousePos) ? 1.0 : 0.75);
+		const int ox = ir.left() + (ir.width()  - logo.width())  / 2;
+		const int oy = ir.top()  + (ir.height() - logo.height()) / 2;
+		painter->drawPixmap(ox, oy, logo);
+		painter->restore();
+	}
+
+	if (hasTmdb) {
+		const QRect btnRect = tmdbButtonRect(content, hasImdb);
+		// tmdb.svg's <rect>/<text> carry their own explicit fill colors, so the
+		// color renderSvgIcon injects on the root <svg> tag is inert here — this
+		// renders the icon in its real brand colors, not a recolored silhouette.
+		const QPixmap logo = renderSvgIcon(QStringLiteral(":/icons/tmdb.svg"), Qt::white,
+		                                    btnRect.height(), painter->device()->devicePixelRatioF());
+		painter->save();
+		painter->setOpacity(btnRect.contains(m_lastMousePos) ? 1.0 : 0.75);
+		painter->drawPixmap(btnRect, logo);
+		painter->restore();
+	}
 }
 
 // ── Badge drawing ──────────────────────────────────────────────────────────────
@@ -971,9 +1077,21 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 // ── Interactive helpers ────────────────────────────────────────────────────────
 
 bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect,
-                                          bool hasImdb, bool hasTmdb) const
+                                          bool hasImdb, bool hasTmdb,
+                                          const QModelIndex& index) const
 {
 	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
+	if (index.isValid() && index.data(McFileListModel::IsGroupCardRole).toBool()) {
+		if (hasImdb && imdbButtonRect(content).contains(pos)) return true;
+		if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) return true;
+		const auto members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
+		QFont badgeFont = m_view ? m_view->font() : QFont{};
+		badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
+		const auto layout = layoutGroupCard(content, members, QFontMetrics(badgeFont));
+		for (const auto& ml : layout.members)
+			if (groupMemberPlayButtonRect(ml.headerRect).contains(pos)) return true;
+		return false;
+	}
 	if (playButtonRect(content).contains(pos)) return true;
 	if (hasImdb && imdbButtonRect(content).contains(pos)) return true;
 	if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) return true;
@@ -990,7 +1108,11 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 	QFont badgeFont = baseFont;
 	badgeFont.setPointSizeF(baseFont.pointSizeF() * 0.82);
 	const QFontMetrics fm(badgeFont);
-	const int badgeAreaW = content.width() - rightButtonsReserve(hasImdb, hasTmdb);
+	// Full width — IMDb/TMDB live in the title row now, not here (hasImdb/hasTmdb
+	// kept in the signature for API compatibility with existing callers).
+	Q_UNUSED(hasImdb);
+	Q_UNUSED(hasTmdb);
+	const int badgeAreaW = content.width();
 
 	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 
@@ -1028,6 +1150,24 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 			}
 		}
 		y += typeH + kRowGap;
+	}
+	return -1;
+}
+
+qint64 McCardDelegate::hitTestGroupMember(const QPoint& pos, const QRect& itemRect,
+                                           const QModelIndex& index) const
+{
+	if (!index.data(McFileListModel::IsGroupCardRole).toBool()) return -1;
+	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
+	const auto members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
+	QFont badgeFont = m_view ? m_view->font() : QFont{};
+	badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
+	const auto layout = layoutGroupCard(content, members, QFontMetrics(badgeFont));
+	for (int i = 0; i < layout.members.size() && i < members.size(); ++i) {
+		const auto& ml = layout.members.at(i);
+		const QRect blockRect(ml.headerRect.left(), ml.headerRect.top(), ml.headerRect.width(), ml.blockH);
+		if (blockRect.contains(pos))
+			return members[i].fileId;
 	}
 	return -1;
 }
@@ -1075,7 +1215,7 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 				? cur.data(McFileListModel::TmdbRole).toInt() > 0
 				: cur.data(McJobListModel::TmdbIdRole).toInt() > 0;
 
-			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb, hasTmdb);
+			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb, hasTmdb, cur);
 			if (!overInteractive && m_mode == Mode::JobQueue
 			    && (cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
@@ -1123,6 +1263,31 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 {
 	if (!index.isValid()) return false;
 	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
+
+	if (index.data(McFileListModel::IsGroupCardRole).toBool()) {
+		const bool hasImdb = !index.data(McFileListModel::ImdbRole).toString().isEmpty();
+		const bool hasTmdb = index.data(McFileListModel::TmdbRole).toInt() > 0;
+		if (hasImdb && imdbButtonRect(content).contains(pos)) {
+			emit imdbPageRequested(index);
+			return true;
+		}
+		if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) {
+			emit tmdbPageRequested(index);
+			return true;
+		}
+
+		const auto members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
+		QFont badgeFont = viewFont;
+		badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
+		const auto layout = layoutGroupCard(content, members, QFontMetrics(badgeFont));
+		for (int i = 0; i < layout.members.size() && i < members.size(); ++i) {
+			if (groupMemberPlayButtonRect(layout.members.at(i).headerRect).contains(pos)) {
+				emit groupMemberPlayRequested(index, members[i].fileId);
+				return true;
+			}
+		}
+		return false;   // no card-level play button on a mega card
+	}
 
 	if (playButtonRect(content).contains(pos)) {
 		emit playRequested(index);
@@ -1217,6 +1382,19 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 		if (m_showGroupBadge)
 			rightEdgeForFilename -= groupChipWidth(d.storageGroup, option.font) + kBadgeGap;
 
+		// Mirrors the duration/size block paint() draws before the status pill —
+		// see there for why it's positioned here.
+		{
+			QString metaText;
+			if (d.durationSec > 0) metaText = formatDuration(d.durationSec);
+			if (d.sizeBytes    > 0) metaText += (metaText.isEmpty() ? QString() : QStringLiteral("  ")) + formatSize(d.sizeBytes);
+			if (!metaText.isEmpty()) {
+				QFont metaFont = option.font;
+				metaFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+				rightEdgeForFilename -= QFontMetrics(metaFont).horizontalAdvance(metaText) + 8;
+			}
+		}
+
 		QFont pillFont = option.font;
 		pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
 		QString pillText = statusLabel(d.status);
@@ -1269,7 +1447,8 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	QFont badgeFont = option.font;
 	badgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
 	const QFontMetrics fm(badgeFont);
-	const int badgeAreaW = content.width() - rightButtonsReserve(!d.imdbId.isEmpty(), d.tmdbId > 0);
+	// Full width — IMDb/TMDB live in the title row now, not here.
+	const int badgeAreaW = content.width();
 
 	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
 
@@ -1434,8 +1613,6 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	m_cacheWidth = w;   // informational only now; relayoutForResize() drives invalidation
 
 	const CardData d = fetchData(index);
-	const bool hasImdb = !d.imdbId.isEmpty();
-	const bool hasTmdb = d.tmdbId > 0;
 
 	{
 		QFont badgeFont = option.font;
@@ -1447,8 +1624,21 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	}
 	const QFontMetrics& fm = m_badgeFm;
 	const int totalContentW = w - leftContentInset() - kPadH;
-	const int rightReserve  = rightButtonsReserve(hasImdb, hasTmdb);
-	const int badgeAreaW    = totalContentW - rightReserve;
+
+	if (d.isGroupCard) {
+		// Mega card: title row, then per-member header + real track-badge rows —
+		// see layoutGroupCard() (shared with paint() and hit-testing). IMDb/TMDB
+		// live in the shared title row now, so they don't factor in here.
+		const QRect pseudoContent(0, 0, totalContentW, 0);
+		const auto  layout = layoutGroupCard(pseudoContent, d.groupMembers, fm);
+		const int h = qMax(kPadV + kFolderH + kFolderGap + layout.totalContentH + kPadBottom, kMinRowH);
+		const QSize result{w, h};
+		m_sizeCache.insert(itemId, {w, result});
+		return result;
+	}
+
+	// IMDb/TMDB live in the title row now (not here), so track badges get the full width.
+	const int badgeAreaW = totalContentW;
 
 	int totalRows = 0;
 	auto groups = { &d.videoStreams, &d.audioStreams, &d.subtitleStreams };
@@ -1489,10 +1679,9 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	// Use the same formula so sizeHint matches what paint actually draws.
 	// Enforce a minimum of 3 track rows so cards never shrink below a consistent
 	// floor; cards with more rows than 3 simply grow to show them all.
-	const int trackH     = qMax(totalRows, 3) * (kBadgeH + kRowGap);
-	const int badgeAreaH = (hasImdb || hasTmdb) ? qMax(trackH, kImdbBtnW) : trackH;
-	const int h          = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + badgeAreaH + kPadBottom,
-	                             kMinRowH);
+	const int trackH = qMax(totalRows, 3) * (kBadgeH + kRowGap);
+	const int h      = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + trackH + kPadBottom,
+	                         kMinRowH);
 	const QSize result{w, h};
 	m_sizeCache.insert(itemId, {w, result});
 	return result;
@@ -1503,8 +1692,7 @@ void McCardDelegate::invalidateSizeCacheFor(qint64 itemId) { m_sizeCache.remove(
 
 int McCardDelegate::posterColumnWidth() const
 {
-	if (m_tmdbConfigured) return kPosterW;
-	return m_mode == Mode::JobQueue ? kCheckboxColW : 0;
+	return m_tmdbConfigured ? kPosterW : 0;
 }
 
 int McCardDelegate::leftContentInset() const
@@ -1588,6 +1776,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
                             const QModelIndex& index) const
 {
 	const CardData d = fetchData(index);
+	const bool hasImdb = !d.imdbId.isEmpty();
+	const bool hasTmdb = d.tmdbId > 0;
 
 	painter->save();
 
@@ -1630,7 +1820,10 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		if (!fanart.isNull()) {
 			painter->save();
 			painter->setClipRect(option.rect);
-			painter->setOpacity(m_fanartOpacity);
+			// Mega cards are much taller, so the backdrop already shows far more of
+			// the image than a normal row's "sliver" crop — bumped further here since
+			// it's meant to read as the card's dominant visual, not a subtle wash.
+			painter->setOpacity(d.isGroupCard ? qBound(0.0, m_fanartOpacity * 6.0, 0.45) : m_fanartOpacity);
 			const int ox = (fanart.width()  - option.rect.width())  / 2;
 			const int oy = (fanart.height() - option.rect.height()) / 2;
 			painter->drawPixmap(option.rect.left() - ox, option.rect.top() - oy, fanart);
@@ -1639,8 +1832,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	}
 
 	// ── Poster column ─────────────────────────────────────────────────────────
-	// Collapsed to 0 (library) or just a checkbox's width (job queue) when TMDB isn't
-	// configured, since no poster will ever arrive — see setTmdbConfigured.
+	// Collapsed to 0 when TMDB isn't configured, since no poster will ever
+	// arrive — see setTmdbConfigured.
 	const QRect posterRect(option.rect.left(), option.rect.top(),
 	                       posterColumnWidth(), option.rect.height());
 	if (m_tmdbConfigured && !d.posterPath.isEmpty()) {
@@ -1657,7 +1850,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		}
 		if (!pm.isNull()) {
 			const int px = posterRect.left();
-			const int py = posterRect.top() + (option.rect.height() - pm.height()) / 2;
+			const int py = posterRect.top();
 			// Clip to card bounds so tall posters (natural height > card height)
 			// don't bleed into the adjacent card above/below.
 			painter->save();
@@ -1677,13 +1870,6 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		painter->restore();
 	}
 
-	// Job queue: checkbox overlaid on bottom-left of poster column for proposed jobs
-	if (m_mode == Mode::JobQueue && d.status == QLatin1String("proposed")) {
-		QStyleOptionButton cbOpt;
-		cbOpt.rect  = QRect(posterRect.left() + 3, posterRect.bottom() - 19, 16, 16);
-		cbOpt.state = QStyle::State_Enabled | (d.checked ? QStyle::State_On : QStyle::State_Off);
-		QApplication::style()->drawControl(QStyle::CE_CheckBox, &cbOpt, painter);
-	}
 
 	// ── Content area ─────────────────────────────────────────────────────────
 	const QRect content = option.rect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
@@ -1696,7 +1882,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		                           option.rect.width() - posterColW, option.rect.height()));
 	}
 
-	// ── Folder / title row: smart title (left) | duration · size | rating ─────
+	// ── Folder / title row: smart title (left) | media chip | IMDb/TMDB | rating ─
 	{
 		const QRect folderRect(content.left(), content.top(), content.width(), kFolderH);
 
@@ -1725,11 +1911,6 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		metaFont.setPointSizeF(option.font.pointSizeF() * 0.80);
 
 		const bool hasRating = (d.rating > 0.0);
-
-		// Build meta text: duration + size (both modes show this in the folder row)
-		QString metaText;
-		if (d.durationSec > 0) metaText = formatDuration(d.durationSec);
-		if (d.sizeBytes    > 0) metaText += (metaText.isEmpty() ? QString() : QStringLiteral("  ")) + formatSize(d.sizeBytes);
 
 		// Draw right-side elements from right → left, tracking the right edge
 		int rightEdge = folderRect.right();
@@ -1765,20 +1946,21 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			rightEdge = x - 8;  // gap between rating and meta text
 		}
 
-		// Shared text baseline for duration/size and the media chip so they sit
-		// on one line (rating uses the same midY + ascent/2 convention above).
+		// Shared text baseline for the media chip (rating uses the same
+		// midY + ascent/2 convention above).
 		const QFontMetrics metaFm(metaFont);
 		const int metaBase = midY + metaFm.ascent() / 2;
 
-		// Duration · size
-		if (!metaText.isEmpty()) {
-			const int mW = metaFm.horizontalAdvance(metaText);
-			painter->save();
-			painter->setFont(metaFont);
-			painter->setPen(dimColor);
-			painter->drawText(rightEdge - mW, metaBase, metaText);
-			painter->restore();
-			rightEdge -= mW + 8;  // gap between meta and title
+		// IMDb/TMDB buttons — sit in the title row now (duration/size moved to the
+		// filename/play row below; see there). imdbButtonRect()/tmdbButtonRect()
+		// anchor from contentRect alone (needed for hit-testing), so rightEdge is
+		// pulled in to whichever of them is leftmost rather than recomputed here.
+		if (hasImdb || hasTmdb) {
+			drawImdbTmdbButtons(painter, content, hasImdb, hasTmdb);
+			int buttonsLeft = content.right();
+			if (hasImdb) buttonsLeft = qMin(buttonsLeft, imdbButtonRect(content).left());
+			if (hasTmdb) buttonsLeft = qMin(buttonsLeft, tmdbButtonRect(content, hasImdb).left());
+			rightEdge = qMin(rightEdge, buttonsLeft - 8);
 		}
 
 		// Media category chip (Movie / TV / Doc / Misc) — skip for unknown.
@@ -1833,6 +2015,118 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		}
 	}
 
+	// ── Mega card: per-member header (edition badge + filename + status badge +
+	// duration/size + play icon) then that member's own real track-badge rows.
+	// IMDb/TMDB buttons are drawn in the shared title row above (see there),
+	// same spot a normal card now uses. See layoutGroupCard() for the height
+	// math shared with sizeHint(), and handlePress()/hitTestGroupMember() for
+	// click routing.
+	if (d.isGroupCard) {
+		QFont fnFont = option.font;
+		fnFont.setPointSizeF(option.font.pointSizeF() * 0.85);
+		QFont memberBadgeFont = option.font;
+		memberBadgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
+		const QFontMetrics memberFm(memberBadgeFont);
+		QFont memberMetaFont = option.font;
+		memberMetaFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+		const QFontMetrics memberMetaFm(memberMetaFont);
+
+		const auto layout = layoutGroupCard(content, d.groupMembers, memberFm);
+		static const QSet<int> noRemovals;
+
+		for (int i = 0; i < d.groupMembers.size(); ++i) {
+			const GroupMember& gm  = d.groupMembers.at(i);
+			const QRect row     = layout.members.at(i).headerRect;
+			const QRect playBtn = groupMemberPlayButtonRect(row);
+			const bool  hovered = playBtn.contains(m_lastMousePos);
+
+			QPixmap playIcon;
+			const QString cacheKey = QStringLiteral("play_icon_%1").arg(playBtn.height());
+			if (!QPixmapCache::find(cacheKey, &playIcon)) {
+				playIcon = QPixmap(":/icons/vlc.svg").scaled(
+				    playBtn.height(), playBtn.height(),
+				    Qt::KeepAspectRatio, Qt::SmoothTransformation);
+				QPixmapCache::insert(cacheKey, playIcon);
+			}
+			painter->save();
+			painter->setOpacity(hovered ? 1.0 : 0.80);
+			painter->drawPixmap(playBtn.left() + (playBtn.width()  - playIcon.width())  / 2,
+			                    playBtn.top()  + (playBtn.height() - playIcon.height()) / 2, playIcon);
+			painter->restore();
+
+			int leftX = row.left();
+			// 4K badge first — it's the most common badge, so rarer ones like the
+			// edition badge come after it rather than pushing it further right.
+			if (hasVideo4K(gm.videoStreams)) {
+				const int badgeY = row.top() + (row.height() - kBadgeH) / 2;
+				leftX += drawBadge(painter, leftX, badgeY, kBadgeH, QStringLiteral("4K"),
+				                   QColor(0x50, 0x50, 0x58), memberBadgeFont) + kBadgeGap;
+			}
+			if (!gm.edition.isEmpty()) {
+				const int badgeY = row.top() + (row.height() - kBadgeH) / 2;
+				leftX += drawBadge(painter, leftX, badgeY, kBadgeH, gm.edition,
+				                   QColor(0x50, 0x50, 0x58), memberBadgeFont) + kBadgeGap;
+			}
+
+			int rightEdge = playBtn.left() - kBadgeGap;
+
+			// Duration · size — same formatting the normal single-file card's title
+			// row uses, right-aligned immediately before the play button so every
+			// edition row shows its own runtime/size instead of only the card's
+			// shared title row showing the representative file's numbers.
+			QString metaText;
+			if (gm.durationSec > 0) metaText = formatDuration(gm.durationSec);
+			if (gm.sizeBytes    > 0) metaText += (metaText.isEmpty() ? QString() : QStringLiteral("  ")) + formatSize(gm.sizeBytes);
+			if (!metaText.isEmpty()) {
+				const int metaW = memberMetaFm.horizontalAdvance(metaText);
+				painter->save();
+				painter->setFont(memberMetaFont);
+				painter->setPen(dimColor);
+				painter->drawText(QRect(rightEdge - metaW, row.top(), metaW, row.height()),
+				                  Qt::AlignRight | Qt::AlignVCenter | Qt::TextSingleLine, metaText);
+				painter->restore();
+				rightEdge -= metaW + 16;
+			}
+
+			// Job status badge — same visual as the Job Queue's own status pill
+			// (drawBadge + statusColor/statusLabel), shown only when this specific
+			// file has an active (non-terminal) job. Sits before (left of) the
+			// duration/size, same relative order the Job Queue's own header row
+			// uses (status, then the rest, then play button).
+			if (!gm.jobStatus.isEmpty()) {
+				QFont pillFont = option.font;
+				pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+				const QString pillText = statusLabel(gm.jobStatus);
+				const int pillW = QFontMetrics(pillFont).horizontalAdvance(pillText) + 2 * kBadgePad;
+				const int pillX = rightEdge - pillW;
+				const int pillY = row.top() + (row.height() - kBadgeH) / 2;
+				drawBadge(painter, pillX, pillY, kBadgeH, pillText, statusColor(gm.jobStatus), pillFont);
+				rightEdge = pillX - kBadgeGap;
+			}
+
+			painter->save();
+			painter->setFont(fnFont);
+			painter->setPen(dimColor);
+			painter->drawText(QRect(leftX, row.top(), rightEdge - leftX - 4, row.height()),
+			                  Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, gm.filename);
+			painter->restore();
+
+			// This member's own real track badges — same drawBadgeRow() the normal
+			// single-file card uses, just anchored right below its header row. Every
+			// row gets the full width now — IMDb/TMDB moved to the shared title row.
+			int by = row.bottom() + kSepGap;
+			for (const auto* groupPtr : { &gm.videoStreams, &gm.audioStreams, &gm.subtitleStreams }) {
+				if (groupPtr->isEmpty()) continue;
+				const int rows = drawBadgeRow(painter, QRect(row.left(), by, row.width(), kBadgeH),
+				                              *groupPtr, noRemovals, memberBadgeFont, bg);
+				by += rows * (kBadgeH + kRowGap);
+			}
+		}
+
+		painter->restore();
+		return;
+	}
+
 	// ── Header: play button (right) | right-side meta | filename (left) ──────
 	{
 		QFont fnFont = option.font;
@@ -1881,6 +2175,30 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			rightEdgeForFilename = chipX - kBadgeGap;
 		}
 
+		// Duration · size — moved here from the title row above, so it sits on the
+		// same line as the filename and play button (title row now only carries
+		// title/media-chip/IMDb-TMDB/rating). Sits before the status pill (job
+		// mode) claims further width, so status reads to its left, closer to the
+		// filename, matching how mega-card rows order the same two pieces.
+		{
+			QString metaText;
+			if (d.durationSec > 0) metaText = formatDuration(d.durationSec);
+			if (d.sizeBytes    > 0) metaText += (metaText.isEmpty() ? QString() : QStringLiteral("  ")) + formatSize(d.sizeBytes);
+			if (!metaText.isEmpty()) {
+				QFont metaFont = option.font;
+				metaFont.setPointSizeF(option.font.pointSizeF() * 0.80);
+				const int metaW = QFontMetrics(metaFont).horizontalAdvance(metaText);
+				const int metaX = rightEdgeForFilename - metaW;
+				painter->save();
+				painter->setFont(metaFont);
+				painter->setPen(dimColor);
+				painter->drawText(QRect(metaX, hdr.top(), metaW, hdr.height()),
+				                  Qt::AlignRight | Qt::AlignVCenter | Qt::TextSingleLine, metaText);
+				painter->restore();
+				rightEdgeForFilename = metaX - 8;
+			}
+		}
+
 		if (m_mode == Mode::JobQueue) {
 			QFont pillFont = option.font;
 			pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
@@ -1919,53 +2237,36 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			rightEdgeForFilename = pillX;
 		}
 
+		// 4K badge first — it's the most common badge, so rarer ones like the
+		// edition badge (Theatrical/Director's Cut/3D/...) come after it.
+		int filenameLeft = hdr.left();
+		if (hasVideo4K(d.videoStreams)) {
+			QFont resBadgeFont = option.font;
+			resBadgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
+			const int badgeY = hdr.top() + (hdr.height() - kBadgeH) / 2;
+			filenameLeft += drawBadge(painter, filenameLeft, badgeY, kBadgeH, QStringLiteral("4K"),
+			                          QColor(0x50, 0x50, 0x58), resBadgeFont) + kBadgeGap;
+		}
+
+		// Edition badge — blank when undetected, so most single-edition files
+		// show nothing here.
+		if (!d.edition.isEmpty()) {
+			QFont editionBadgeFont = option.font;
+			editionBadgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
+			const int badgeY = hdr.top() + (hdr.height() - kBadgeH) / 2;
+			filenameLeft += drawBadge(painter, filenameLeft, badgeY, kBadgeH, d.edition,
+			                          QColor(0x50, 0x50, 0x58), editionBadgeFont) + kBadgeGap;
+		}
+
 		// Filename — fills remaining left space
 		painter->setFont(fnFont);
 		painter->setPen(dimColor);
-		painter->drawText(QRect(hdr.left(), hdr.top(), rightEdgeForFilename - hdr.left() - 4, hdr.height()),
+		painter->drawText(QRect(filenameLeft, hdr.top(), rightEdgeForFilename - filenameLeft - 4, hdr.height()),
 		                  Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, d.filename);
 	}
 
-	// ── Badge area: IMDb + TMDB buttons (right) + track rows (left) ─────────
-	const bool hasImdb  = !d.imdbId.isEmpty();
-	const bool hasTmdb  = d.tmdbId > 0;
-	const int rightReserve = rightButtonsReserve(hasImdb, hasTmdb);
-	const int badgeAreaW   = content.width() - rightReserve;
-
-	if (hasImdb) {
-		const QRect ir = imdbButtonRect(content);
-		QPixmap logo;
-		if (!QPixmapCache::find("imdb_logo", &logo)) {
-			logo = QPixmap(":/icons/imdb.png").scaled(
-			    ir.width(), ir.height(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-			QPixmapCache::insert("imdb_logo", logo);
-		}
-		painter->save();
-		painter->setRenderHint(QPainter::Antialiasing);
-		// imdb.png is a plain square-cornered asset — clip to a rounded rect so it
-		// matches the rounding every other button/badge/pill in the app uses.
-		QPainterPath clip;
-		clip.addRoundedRect(ir, 4, 4);
-		painter->setClipPath(clip, Qt::IntersectClip);
-		painter->setOpacity(ir.contains(m_lastMousePos) ? 1.0 : 0.75);
-		const int ox = ir.left() + (ir.width()  - logo.width())  / 2;
-		const int oy = ir.top()  + (ir.height() - logo.height()) / 2;
-		painter->drawPixmap(ox, oy, logo);
-		painter->restore();
-	}
-
-	if (hasTmdb) {
-		const QRect btnRect = tmdbButtonRect(content, hasImdb);
-		// tmdb.svg's <rect>/<text> carry their own explicit fill colors, so the
-		// color renderSvgIcon injects on the root <svg> tag is inert here — this
-		// renders the icon in its real brand colors, not a recolored silhouette.
-		const QPixmap logo = renderSvgIcon(QStringLiteral(":/icons/tmdb.svg"), Qt::white,
-		                                    btnRect.height(), painter->device()->devicePixelRatioF());
-		painter->save();
-		painter->setOpacity(btnRect.contains(m_lastMousePos) ? 1.0 : 0.75);
-		painter->drawPixmap(btnRect, logo);
-		painter->restore();
-	}
+	// ── Badge area: track rows, full width now that IMDb/TMDB live in the title row ──
+	const int badgeAreaW = content.width();
 
 	// Hover-highlight the badge under the mouse for toggleable job cards
 	const int hoveredStreamIdx = (m_mode == Mode::JobQueue && d.toggleable && m_lastMousePos.x() >= 0)

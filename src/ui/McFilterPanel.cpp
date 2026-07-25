@@ -112,6 +112,16 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		emit filterTextChanged(m_search->text());
 	});
 
+	// "N duplicate versions" toggle — only meaningful (and only shown) once
+	// GroupedByEdition is selected, so it starts hidden.
+	m_redundantChip = makePill(tr("0 duplicates"), QColor(0xb0, 0x30, 0x30), this);
+	m_redundantChip->setToolTip(tr("Show only movies with a duplicated edition"));
+	m_redundantChip->setVisible(false);
+	connect(m_redundantChip, &QToolButton::toggled, this, [this](bool on) {
+		emit redundantOnlyFilterChanged(on);
+	});
+	lay->addWidget(m_redundantChip);
+
 	// ── Status filter ─────────────────────────────────────────────────────────
 	m_statusCombo = new QComboBox(this);
 	m_statusCombo->setItemDelegate(new McFlatComboDelegate(m_statusCombo));
@@ -206,6 +216,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 
 	const PillDef resGroup[] = {
 		{ "4K", QF_4K, QStringLiteral("Show only 4K files (width ≥ 3840)") },
+		{ "3D", QF_3D, QStringLiteral("Show only files detected as a 3D release") },
 	};
 	addGroup(videoColor, resGroup);
 
@@ -260,16 +271,35 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	m_sortCombo->addItem(tr("Rating ↓"),     SortByRatingHigh); // 5
 	m_sortCombo->addItem(tr("Rating ↑"),     SortByRatingLow);  // 6
 	m_sortCombo->addItem(tr("Last scanned"), SortByLastScanned);// 7
+	m_sortCombo->addItem(tr("Group by Movie"), GroupedByEdition);// 8
 	if (auto* m = qobject_cast<QStandardItemModel*>(m_sortCombo->model()))
 		if (auto* item = m->item(0))
 			item->setEnabled(false);
 	m_sortCombo->setCurrentIndex(1);
 	lay->addWidget(m_sortCombo);
+
 	connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
 	        this, [this](int i) {
 		if (i <= 0) return;
-		emit sortOrderChanged(m_sortCombo->currentData().toInt());
+		const int order = m_sortCombo->currentData().toInt();
+		if (order != GroupedByEdition && m_redundantChip->isChecked())
+			m_redundantChip->setChecked(false);   // also fires redundantOnlyFilterChanged(false)
+		m_groupModeActive = (order == GroupedByEdition);
+		updateRedundantChipVisibility();
+		emit sortOrderChanged(order);
 	});
+}
+
+void McFilterPanel::updateRedundantChipVisibility()
+{
+	m_redundantChip->setVisible(m_groupModeActive && m_redundantGroupCount > 0);
+}
+
+void McFilterPanel::setRedundantGroupCount(int count)
+{
+	m_redundantGroupCount = count;
+	m_redundantChip->setText(count == 1 ? tr("1 duplicate") : tr("%1 duplicates").arg(count));
+	updateRedundantChipVisibility();
 }
 
 void McFilterPanel::onPillToggled(quint32 flag, bool on)

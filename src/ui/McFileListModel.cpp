@@ -28,6 +28,21 @@ McFileListModel::McFileListModel(QObject* parent)
 		}
 		m_pendingFanartIds.clear();
 	});
+
+	m_groupRebuildTimer.setSingleShot(true);
+	m_groupRebuildTimer.setInterval(200);
+	connect(&m_groupRebuildTimer, &QTimer::timeout, this, [this]() {
+		if (m_sortOrder != GroupedByEdition) return;   // mode may have changed while queued
+		rebuildGroupedEntries();
+		applyFilter(/*forceFullReset=*/true);
+	});
+}
+
+void McFileListModel::scheduleGroupRebuild()
+{
+	if (m_sortOrder != GroupedByEdition) return;
+	if (!m_groupRebuildTimer.isActive())
+		m_groupRebuildTimer.start();
 }
 
 void McFileListModel::computeDerived(FileEntry& e)
@@ -66,13 +81,19 @@ void McFileListModel::computeDerived(FileEntry& e)
 
 	// Precompute quick-filter flags by scanning streams once + populate grouped lists
 	e.has4K = e.hasDV = e.hasHDR = e.hasAtmos = e.hasTrueHD = e.hasDtsHD = e.hasDtsX = false;
+	// "3D" or "3D (HSBS)"/"3D (VSBS)"/etc — see EditionDetector's packing-format qualifier.
+	e.hasEdition3D = e.file.edition.startsWith(QLatin1String("3D"));
 	e.videoStreams.clear();
 	e.audioStreams.clear();
 	e.subtitleStreams.clear();
 	for (const StreamRecord& st : e.streams) {
 		if (st.codecType == QLatin1String("video")) {
 			e.videoStreams.append(st);
-			if (st.width >= 3840 || st.height >= 2160)
+			// Width threshold has margin below the nominal 3840: scope-ratio (2.35:1+)
+			// UHD masters commonly crop the letterbox bars off the top/bottom only,
+			// so height drops well under 2160 while width stays close to but not
+			// exactly 3840 (e.g. 3832) — a strict >=3840 check misses those.
+			if (st.width >= 3600 || st.height >= 2160)
 				e.has4K = true;
 			if (st.hdrFormat == QLatin1String("DolbyVision") ||
 			    st.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive) ||
@@ -132,6 +153,7 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 		if ((m_quickFilters & QF_4K) && !e.has4K) return false;
 		if ((m_quickFilters & QF_DV) && !e.hasDV) return false;
 		if ((m_quickFilters & QF_HDR) && !e.hasHDR) return false;
+		if ((m_quickFilters & QF_3D) && !e.hasEdition3D) return false;
 
 		const quint32 audioMask = QF_Atmos | QF_TrueHD | QF_DtsHD | QF_DtsX;
 		if (m_quickFilters & audioMask) {
@@ -160,6 +182,10 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 			if (!hasMediaMatch) return false;
 		}
 	}
+
+	// ── Redundant-versions filter (GroupedByEdition only) ────────────────────
+	if (m_sortOrder == GroupedByEdition && m_redundantOnlyFilter && !e.isGroupRedundant)
+		return false;
 
 	// ── Storage group filter ──────────────────────────────────────────────────
 	if (m_storageGroupMask != 0 && !(m_storageGroupMask & (1u << e.storageGroup)))
@@ -196,15 +222,106 @@ void McFileListModel::sortAllEntries()
 	          [this](const FileEntry& a, const FileEntry& b) { return entryLessThan(a, b); });
 }
 
+void McFileListModel::rebuildGroupedEntries()
+{
+	// Group by tmdb id; files with no match yet (tmdbId == 0) get their own
+	// singleton group so nothing silently disappears from the grouped view.
+	QHash<int, QList<int>> indicesByTmdb;
+	for (int i = 0; i < m_allEntries.size(); ++i) {
+		const int tmdbId = m_tmdbIds.value(m_allEntries[i].file.id, 0);
+		if (tmdbId > 0) indicesByTmdb[tmdbId].append(i);
+	}
+	QSet<int> grouped;
+	for (const auto& idxs : indicesByTmdb) grouped.unite(QSet<int>(idxs.begin(), idxs.end()));
+
+	QList<FileEntry> result;
+	result.reserve(m_allEntries.size());
+
+	auto buildGroup = [&](const QList<int>& indices) {
+		// Representative = largest file — stable, and matches "which do I keep,
+		// 1080p vs 4K" as the card you see first.
+		int repIdx = indices.first();
+		for (int i : indices)
+			if (m_allEntries[i].file.sizeBytes > m_allEntries[repIdx].file.sizeBytes)
+				repIdx = i;
+
+		FileEntry rep = m_allEntries[repIdx];
+
+		// A movie you only own one copy of should look and behave exactly like the
+		// normal single-file view (track badges, IMDb/TMDB buttons, full context
+		// menu) — only an actual multi-file group becomes a mega card.
+		if (indices.size() < 2) {
+			result.append(std::move(rep));
+			return;
+		}
+
+		rep.isGroupCard = true;
+		rep.groupMembers.clear();
+		rep.groupMembers.reserve(indices.size());
+
+		QHash<QString, int> editionCounts;
+		for (int i : indices) {
+			const FileEntry& fe = m_allEntries[i];
+			GroupMember gm;
+			gm.fileId          = fe.file.id;
+			gm.path            = fe.file.path;
+			gm.filename        = fe.file.filename;
+			gm.edition         = fe.file.edition;
+			gm.sizeBytes       = fe.file.sizeBytes;
+			gm.durationSec     = fe.file.durationSec;
+			if (const auto job = DatabaseManager::instance().activeJobForFile(fe.file.id))
+				gm.jobStatus = job->status;
+			gm.videoStreams    = fe.videoStreams;
+			gm.audioStreams    = fe.audioStreams;
+			gm.subtitleStreams = fe.subtitleStreams;
+			rep.groupMembers.append(std::move(gm));
+			editionCounts[fe.file.edition]++;
+		}
+		std::sort(rep.groupMembers.begin(), rep.groupMembers.end(),
+		          [](const GroupMember& a, const GroupMember& b) {
+			return a.filename.compare(b.filename, Qt::CaseInsensitive) < 0;
+		});
+
+		rep.isGroupRedundant = false;
+		for (auto it = editionCounts.cbegin(); it != editionCounts.cend(); ++it) {
+			if (it.value() >= 2) { rep.isGroupRedundant = true; break; }
+		}
+		result.append(std::move(rep));
+	};
+
+	for (const auto& idxs : indicesByTmdb) buildGroup(idxs);
+	for (int i = 0; i < m_allEntries.size(); ++i)
+		if (!grouped.contains(i)) buildGroup({ i });
+
+	// Alphabetical by the same title shown on the card — the only sort key that
+	// makes sense once rows represent movies rather than individual files.
+	std::sort(result.begin(), result.end(), [](const FileEntry& a, const FileEntry& b) {
+		const QString ta = a.file.displayTitle.isEmpty() ? a.file.filename : a.file.displayTitle;
+		const QString tb = b.file.displayTitle.isEmpty() ? b.file.filename : b.file.displayTitle;
+		return ta.compare(tb, Qt::CaseInsensitive) < 0;
+	});
+
+	m_groupedAllEntries = std::move(result);
+
+	int redundantCount = 0;
+	for (const auto& e : m_groupedAllEntries)
+		if (e.isGroupRedundant) ++redundantCount;
+	emit redundantGroupCountChanged(redundantCount);
+}
+
 void McFileListModel::applyFilter(bool forceFullReset)
 {
-	// Build the filtered view as an order-preserving subsequence of m_allEntries.
-	// m_allEntries must already be in the active sort order (see sortAllEntries /
-	// setSortOrder / reload) so we never re-sort here — re-sorting would break the
-	// subsequence invariant the incremental diff below relies on.
+	// Build the filtered view as an order-preserving subsequence of the current
+	// source list. In GroupedByEdition that's m_groupedAllEntries (already sorted by
+	// title in rebuildGroupedEntries()); otherwise it's the normal per-file
+	// m_allEntries, which must already be in the active sort order (see
+	// sortAllEntries / setSortOrder / reload) so we never re-sort here — re-sorting
+	// would break the subsequence invariant the incremental diff below relies on.
+	const QList<FileEntry>& source =
+	    (m_sortOrder == GroupedByEdition) ? m_groupedAllEntries : m_allEntries;
 	QList<FileEntry> newEntries;
-	newEntries.reserve(m_allEntries.size());
-	for (const auto& e : m_allEntries)
+	newEntries.reserve(source.size());
+	for (const auto& e : source)
 		if (entryPassesFilter(e)) newEntries.append(e);
 
 	if (forceFullReset || m_entries.isEmpty()) {
@@ -305,7 +422,10 @@ void McFileListModel::reload()
 	m_forcedRemovals = db.allStreamForcedRemovals();
 
 	recomputeFolderCounts();
-	sortAllEntries();
+	if (m_sortOrder == GroupedByEdition)
+		rebuildGroupedEntries();
+	else
+		sortAllEntries();
 	applyFilter(/*forceFullReset=*/true);
 	notifyMediaCategoriesAvailability();
 
@@ -340,7 +460,10 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 	}
 	if (!ratings.isEmpty())     m_ratings     = ratings;
 	if (!fanartPaths.isEmpty()) m_fanartPaths = fanartPaths;
-	if (!tmdbIds.isEmpty())     m_tmdbIds     = tmdbIds;
+	bool tmdbIdsChanged = false;
+	if (!tmdbIds.isEmpty())     { m_tmdbIds = tmdbIds; tmdbIdsChanged = true; }
+	if (tmdbIdsChanged)
+		scheduleGroupRebuild();
 	if (!m_entries.isEmpty()) {
 		const QList<int> roles = {
 			FanartRole, PosterRole, PosterVersionRole,
@@ -380,6 +503,16 @@ void McFileListModel::applyEntry(const FileEntry& entry)
 
 	// Newly loaded/updated entries may introduce the first classified type.
 	notifyMediaCategoriesAvailability();
+
+	if (m_sortOrder == GroupedByEdition) {
+		// Grouped rows don't correspond 1:1 with files — a per-file incremental
+		// update doesn't map onto a group row, so just schedule a throttled rebuild
+		// from m_allEntries (already updated above) instead. Un-throttled, a scan
+		// touching hundreds of files while this mode is active would do a full
+		// O(n) rebuild per file.
+		scheduleGroupRebuild();
+		return;
+	}
 
 	const bool passes = entryPassesFilter(e);
 	for (int i = 0; i < m_entries.size(); ++i) {
@@ -431,6 +564,15 @@ void McFileListModel::removeEntry(qint64 fileId)
 			break;
 		}
 	}
+
+	if (m_sortOrder == GroupedByEdition) {
+		// The removed file may have been a group's representative (its row identity)
+		// or just one of its siblings — either way the group's membership/redundancy
+		// needs recomputing rather than a naive id-match row removal.
+		scheduleGroupRebuild();
+		return;
+	}
+
 	for (int i = 0; i < m_entries.size(); ++i) {
 		if (m_entries[i].file.id == fileId) {
 			beginRemoveRows({}, i, i);
@@ -545,6 +687,14 @@ void McFileListModel::onImdbIdSaved(qint64 fileId, const QString& imdbId)
 void McFileListModel::onTmdbIdSaved(qint64 fileId, int tmdbId)
 {
 	m_tmdbIds[fileId] = tmdbId;
+	if (m_sortOrder == GroupedByEdition) {
+		// This file just learned which movie it belongs to — its group membership
+		// may have changed (e.g. it was a singleton, now it joins an existing group).
+		// Throttled: this fires once per file as TMDB matches resolve, which can be
+		// hundreds of calls in a burst right after a rescan.
+		scheduleGroupRebuild();
+		return;
+	}
 	for (int row = 0; row < m_entries.size(); ++row) {
 		if (m_entries.at(row).file.id == fileId) {
 			const QModelIndex idx = index(row);
@@ -608,10 +758,20 @@ void McFileListModel::setSortOrder(int order)
 {
 	if (m_sortOrder == order) return;
 	m_sortOrder = order;
-	// Sort the master list first so applyFilter can treat the visible set as a
-	// subsequence (incremental). Full reset because every row reorders.
-	sortAllEntries();
+	if (m_sortOrder == GroupedByEdition)
+		rebuildGroupedEntries();
+	else
+		// Sort the master list first so applyFilter can treat the visible set as a
+		// subsequence (incremental). Full reset because every row reorders.
+		sortAllEntries();
 	applyFilter(/*forceFullReset=*/true);
+}
+
+void McFileListModel::setRedundantOnlyFilter(bool on)
+{
+	if (m_redundantOnlyFilter == on) return;
+	m_redundantOnlyFilter = on;
+	applyFilter();
 }
 
 void McFileListModel::setRatingFilter(double minRating, double maxRating)
@@ -727,6 +887,9 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case SubtitleStreamsRole:return QVariant::fromValue(e.subtitleStreams);
 	case FileIdRole:         return e.file.id;
 	case StorageGroupRole:   return e.storageGroup;
+	case GroupMembersRole:     return QVariant::fromValue(e.groupMembers);
+	case IsGroupCardRole:      return e.isGroupCard;
+	case GroupIsRedundantRole: return e.isGroupRedundant;
 	default:              return {};
 	}
 }

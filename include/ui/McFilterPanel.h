@@ -7,6 +7,7 @@ class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 class QTimer;
+class QToolButton;
 
 namespace Mc {
 
@@ -30,6 +31,10 @@ public:
 	// (everything is still "unknown"). Active category filters are cleared on hide.
 	void setMediaCategoryFiltersVisible(bool visible);
 
+	// Updates the redundant-versions chip's count label. The chip itself is only
+	// shown while GroupedByEdition is the active sort mode.
+	void setRedundantGroupCount(int count);
+
 	enum QuickFilter : quint32 {
 		QF_None         = 0,
 		QF_4K           = 1 << 0,
@@ -44,6 +49,7 @@ public:
 		QF_Tv           = 1 << 8,
 		QF_Documentary  = 1 << 9,
 		QF_Misc         = 1 << 10,  // misc + unknown/unmatched
+		QF_3D           = 1 << 11,  // FileRecord::edition == "3D" (see EditionDetector)
 	};
 
 	enum SortOrder {
@@ -54,6 +60,7 @@ public:
 		SortByRatingHigh = 4,
 		SortByRatingLow  = 5,
 		SortByLastScanned= 6,
+		GroupedByEdition = 7,   // "Group by Movie" — mega cards, one per movie
 	};
 
 signals:
@@ -63,6 +70,7 @@ signals:
 	void sortOrderChanged(int order);
 	void ratingFilterChanged(double minRating, double maxRating);
 	void storageGroupFilterChanged(quint32 groupMask);   // bit (1<<group); 0 = show all
+	void redundantOnlyFilterChanged(bool on);   // GroupedByEdition only
 
 private:
 	void onPillToggled(quint32 flag, bool on);
@@ -89,6 +97,14 @@ private:
 	QWidget*      m_storageGroupContainer = nullptr;
 	QHBoxLayout*  m_storageGroupLayout    = nullptr;
 	QList<McStorageGroupChipToggle*> m_storageGroupChips;
+
+	// "N duplicate versions" toggle — visible only while GroupedByEdition is active
+	// AND there's at least one actual duplicate to filter for.
+	QToolButton*  m_redundantChip = nullptr;
+	int           m_redundantGroupCount = 0;
+	bool          m_groupModeActive = false;
+
+	void updateRedundantChipVisibility();
 };
 
 } // namespace Mc

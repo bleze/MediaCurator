@@ -255,11 +255,25 @@ static double candidateScore(const OpenSubtitlesClient::SubtitleFile& candidate,
 		const QString localLower = localFileName.toLower();
 		const QString candLower  = (candidate.release + QLatin1Char(' ') + candidate.fileName).toLower();
 		QStringList localEditions, candEditions;
-		for (const QString& tok : editionTokens) {
-			const QString t = tok.toLower();
-			if (t.isEmpty()) continue;
-			if (localLower.contains(t)) localEditions << t;
-			if (candLower.contains(t))  candEditions  << t;
+		// Each entry may list several spellings of the same cut separated by '|'
+		// (e.g. "director's cut|directors cut|dc") — recorded under the first
+		// spelling regardless of which variant actually matched, so a local file
+		// and a candidate spelled differently still agree instead of penalizing
+		// a false mismatch.
+		for (const QString& tokEntry : editionTokens) {
+			const QStringList variants = tokEntry.split(QLatin1Char('|'), Qt::SkipEmptyParts);
+			if (variants.isEmpty()) continue;
+			const QString canonical = variants.first().trimmed().toLower();
+			if (canonical.isEmpty()) continue;
+			bool inLocal = false, inCand = false;
+			for (const QString& variant : variants) {
+				const QString t = variant.trimmed().toLower();
+				if (t.isEmpty()) continue;
+				if (!inLocal && localLower.contains(t)) inLocal = true;
+				if (!inCand  && candLower.contains(t))  inCand  = true;
+			}
+			if (inLocal) localEditions << canonical;
+			if (inCand)  candEditions  << canonical;
 		}
 		if (!localEditions.isEmpty()) {
 			bool anyMatch = false;
@@ -792,8 +806,14 @@ void SubtitleDownloadWorker::run()
 	// more likely to be buried lower in the popularity-influenced ranking — worth
 	// trying harder (more of the up-to-8 kept candidates) rather than giving up at 3.
 	const bool localIsEditionRelease = std::any_of(m_editionTokens.begin(), m_editionTokens.end(),
-		[&](const QString& tok) {
-			return !tok.isEmpty() && fi.fileName().contains(tok, Qt::CaseInsensitive);
+		[&](const QString& tokEntry) {
+			// See candidateScore() above — an entry may be several '|'-separated
+			// spellings of the same cut; any one of them counts as a match.
+			const QStringList variants = tokEntry.split(QLatin1Char('|'), Qt::SkipEmptyParts);
+			return std::any_of(variants.begin(), variants.end(), [&](const QString& variant) {
+				const QString t = variant.trimmed();
+				return !t.isEmpty() && fi.fileName().contains(t, Qt::CaseInsensitive);
+			});
 		});
 	constexpr int kBaseMaxAttempts    = 3; // caps quota burn chasing a bad match
 	constexpr int kEditionMaxAttempts = 8; // matches search()'s kMaxCandidatesPerLang cap
