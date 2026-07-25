@@ -202,8 +202,7 @@ bool UpdateChecker::launchInstaller(const QString& path)
 	const std::wstring filePath = path.toStdWString();
 	sei.lpFile       = filePath.c_str();
 	// Deliberately NOT /S. ShellExecuteExW returns as soon as the elevated
-	// installer process exists — CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL
-	// then runs the *old* uninstaller with its own implicit /S against
+	// installer process exists, and it starts overwriting
 	// MediaCurator.exe/its DLLs before the wizard's first page even shows. A
 	// silent install can't prompt when a file is still locked, so it silently
 	// skips/no-ops and reports success, leaving the old version in place with

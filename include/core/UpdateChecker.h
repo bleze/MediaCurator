@@ -40,11 +40,10 @@ public:
 
 	// Download installerUrl (a release asset from updateAvailable's installerUrl
 	// param) and, once complete, emit installerReady(path) instead of launching
-	// it immediately. The elevated installer (and, via
-	// CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL, the *old* version's silent
-	// uninstall step) will try to overwrite MediaCurator.exe/its DLLs as soon as
-	// it starts — so the caller must fully tear down (release those file locks)
-	// before calling launchInstaller(), not just before closing the window.
+	// it immediately. The elevated installer will try to overwrite
+	// MediaCurator.exe/its DLLs as soon as it starts — so the caller must fully
+	// tear down (release those file locks) before calling launchInstaller(),
+	// not just before closing the window.
 	// See main.cpp: it calls launchInstaller() only after the main window has
 	// been destroyed. Windows-only; no-op elsewhere.
 	void downloadAndInstall(const QString& installerUrl);

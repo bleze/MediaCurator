@@ -62,7 +62,24 @@ if(WIN32)
     set(CPACK_NSIS_URL_INFO_ABOUT      "https://github.com/bleze/MediaCurator")
     set(CPACK_NSIS_CONTACT             "mediacurator@bleze.dk")
     set(CPACK_NSIS_MODIFY_PATH         ON)
-    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+
+    # Deliberately OFF (was ON). When ON, NSIS's .onInit looks up any
+    # existing install and blocks on a "$1 is already installed — uninstall
+    # the old version before installing the new one?" MessageBox, which only
+    # auto-answers itself in a fully silent (/S) run. UpdateChecker's
+    # self-update deliberately doesn't use /S (see
+    # UpdateChecker::launchInstaller, changed for the same reason this was
+    # once ON) so users can see wizard progress/errors — so that prompt just
+    # sat there waiting for a click nobody expected, making the update look
+    # like it never relaunched the app. Finding an existing install here
+    # always means we want to replace it, so there's nothing to ask: with
+    # this OFF, the installer skips the lookup/prompt/old-uninstaller dance
+    # entirely and just overwrites $INSTDIR in place, which is also what
+    # answering "Yes" to that prompt used to do. This also removes the old
+    # uninstaller-vs-file-lock race described in UpdateChecker.cpp's
+    # launchInstaller comment, since that old uninstaller no longer runs at
+    # all as part of a new install.
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 
     # Default-on "Run MediaCurator" checkbox on the finish page of an interactive
     # install. This is what resumes the app after UpdateChecker's self-update flow
