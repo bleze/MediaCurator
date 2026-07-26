@@ -8,21 +8,22 @@
 
 namespace Mc {
 
-McMultiCheckDropdown::McMultiCheckDropdown(const QString& label, QWidget* parent)
-	: QToolButton(parent), m_label(label)
+McMultiCheckDropdown::McMultiCheckDropdown(const QString& label, QWidget* parent,
+                                           const QColor& fillColor)
+	: QToolButton(parent), m_label(label), m_fillColor(fillColor)
 {
 	setAutoRaise(true);
-	setStyleSheet(QStringLiteral(
-		"QToolButton { border: 1px solid palette(mid); border-radius: 4px;"
-		"              padding: 2px 8px; background: palette(base); }"
-		"QToolButton:hover { background: palette(alternate-base); }"));
+	updateFillStyle();
 	// QToolButton always draws its icon before the text; a dropdown indicator
 	// reads as an indicator when it trails the label instead (matching the
 	// combos elsewhere in this same filter bar). Flipping layout direction is
 	// the standard, simple way to get that without a custom paintEvent — Qt
 	// still shapes the text itself left-to-right, only the icon/text order mirrors.
 	setLayoutDirection(Qt::RightToLeft);
-	setIcon(svgIcon(QStringLiteral(":/icons/dropdown_arrow.svg")));
+	// White icon to read against the colored fill (matches the pill buttons'
+	// white text) when fillColor is set; otherwise the usual theme-tracking icon.
+	setIcon(m_fillColor.isValid() ? svgIcon(QStringLiteral(":/icons/dropdown_arrow.svg"), Qt::white)
+	                              : svgIcon(QStringLiteral(":/icons/dropdown_arrow.svg")));
 	setIconSize(QSize(14, 14));
 	// QToolButton defaults to icon-only outside a QToolBar — without this, the
 	// icon above replaces the label entirely instead of sitting beside it.
@@ -98,6 +99,29 @@ void McMultiCheckDropdown::onItemChanged(QListWidgetItem* item)
 void McMultiCheckDropdown::updateButtonText()
 {
 	setText(m_checked.isEmpty() ? m_label : QStringLiteral("%1 (%2)").arg(m_label).arg(m_checked.size()));
+	updateFillStyle();
+}
+
+void McMultiCheckDropdown::updateFillStyle()
+{
+	if (!m_fillColor.isValid()) {
+		setStyleSheet(QStringLiteral(
+			"QToolButton { border: 1px solid palette(mid); border-radius: 4px;"
+			"              padding: 2px 8px; background: palette(base); }"
+			"QToolButton:hover { background: palette(alternate-base); }"));
+		return;
+	}
+
+	// Always the solid fillColor — unlike the toggle pills, this button isn't
+	// itself an on/off filter (the popup's checked items are), so there's no
+	// "off" state to mute; it should just read as the same solid grey as the
+	// card badge at all times.
+	setStyleSheet(QStringLiteral(
+		"QToolButton { border: none; border-radius: 4px;"
+		"              padding: 2px 8px; background: %1;"
+		"              color: white; font-weight: 600; }"
+		"QToolButton:hover { background: %1; }")
+		.arg(m_fillColor.name()));
 }
 
 } // namespace Mc

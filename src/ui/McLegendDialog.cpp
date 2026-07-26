@@ -46,9 +46,12 @@ QLabel* groupChipLabel(QWidget* parent, int group)
 	return lbl;
 }
 
-// Renders a plain dark-gray badge (edition/3D/4K style — McCardDelegate's
-// drawBadge with the same background color those badges use) into a label.
-QLabel* plainBadgeLabel(QWidget* parent, const QString& text)
+// Renders a plain badge (edition/3D/4K style — McCardDelegate's drawBadge with
+// the same background color those badges use) into a label. Defaults to the
+// edition grey; pass badgeColor("video") for the 3D/4K rows, which are colored
+// like the video badge/toolbar pill rather than a narrative-cut edition.
+QLabel* plainBadgeLabel(QWidget* parent, const QString& text,
+                        const QColor& color = McCardDelegate::badgeColor(QStringLiteral("edition")))
 {
 	const qreal dpr = parent->devicePixelRatioF();
 	QFont font = parent->font();
@@ -60,7 +63,7 @@ QLabel* plainBadgeLabel(QWidget* parent, const QString& text)
 	pm.setDevicePixelRatio(dpr);
 	pm.fill(Qt::transparent);
 	QPainter p(&pm);
-	McCardDelegate::drawBadge(&p, 0, 0, h, text, QColor(0x50, 0x50, 0x58), font);
+	McCardDelegate::drawBadge(&p, 0, 0, h, text, color, font);
 
 	auto* lbl = new QLabel(parent);
 	lbl->setPixmap(pm);
@@ -255,9 +258,10 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	       tr("Storage group — shown when library spans more than one"));
 	addRow(g, { plainBadgeLabel(this, tr("Director's Cut")), plainBadgeLabel(this, tr("Theatrical")) },
 	       tr("Edition/cut, detected from filename or container tag"));
-	addRow(g, { plainBadgeLabel(this, QStringLiteral("3D (HSBS)")) },
+	const QColor videoBadgeColor = McCardDelegate::badgeColor(QStringLiteral("video"));
+	addRow(g, { plainBadgeLabel(this, QStringLiteral("3D (HSBS)"), videoBadgeColor) },
 	       tr("3D format, detected the same way as edition"));
-	addRow(g, { plainBadgeLabel(this, QStringLiteral("4K")) },
+	addRow(g, { plainBadgeLabel(this, QStringLiteral("4K"), videoBadgeColor) },
 	       tr("Resolution is 4K/UHD (3840\xC3\x97" "2160 or higher)"));
 
 	// ── Assembly: Audio + Icons left, Video + Subtitles + Badges right ───────

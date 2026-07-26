@@ -87,4 +87,16 @@ QIcon svgIcon(const QString& resourcePath)
 	return QIcon(new SvgIconEngine(normal, disabled));
 }
 
+QIcon svgIcon(const QString& resourcePath, const QColor& color)
+{
+	QFile f(resourcePath);
+	if (!f.open(QIODevice::ReadOnly)) return {};
+	const QString svg = QString::fromUtf8(f.readAll());
+
+	const QString normal   = recolorSvg(svg, color);
+	const QString disabled = recolorSvg(svg, color.lighter(150));
+
+	return QIcon(new SvgIconEngine(normal, disabled));
+}
+
 } // namespace Mc

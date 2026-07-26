@@ -1,6 +1,7 @@
 #include "ui/McFilterPanel.h"
 
 #include "ui/RangeSlider.h"
+#include "ui/McCardDelegate.h"
 #include "ui/McStorageGroupChipToggle.h"
 #include "ui/McMultiCheckDropdown.h"
 #include "core/AppSettings.h"
@@ -162,7 +163,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		QString     tip;
 	};
 
-	const QColor videoColor { 0xa0, 0x50, 0x00 };   // matches card video badge
+	const QColor videoColor = McCardDelegate::badgeColor(QStringLiteral("video"));   // matches card 4K/3D badge
 	const QColor hdrColor   { 0x70, 0x30, 0xa0 };   // purple — premium HDR
 	const QColor audioColor { 0x10, 0x6a, 0xc0 };   // matches card audio badge
 
@@ -227,7 +228,8 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	// a checklist dropdown instead. Combine with the 4K pill above to find,
 	// e.g., every 4K IMAX release.
 	lay->addWidget(vSep(this));
-	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), this);
+	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), this,
+	                                             McCardDelegate::badgeColor(QStringLiteral("edition")));
 	m_editionDropdown->setToolTip(tr("Filter by edition (Theatrical, IMAX, Director's Cut, …)"));
 	connect(m_editionDropdown, &McMultiCheckDropdown::selectionChanged,
 	        this, &McFilterPanel::editionFilterChanged);

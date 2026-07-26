@@ -705,6 +705,7 @@ QColor McCardDelegate::badgeColor(const QString& codecType)
 	if (codecType == "video")    return { 0xa0, 0x50, 0x00 };
 	if (codecType == "audio")    return { 0x10, 0x6a, 0xc0 };
 	if (codecType == "subtitle") return { 0x1a, 0x86, 0x4a };
+	if (codecType == "edition")  return { 0x50, 0x50, 0x58 };
 	return { 0x60, 0x60, 0x60 };
 }
 
@@ -985,8 +986,15 @@ int McCardDelegate::drawEditionBadges(QPainter* p, int x, int y, int h,
 {
 	int advanced = 0;
 	const QStringList tokens = editionField.split(QStringLiteral(" & "), Qt::SkipEmptyParts);
-	for (const QString& token : tokens)
-		advanced += drawBadge(p, x + advanced, y, h, token, QColor(0x50, 0x50, 0x58), font) + kBadgeGap;
+	for (const QString& token : tokens) {
+		// 3D is a format dimension detected via the same edition mechanism (see
+		// EditionDetector's comment), not a narrative cut — color it like the
+		// 4K badge/toolbar pill (badgeColor("video")) instead of the edition grey.
+		const QColor color = token.startsWith(QLatin1String("3D"))
+		                          ? badgeColor(QStringLiteral("video"))
+		                          : badgeColor(QStringLiteral("edition"));
+		advanced += drawBadge(p, x + advanced, y, h, token, color, font) + kBadgeGap;
+	}
 	return advanced;
 }
 
@@ -2070,7 +2078,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			if (hasVideo4K(gm.videoStreams)) {
 				const int badgeY = row.top() + (row.height() - kBadgeH) / 2;
 				leftX += drawBadge(painter, leftX, badgeY, kBadgeH, QStringLiteral("4K"),
-				                   QColor(0x50, 0x50, 0x58), memberBadgeFont) + kBadgeGap;
+				                   badgeColor(QStringLiteral("video")), memberBadgeFont) + kBadgeGap;
 			}
 			if (!gm.edition.isEmpty()) {
 				const int badgeY = row.top() + (row.height() - kBadgeH) / 2;
@@ -2254,7 +2262,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			resBadgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
 			const int badgeY = hdr.top() + (hdr.height() - kBadgeH) / 2;
 			filenameLeft += drawBadge(painter, filenameLeft, badgeY, kBadgeH, QStringLiteral("4K"),
-			                          QColor(0x50, 0x50, 0x58), resBadgeFont) + kBadgeGap;
+			                          badgeColor(QStringLiteral("video")), resBadgeFont) + kBadgeGap;
 		}
 
 		// Edition badge(s) — blank when undetected, so most single-edition

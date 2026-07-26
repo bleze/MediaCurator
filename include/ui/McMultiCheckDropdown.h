@@ -1,4 +1,5 @@
 #pragma once
+#include <QColor>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -22,7 +23,11 @@ class McMultiCheckDropdown final : public QToolButton
 {
 	Q_OBJECT
 public:
-	explicit McMultiCheckDropdown(const QString& label, QWidget* parent = nullptr);
+	// fillColor, when valid, styles this button like the toolbar's other pill
+	// buttons (McFilterPanel's makePill) — muted fill normally, full-color
+	// fill once something is checked — instead of the plain neutral chrome.
+	explicit McMultiCheckDropdown(const QString& label, QWidget* parent = nullptr,
+	                              const QColor& fillColor = QColor());
 
 	// Replaces the full set of selectable items. Any item that was checked
 	// before AND is still present in the new list keeps its checked state
@@ -40,8 +45,10 @@ private:
 	void togglePopup();
 	void onItemChanged(QListWidgetItem* item);
 	void updateButtonText();
+	void updateFillStyle();
 
 	QString      m_label;
+	QColor       m_fillColor;
 	QSet<QString> m_checked;
 	QWidget*     m_popup = nullptr;
 	QListWidget* m_list  = nullptr;

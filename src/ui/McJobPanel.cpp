@@ -2,6 +2,7 @@
 #include "core/AppSettings.h"
 #include "core/StorageGroupSettings.h"
 #include "ui/McBulkSummaryDialog.h"
+#include "ui/McCardDelegate.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McGbGoalDialog.h"
 #include "ui/McGoalProgressBar.h"
@@ -385,7 +386,7 @@ void McJobPanel::setupUi()
 
 	// ── Quick-filter pills (same set as the library panel, including media type) ─
 	using QF = McFilterPanel;
-	const QColor videoColor { 0xa0, 0x50, 0x00 };
+	const QColor videoColor = McCardDelegate::badgeColor(QStringLiteral("video"));
 	const QColor hdrColor   { 0x70, 0x30, 0xa0 };
 	const QColor audioColor { 0x10, 0x6a, 0xc0 };
 
@@ -450,7 +451,8 @@ void McJobPanel::setupUi()
 
 	// ── Edition checklist — same widget/reasoning as the library filter bar's.
 	filterLayout->addWidget(vSep(filterBar));
-	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), filterBar);
+	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), filterBar,
+	                                             McCardDelegate::badgeColor(QStringLiteral("edition")));
 	m_editionDropdown->setToolTip(tr("Filter by edition (Theatrical, IMAX, Director's Cut, …)"));
 	connect(m_editionDropdown, &McMultiCheckDropdown::selectionChanged,
 	        this, [this](const QSet<QString>& editions) { m_model->setEditionFilter(editions); });

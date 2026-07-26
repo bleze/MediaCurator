@@ -521,7 +521,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	editionsPageLo->setSpacing(8);
 	editionsPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(editionsPage, tr("Editions"));
-	tabs->setTabColor(3, QColor(0x10, 0x90, 0x80));
+	tabs->setTabColor(3, McCardDelegate::badgeColor(QStringLiteral("edition")));
 
 	auto* editionsHint = new QLabel(
 		tr("This list is used two ways: it scores OpenSubtitles candidates by whether their "
