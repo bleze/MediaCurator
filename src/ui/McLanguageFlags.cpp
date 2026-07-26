@@ -81,6 +81,12 @@ static const LangEntry kLangTable[] = {
 	{ "az,aze",               "az", "Azerbaijani"},
 	{ "ka,kat,geo",           "ge", "Georgian"   },
 	{ "hy,hye,arm",           "am", "Armenian"   },
+	// "myn" is an ISO 639-2 *collective* code for the Mayan language family
+	// (no ISO 639-1 two-letter form exists) — ffprobe tags Yucatec Maya audio
+	// tracks with it verbatim (e.g. Apocalypto). No single country flag
+	// represents "Mayan" the way English/UK or German/Germany do; Mexico is
+	// the most recognizable single-flag proxy moviegoers would expect.
+	{ "myn",                 "mx", "Mayan"      },
 };
 
 struct LangInfo { QString country; QString name; };
@@ -107,7 +113,12 @@ static const QHash<QString, QString>& iso1Map()
 		for (const LangEntry& e : kLangTable) {
 			const QStringList codes = QString::fromLatin1(e.codes).split(QLatin1Char(','));
 			if (codes.isEmpty()) continue;
-			const QString iso1 = codes.first(); // first entry is always ISO 639-1
+			const QString iso1 = codes.first(); // first entry is normally ISO 639-1
+			// Collective/group codes (e.g. "myn" for the Mayan language family)
+			// have no real ISO 639-1 form — skip rather than register a fake
+			// self-mapping that would get handed to an external API (TMDB)
+			// expecting a genuine 2-letter code.
+			if (iso1.length() != 2) continue;
 			for (const QString& code : codes)
 				m.insert(code, iso1);
 		}

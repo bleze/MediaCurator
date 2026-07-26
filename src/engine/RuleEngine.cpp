@@ -464,6 +464,50 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 		fd.tracks.append(td);
 	}
 
+	// Safety net: never let every internal audio track end up Remove. This
+	// only fires when a file's *only* candidate audio track(s) all fail both
+	// the original-language and understood-language checks (e.g. a
+	// foreign-only dub with no fallback track at all, and originalLanguage
+	// detection didn't — or couldn't — match it). Redundant-format removal
+	// never triggers this, since it only removes a track when a sibling in
+	// the same language is being kept. A silent file is strictly worse than
+	// one in an unwanted language, so rescue the best remaining candidate —
+	// prefer a match against file.originalLanguage, else the highest channel
+	// count, else just the first audio track in file order.
+	{
+		bool anyAudioKept = false;
+		for (const TrackDecision& td : fd.tracks) {
+			if (td.stream.codecType == "audio" && !td.stream.isExternal && td.decision == Decision::Keep) {
+				anyAudioKept = true;
+				break;
+			}
+		}
+		if (!anyAudioKept) {
+			int bestIdx = -1;
+			for (int i = 0; i < fd.tracks.size(); ++i) {
+				const StreamRecord& s = fd.tracks[i].stream;
+				if (s.codecType != "audio" || s.isExternal) continue;
+				if (bestIdx < 0) { bestIdx = i; continue; }
+				const StreamRecord& best = fd.tracks[bestIdx].stream;
+				const bool sIsOrig    = !file.originalLanguage.isEmpty()
+				    && normalizeLang(s.language) == normalizeLang(file.originalLanguage);
+				const bool bestIsOrig = !file.originalLanguage.isEmpty()
+				    && normalizeLang(best.language) == normalizeLang(file.originalLanguage);
+				if (sIsOrig != bestIsOrig) {
+					if (sIsOrig) bestIdx = i;
+					continue;
+				}
+				if (s.channels > best.channels) bestIdx = i;
+			}
+			if (bestIdx >= 0) {
+				fd.tracks[bestIdx].decision = Decision::Keep;
+				fd.tracks[bestIdx].reason   = QStringLiteral(
+				    "Kept despite policy — no other audio track would survive (language '%1')")
+				    .arg(fd.tracks[bestIdx].stream.language);
+			}
+		}
+	}
+
 	// Flag/language mismatch pass: propose correcting a kept audio track's container
 	// FlagOriginal when it disagrees with file.originalLanguage (now TMDB-sourced —
 	// see PosterManager). Only tracks staying in the file are worth fixing, and only
