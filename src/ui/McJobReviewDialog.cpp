@@ -33,6 +33,7 @@ static QStandardItem* makeCardItem(
     const QString&             imdbId,
     double                     rating,
     const QString&             originalLanguage,
+    const QString&             edition,
     const QString&             status,
     const QList<StreamRecord>& allStreams,
     const QList<StreamRecord>& keptStreams,
@@ -48,6 +49,7 @@ static QStandardItem* makeCardItem(
 	item->setData(imdbId,                                    McJobListModel::ImdbIdRole);
 	item->setData(rating,                                    McJobListModel::RatingRole);
 	item->setData(originalLanguage,                          McJobListModel::OriginalLanguageRole);
+	item->setData(edition,                                   McJobListModel::EditionRole);
 	item->setData(status,                                    McJobListModel::StatusRole);
 	item->setData(savedBytes,                                McJobListModel::SavedRole);
 	item->setData(0,                                         McJobListModel::ProgressRole);
@@ -93,6 +95,7 @@ McJobReviewDialog::McJobReviewDialog(
 	const double  durationSec     = fileOpt ? fileOpt->durationSec : 0.0;
 	const QString filePath        = fileOpt ? fileOpt->path        : QString{};
 	const QString originalLang    = fileOpt ? fileOpt->originalLanguage : QString{};
+	const QString edition         = fileOpt ? fileOpt->edition      : QString{};
 
 	QString posterPath, fanartPath, imdbId;
 	double  rating = 0.0;
@@ -136,12 +139,12 @@ McJobReviewDialog::McJobReviewDialog(
 	auto* model = new QStandardItemModel(this);
 	model->appendRow(makeCardItem(filename, filePath, sizeBytes, durationSec,
 	                              posterPath, fanartPath, imdbId, rating,
-	                              originalLang, QStringLiteral("source"),
+	                              originalLang, edition, QStringLiteral("source"),
 	                              sourceStreams, keptSource, estimatedSaving));
 	model->appendRow(makeCardItem(filename, filePath, tmpSize > 0 ? tmpSize : sizeBytes,
 	                              durationSec,
 	                              posterPath, fanartPath, imdbId, rating,
-	                              originalLang, QStringLiteral("output"),
+	                              originalLang, edition, QStringLiteral("output"),
 	                              outputStreams, outputStreams, actualSaving));
 
 	// ── Layout ────────────────────────────────────────────────────────────────
