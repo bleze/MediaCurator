@@ -710,7 +710,8 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	auto* langHint = new QLabel(
 		tr("Drag or use buttons to reorder. Topmost is used as the preferred TMDB "
-		   "display-title language when writing .nfo files."),
+		   "display-title language for card titles and .nfo files. Only applies when "
+		   "a file is scanned or (re-)matched — reordering doesn't retitle already-matched files."),
 		langGroup);
 	langHint->setWordWrap(true);
 	langLayout->addWidget(langHint);

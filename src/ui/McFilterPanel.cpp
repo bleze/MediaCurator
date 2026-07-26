@@ -245,7 +245,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	const PillDef audGroup[] = {
 		{ "Atmos",  QF_Atmos,  "Show only files with Dolby Atmos" },
 		{ "TrueHD", QF_TrueHD, "Show only files with Dolby TrueHD" },
-		{ "DTS-HD", QF_DtsHD,  "Show only files with DTS-HD MA" },
+		{ "DTS-HD", QF_DtsHD,  "Show only files with DTS-HD MA or HRA" },
 		{ "DTS:X",  QF_DtsX,   "Show only files with DTS:X" },
 	};
 	addGroup(audioColor, audGroup);

@@ -24,7 +24,7 @@ McMultiCheckDropdown::McMultiCheckDropdown(const QString& label, QWidget* parent
 	// white text) when fillColor is set; otherwise the usual theme-tracking icon.
 	setIcon(m_fillColor.isValid() ? svgIcon(QStringLiteral(":/icons/dropdown_arrow.svg"), Qt::white)
 	                              : svgIcon(QStringLiteral(":/icons/dropdown_arrow.svg")));
-	setIconSize(QSize(14, 14));
+	setIconSize(QSize(20, 20));
 	// QToolButton defaults to icon-only outside a QToolBar — without this, the
 	// icon above replaces the label entirely instead of sitting beside it.
 	setToolButtonStyle(Qt::ToolButtonTextBesideIcon);

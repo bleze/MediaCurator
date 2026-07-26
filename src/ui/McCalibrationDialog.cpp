@@ -16,14 +16,15 @@
 namespace Mc {
 
 // calibrationReport() returns one row per exact format (Mc::calibrationFormatKey() —
-// e.g. "ac3", "aac", "dts", "dts-hd", "truehd") rather than pre-grouped by fallback
-// constant, so every format's accuracy is independently visible. Several formats can
-// still share one FallbackBps constant in code (ac3/aac/mp3/dts all use the generic
-// kAudio fallback) — Mc::fallbackBpsKey() resolves *that* coarser bucket, used only
-// when computing/suggesting the constant a row's format would actually update.
+// e.g. "ac3", "aac", "dts", "dts-hd-ma", "dts-hd-hra", "truehd") rather than
+// pre-grouped by fallback constant, so every format's accuracy is independently
+// visible. Several formats can still share one FallbackBps constant in code
+// (ac3/aac/mp3/dts all use the generic kAudio fallback) — Mc::fallbackBpsKey()
+// resolves *that* coarser bucket, used only when computing/suggesting the constant
+// a row's format would actually update.
 
 // Human-friendly label for a calibrationFormatKey(), shown in the "Format" column —
-// e.g. "DTS-HD MA / HRA" instead of the raw key "dts-hd".
+// e.g. "DTS-HD MA" instead of the raw key "dts-hd-ma".
 static QString friendlyFormatLabel(const QString& key)
 {
 	static const QHash<QString, QString> names = {
@@ -35,7 +36,8 @@ static QString friendlyFormatLabel(const QString& key)
 		{QStringLiteral("opus"),               QStringLiteral("Opus")},
 		{QStringLiteral("vorbis"),             QStringLiteral("Vorbis")},
 		{QStringLiteral("dts"),                QStringLiteral("DTS")},
-		{QStringLiteral("dts-hd"),             QStringLiteral("DTS-HD MA / HRA")},
+		{QStringLiteral("dts-hd-ma"),          QStringLiteral("DTS-HD MA")},
+		{QStringLiteral("dts-hd-hra"),         QStringLiteral("DTS-HD HRA")},
 		{QStringLiteral("truehd"),             QStringLiteral("TrueHD / Atmos")},
 		{QStringLiteral("flac"),               QStringLiteral("FLAC")},
 		{QStringLiteral("hdmv_pgs_subtitle"),  QStringLiteral("PGS")},

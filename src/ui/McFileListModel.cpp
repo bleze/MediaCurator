@@ -112,7 +112,8 @@ void McFileListModel::computeDerived(FileEntry& e)
 			if (n == QLatin1String("truehd"))
 				e.hasTrueHD = true;
 			if (n == QLatin1String("dts") &&
-			    (p.contains(QLatin1String("ma")) || t.contains(QLatin1String("dts-hd")) ||
+			    (p.contains(QLatin1String("ma")) || p.contains(QLatin1String("hra")) ||
+			     t.contains(QLatin1String("dts-hd")) ||
 			     p.contains(QLatin1String("dts:x")) || t.contains(QLatin1String("dts:x"))))
 				e.hasDtsHD = true;
 			if (n == QLatin1String("dts") &&

@@ -687,7 +687,8 @@ void McJobListModel::applyFilter(bool forceFullReset)
 					if ((m_quickFilters & QF::QF_TrueHD) && cn == QLatin1String("truehd"))
 						{ ok = true; break; }
 					if ((m_quickFilters & QF::QF_DtsHD) && cn == QLatin1String("dts") &&
-					    (cp.contains(QLatin1String("ma")) || ct.contains(QLatin1String("dts-hd")) || ct.contains(QLatin1String("dts:x"))))
+					    (cp.contains(QLatin1String("ma")) || cp.contains(QLatin1String("hra")) ||
+					     ct.contains(QLatin1String("dts-hd")) || ct.contains(QLatin1String("dts:x"))))
 						{ ok = true; break; }
 					if ((m_quickFilters & QF::QF_DtsX) && cn == QLatin1String("dts") &&
 					    (cp.contains(QLatin1String("dts:x")) || cp.contains(QLatin1String("dts-x")) ||

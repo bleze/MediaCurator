@@ -466,7 +466,7 @@ void McJobPanel::setupUi()
 	filterLayout->addWidget(vSep(filterBar));
 	addPill("Atmos",  audioColor, "Dolby Atmos only",                        QF::QF_Atmos);
 	addPill("TrueHD", audioColor, "Dolby TrueHD only",                      QF::QF_TrueHD);
-	addPill("DTS-HD", audioColor, "DTS-HD MA only",                         QF::QF_DtsHD);
+	addPill("DTS-HD", audioColor, "DTS-HD MA or HRA only",                  QF::QF_DtsHD);
 	addPill("DTS:X",  audioColor, "DTS:X only",                              QF::QF_DtsX);
 
 	filterLayout->addWidget(vSep(filterBar));

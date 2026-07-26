@@ -35,8 +35,15 @@ struct TrackDecision {
 // Update these from Tools > Estimation Calibration Data after accumulating jobs.
 namespace FallbackBps {
 	constexpr double kAudio            =   192'000.0; // lossy audio (AC3, AAC, MP3, DTS core, E-AC3)
-	constexpr double kDtsHd            = 3'500'000.0; // DTS-HD MA / DTS-HD HRA — 5.1 (6ch) reference
-	constexpr double kDtsHdPerChannel  =   551'000.0; // kDtsHd / 6 — scale by actual channel count
+	constexpr double kDtsHdMa            = 3'500'000.0; // DTS-HD MA (lossless) — 5.1 (6ch) reference
+	constexpr double kDtsHdMaPerChannel  =   551'000.0; // kDtsHdMa / 6 — scale by actual channel count
+	// DTS-HD HRA is a lossy high-bitrate extension over the DTS core, distinct from
+	// (and consistently lower than) lossless MA — sharing one constant between them
+	// overestimated an HRA-only track by ~1 GB on a real job (job 3514, ratio 0.617).
+	// Provisional: derived from that single calibrated sample — refine via Tools >
+	// Estimation Calibration once more HRA-fallback jobs accumulate.
+	constexpr double kDtsHdHra           = 2'000'000.0; // DTS-HD HRA — 5.1 (6ch) reference
+	constexpr double kDtsHdHraPerChannel =   333'000.0; // kDtsHdHra / 6 — scale by actual channel count
 	constexpr double kTrueHd           = 3'500'000.0; // TrueHD / Atmos — 5.1 (6ch) reference
 	constexpr double kTrueHdPerChannel =   583'333.0; // kTrueHd / 6 — scale by actual channel count
 	constexpr double kPcmDefault       = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
@@ -53,8 +60,11 @@ inline double effectiveBitrate(const StreamRecord& s) noexcept
 {
 	if (s.bitRate > 0) return static_cast<double>(s.bitRate);
 	if (s.codecType == QLatin1String("audio")) {
-		if (s.codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-			return s.channels > 0 ? FallbackBps::kDtsHdPerChannel * s.channels : FallbackBps::kDtsHd;
+		if (s.codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive)) {
+			if (s.codecProfile.contains(QLatin1String("HRA"), Qt::CaseInsensitive))
+				return s.channels > 0 ? FallbackBps::kDtsHdHraPerChannel * s.channels : FallbackBps::kDtsHdHra;
+			return s.channels > 0 ? FallbackBps::kDtsHdMaPerChannel * s.channels : FallbackBps::kDtsHdMa;
+		}
 		const QString cn = s.codecName.toLower();
 		if (cn == QLatin1String("truehd"))
 			return s.channels > 0 ? FallbackBps::kTrueHdPerChannel * s.channels : FallbackBps::kTrueHd;
@@ -82,8 +92,9 @@ inline double effectiveBitrate(const StreamRecord& s) noexcept
 // calibration report can show a row per real format (AC3, AAC, DTS, DTS-HD MA, ...)
 // instead of pre-collapsing several formats into one bucket. codecName alone very
 // nearly works, except ffprobe reports the same codec_name "dts" for both plain DTS
-// and DTS-HD MA/HRA — codecProfile is what actually tells them apart, so that's the
-// one case needing a suffix. Empty means no fallback ever applies (e.g. video).
+// and DTS-HD MA/HRA — codecProfile is what actually tells them apart, and MA/HRA get
+// distinct suffixes (not just one "-hd" bucket) since they run at very different
+// real-world bitrates. Empty means no fallback ever applies (e.g. video).
 inline QString calibrationFormatKey(const QString& codecName, const QString& codecType,
                                      const QString& codecProfile)
 {
@@ -91,8 +102,11 @@ inline QString calibrationFormatKey(const QString& codecName, const QString& cod
 		return {};
 	QString key = codecName.toLower();
 	if (codecType == QLatin1String("audio")
-	        && codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-		key += QStringLiteral("-hd");
+	        && codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive)) {
+		key += codecProfile.contains(QLatin1String("HRA"), Qt::CaseInsensitive)
+		     ? QStringLiteral("-hd-hra")
+		     : QStringLiteral("-hd-ma");
+	}
 	return key;
 }
 
@@ -103,7 +117,8 @@ inline QString calibrationFormatKey(const QString& codecName, const QString& cod
 inline QString fallbackBpsKey(const QString& formatKey, const QString& codecType)
 {
 	if (codecType == QLatin1String("audio")) {
-		if (formatKey.endsWith(QLatin1String("-hd")))    return QStringLiteral("dts-hd");
+		if (formatKey.endsWith(QLatin1String("-hd-hra"))) return QStringLiteral("dts-hd-hra");
+		if (formatKey.endsWith(QLatin1String("-hd-ma")))  return QStringLiteral("dts-hd-ma");
 		if (formatKey == QLatin1String("truehd"))        return QStringLiteral("truehd");
 		if (formatKey.startsWith(QLatin1String("pcm_"))) return QStringLiteral("pcm");
 		if (formatKey == QLatin1String("flac"))          return QStringLiteral("flac");
@@ -121,7 +136,8 @@ inline QString fallbackBpsKey(const QString& formatKey, const QString& codecType
 // the single source of truth for both, shared by calibration storage and display.
 inline double fallbackBpsForKey(const QString& key)
 {
-	if (key == QLatin1String("dts-hd"))          return FallbackBps::kDtsHdPerChannel;
+	if (key == QLatin1String("dts-hd-ma"))       return FallbackBps::kDtsHdMaPerChannel;
+	if (key == QLatin1String("dts-hd-hra"))      return FallbackBps::kDtsHdHraPerChannel;
 	if (key == QLatin1String("truehd"))          return FallbackBps::kTrueHdPerChannel;
 	if (key == QLatin1String("pcm"))             return FallbackBps::kPcmDefault;
 	if (key == QLatin1String("flac"))            return FallbackBps::kFlacPerChannel;
@@ -133,7 +149,8 @@ inline double fallbackBpsForKey(const QString& key)
 
 inline QString fallbackBpsConstName(const QString& key)
 {
-	if (key == QLatin1String("dts-hd"))          return QStringLiteral("kDtsHdPerChannel");
+	if (key == QLatin1String("dts-hd-ma"))       return QStringLiteral("kDtsHdMaPerChannel");
+	if (key == QLatin1String("dts-hd-hra"))      return QStringLiteral("kDtsHdHraPerChannel");
 	if (key == QLatin1String("truehd"))          return QStringLiteral("kTrueHdPerChannel");
 	if (key == QLatin1String("pcm"))             return QStringLiteral("kPcmDefault");
 	if (key == QLatin1String("flac"))            return QStringLiteral("kFlacPerChannel");
