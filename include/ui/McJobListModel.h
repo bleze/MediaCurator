@@ -70,6 +70,12 @@ public:
 	/** Job IDs (any status) belonging to a file, from the in-memory list — no DB query. */
 	QList<qint64> jobIdsForFile(qint64 fileId) const;
 
+	// Finds the job most worth showing for a file: an active one (proposed/queued/
+	// running) if one exists, else whichever historical one (done/failed/cancelled)
+	// is found first. Returns false (jobId/status untouched) if the file has no
+	// job at all in the in-memory list.
+	bool findJobForFile(qint64 fileId, qint64& jobId, QString& status) const;
+
 	/** Update status + savedBytes for a single job without full reload. */
 	void updateJob(qint64 jobId, const QString& status, qint64 savedBytes = -1);
 

@@ -38,6 +38,10 @@ public:
 
 	QSet<QString> checkedItems() const { return m_checked; }
 
+	// Unchecks every item, restoring "no filter" (show all). No-op, no signal,
+	// if nothing was checked.
+	void clearSelection();
+
 signals:
 	void selectionChanged(const QSet<QString>& checked);
 

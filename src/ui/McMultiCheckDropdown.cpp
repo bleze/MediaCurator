@@ -72,6 +72,18 @@ void McMultiCheckDropdown::setItems(const QStringList& items)
 		emit selectionChanged(m_checked);
 }
 
+void McMultiCheckDropdown::clearSelection()
+{
+	if (m_checked.isEmpty()) return;
+	m_checked.clear();
+	m_list->blockSignals(true);
+	for (int i = 0; i < m_list->count(); ++i)
+		m_list->item(i)->setCheckState(Qt::Unchecked);
+	m_list->blockSignals(false);
+	updateButtonText();
+	emit selectionChanged(m_checked);
+}
+
 void McMultiCheckDropdown::togglePopup()
 {
 	if (m_popup->isVisible()) {

@@ -1310,6 +1310,17 @@ void McMainWindow::setupUi()
 		connect(previewAction, &QAction::triggered,
 		        this, [this, file] { onShowPreview(file.id); });
 
+		auto* findInQueueAction = menu.addAction(svgIcon(":/icons/playlist_add_check.svg"),
+		                                          tr("Find in &Queue"));
+		findInQueueAction->setEnabled(selCount == 1);
+		connect(findInQueueAction, &QAction::triggered, this, [this, file] {
+			updateJobPanelVisibility(/*forceShow=*/true);
+			if (m_jobPanel->revealJob(file.id))
+				m_statusLabel->setText(tr("Found %1 in the job queue").arg(file.filename));
+			else
+				m_statusLabel->setText(tr("%1 is not in the job queue").arg(file.filename));
+		});
+
 		menu.addSeparator();
 
 		// Ignore / Unignore — collect all selected file IDs for batch operation.

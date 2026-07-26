@@ -345,6 +345,30 @@ QList<qint64> McJobListModel::jobIdsForFile(qint64 fileId) const
 	return ids;
 }
 
+bool McJobListModel::findJobForFile(qint64 fileId, qint64& jobId, QString& status) const
+{
+	static const QSet<QString> kActiveStatuses = {
+		QStringLiteral("proposed"), QStringLiteral("queued"), QStringLiteral("running")
+	};
+	qint64  bestJobId = -1;
+	QString bestStatus;
+	bool    bestIsActive = false;
+	for (const JobCardEntry& e : m_allEntries) {
+		if (e.job.fileId != fileId) continue;
+		const bool isActive = kActiveStatuses.contains(e.job.status);
+		if (bestJobId < 0 || (isActive && !bestIsActive)) {
+			bestJobId    = e.job.jobId;
+			bestStatus   = e.job.status;
+			bestIsActive = isActive;
+			if (isActive) break;   // can't do better than an active job
+		}
+	}
+	if (bestJobId < 0) return false;
+	jobId  = bestJobId;
+	status = bestStatus;
+	return true;
+}
+
 void McJobListModel::removeJobIds(const QList<qint64>& ids)
 {
 	if (ids.isEmpty()) return;

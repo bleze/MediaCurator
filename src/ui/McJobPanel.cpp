@@ -416,6 +416,7 @@ void McJobPanel::setupUi()
 			m_model->setQuickFilters(m_qfFlags);
 		});
 		layout->addWidget(btn);
+		m_quickFilterPills.append(btn);
 	};
 	const auto addPill = [&](const char* label, const QColor& color, const char* tip, quint32 flag) {
 		addPillTo(filterBar, filterLayout, label, color, tip, flag);
@@ -1585,6 +1586,62 @@ void McJobPanel::scrollToFileJob(qint64 fileId)
 			break;
 		}
 	}
+}
+
+bool McJobPanel::revealJob(qint64 fileId)
+{
+	qint64  jobId = -1;
+	QString status;
+	if (!m_model->findJobForFile(fileId, jobId, status))
+		return false;
+
+	// Switch the status combo to whichever status the job is actually under —
+	// unlike scrollToFileJob(), this one is allowed to change the filter since
+	// the user explicitly asked to be shown this specific job.
+	for (int i = 0; i < m_statusFilter->count(); ++i) {
+		if (m_statusFilter->itemData(i).toString() == status) {
+			if (m_statusFilter->currentIndex() != i)
+				m_statusFilter->setCurrentIndex(i);   // triggers setFilterStatus via its own signal
+			break;
+		}
+	}
+
+	// Clear every other filter that could still be hiding the row.
+	m_filterEdit->clear();
+
+	if (m_qfFlags != 0) {
+		for (QToolButton* btn : m_quickFilterPills) {
+			btn->blockSignals(true);
+			btn->setChecked(false);
+			btn->blockSignals(false);
+		}
+		m_qfFlags = 0;
+		m_model->setQuickFilters(0);
+	}
+
+	bool storageGroupChanged = false;
+	for (McStorageGroupChipToggle* chip : m_storageGroupChips) {
+		if (!chip->isChecked()) {
+			chip->setChecked(true);
+			storageGroupChanged = true;
+		}
+	}
+	if (storageGroupChanged)
+		applyStorageGroupFilter();
+
+	m_editionDropdown->clearSelection();
+
+	if (auto* slider = qobject_cast<RangeSlider*>(m_ratingSlider)) {
+		if (slider->GetLowerValue() != 0 || slider->GetUpperValue() != 100) {
+			slider->SetLowerValue(0);
+			slider->SetUpperValue(100);
+		}
+	}
+
+	// The status combo change above may not have moved this job into view yet if
+	// applyFilter() hasn't run synchronously — focusJob() re-scans m_model fresh.
+	focusJob(jobId);
+	return true;
 }
 
 void McJobPanel::syncExternalStreamLanguage(qint64 fileId, int streamIndex,

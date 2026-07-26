@@ -66,6 +66,13 @@ public:
 	// filter to Proposed, select the new row and scroll it into view.
 	void scrollToFileJob(qint64 fileId);
 
+	// Library context menu's "Find in Queue": looks up the file's job (any
+	// status), switches the status combo to match it, clears every other
+	// filter (search text, quick-filter pills, storage groups, editions,
+	// rating) that might be hiding the row, and scrolls to it. Returns false,
+	// leaving all filters untouched, if the file has no job in the queue.
+	bool revealJob(qint64 fileId);
+
 	// Call after directly updating an external sidecar stream's language + path in the
 	// DB (e.g. from the Library view's badge menu) so this panel's job card, if any
 	// exists for the file, reflects it immediately without a full reload.
@@ -137,6 +144,7 @@ private:
 	QComboBox*      m_sortCombo           = nullptr;
 	QWidget*        m_ratingSlider        = nullptr;
 	QLabel*         m_ratingLabel         = nullptr;
+	QList<QToolButton*> m_quickFilterPills;          // every pill added via addPillTo(), for bulk clear
 	quint32         m_qfFlags             = 0;      // active quick-filter bitmask
 	int             m_lastQueueSortIdx    = 0;      // last non-MostRecentFirst combo index (in-session)
 	JobQueue*       m_queue               = nullptr;

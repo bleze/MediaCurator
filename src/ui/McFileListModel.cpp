@@ -419,7 +419,8 @@ void McFileListModel::reload()
 	QApplication::setOverrideCursor(Qt::WaitCursor);
 
 	auto& db = DatabaseManager::instance();
-	m_filesWithJobs = db.proposedJobFileIds();
+	m_filesWithJobs   = db.proposedJobFileIds();
+	m_jobStatusByFile = db.activeJobStatusByFile();
 
 	const QList<FileRecord>                  files   = db.allFiles();
 	const QHash<qint64, QList<StreamRecord>> streams = db.allStreamsGrouped();
@@ -467,6 +468,7 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 	m_posterPaths    = posterPaths;
 	m_imdbIds        = imdbIds;
 	m_filesWithJobs  = filesWithJobs;
+	m_jobStatusByFile = DatabaseManager::instance().activeJobStatusByFile();
 	if (m_forcedRemovals.isEmpty()) {
 		// Only query on first population to avoid repeated small queries during background meta delivery.
 		m_forcedRemovals = DatabaseManager::instance().allStreamForcedRemovals();
@@ -480,7 +482,8 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 	if (!m_entries.isEmpty()) {
 		const QList<int> roles = {
 			FanartRole, PosterRole, PosterVersionRole,
-			DisplayTitleRole, DisplayYearRole, RatingRole, ImdbRole, TmdbRole
+			DisplayTitleRole, DisplayYearRole, RatingRole, ImdbRole, TmdbRole,
+			JobStatusRole
 		};
 		emit dataChanged(index(0), index(m_entries.size() - 1), roles);
 	}
@@ -490,8 +493,15 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 
 void McFileListModel::refreshJobFilter()
 {
-	m_filesWithJobs = DatabaseManager::instance().proposedJobFileIds();
+	auto& db = DatabaseManager::instance();
+	m_filesWithJobs   = db.proposedJobFileIds();
+	m_jobStatusByFile = db.activeJobStatusByFile();
 	applyFilter();
+	// applyFilter() only adds/removes rows whose filter membership changed — an
+	// already-visible row's job status pill needs its own dataChanged so the
+	// card repaints even when nothing else about its visibility changed.
+	if (!m_entries.isEmpty())
+		emit dataChanged(index(0), index(m_entries.size() - 1), {JobStatusRole});
 }
 
 void McFileListModel::applyEntry(const FileEntry& entry)
@@ -894,6 +904,7 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case FanartRole:        return m_fanartPaths.value(e.file.id);
 	case PosterVersionRole: return m_posterVersions.value(e.file.id, 0);
 	case ImdbRole:          return m_imdbIds.value(e.file.id);
+	case JobStatusRole:     return m_jobStatusByFile.value(e.file.id);
 	case TmdbRole:          return m_tmdbIds.value(e.file.id, 0);
 	case RatingRole:        return m_ratings.value(e.file.id, 0.0);
 	case DisplayTitleRole:  return e.file.displayTitle;

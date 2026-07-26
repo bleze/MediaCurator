@@ -496,6 +496,9 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.originalLanguage  = file.originalLanguage;
 		d.storageGroup      = index.data(McFileListModel::StorageGroupRole).toInt();
 		d.fanartPath        = index.data(McFileListModel::FanartRole).toString();
+		// Non-terminal job status (proposed/queued/running), empty if this file has
+		// no active job. Reuses the Job Queue's own status pill — see below.
+		d.status            = index.data(McFileListModel::JobStatusRole).toString();
 		d.allStreams         = index.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
 		d.videoStreams       = index.data(McFileListModel::VideoStreamsRole).value<QList<StreamRecord>>();
 		d.audioStreams       = index.data(McFileListModel::AudioStreamsRole).value<QList<StreamRecord>>();
@@ -2216,7 +2219,10 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			}
 		}
 
-		if (m_mode == Mode::JobQueue) {
+		// Library mode only ever has a non-empty d.status when the file has an
+		// active (proposed/queued/running) job — see JobStatusRole above — so a
+		// plain non-empty check is enough to gate the Library card's own pill.
+		if (m_mode == Mode::JobQueue || !d.status.isEmpty()) {
 			QFont pillFont = option.font;
 			pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
 

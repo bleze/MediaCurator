@@ -362,6 +362,10 @@ public:
 	int                     queuedJobCount() const;
 	QHash<QString, int>     jobStatusCounts() const;
 	QSet<qint64>            proposedJobFileIds() const;
+	// fileId -> status, for every file with a non-terminal job (proposed/queued/
+	// running) — same "active" definition as activeJobForFile(), but batched for
+	// every file in one query instead of one query per file.
+	QHash<qint64, QString>  activeJobStatusByFile() const;
 	QList<qint64>           jobIdsByStatus(const QString& status) const;
 
 	// ── Poster cache ─────────────────────────────────────────────────────────

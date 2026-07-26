@@ -2150,6 +2150,21 @@ QSet<qint64> DatabaseManager::proposedJobFileIds() const
 	return result;
 }
 
+QHash<qint64, QString> DatabaseManager::activeJobStatusByFile() const
+{
+	QHash<qint64, QString> result;
+	QSqlQuery q(connection());
+	q.exec("SELECT file_id, status FROM jobs WHERE status IN ('proposed','queued','running') "
+	       "ORDER BY created_at DESC");
+	while (q.next()) {
+		const qint64 fileId = q.value(0).toLongLong();
+		// ORDER BY created_at DESC — first row seen per file is the most recent.
+		if (!result.contains(fileId))
+			result.insert(fileId, q.value(1).toString());
+	}
+	return result;
+}
+
 // DB-wide, unlike McJobListModel::jobIdsByStatus() which only sees whatever
 // subset the panel currently has filtered/paged into memory — callers that
 // need to act on "every job with this status" (e.g. Queue All) must go through

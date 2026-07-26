@@ -94,6 +94,7 @@ public:
 		GroupMembersRole   = Qt::UserRole + 19,  // GroupMemberList — grouped mode only
 		IsGroupCardRole    = Qt::UserRole + 20,  // bool — true when this row is a mega card
 		GroupIsRedundantRole = Qt::UserRole + 21, // bool — 2+ members share the same edition
+		JobStatusRole      = Qt::UserRole + 22,  // QString — non-terminal job status (proposed/queued/running), empty if none
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -211,6 +212,7 @@ private:
 	QList<FileEntry>          m_groupedAllEntries; // one mega-card entry per tmdb group; see rebuildGroupedEntries()
 	QList<FileEntry>          m_entries;         // visible (filtered) set
 	QSet<qint64>              m_filesWithJobs;
+	QHash<qint64, QString>    m_jobStatusByFile; // fileId -> non-terminal job status; see DatabaseManager::activeJobStatusByFile
 	QHash<qint64, QString>    m_posterPaths;     // fileId → cached poster image path
 	QHash<qint64, QString>    m_fanartPaths;     // fileId → cached fanart (backdrop) path
 	QHash<qint64, QString>    m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer
