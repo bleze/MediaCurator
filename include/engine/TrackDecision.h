@@ -24,6 +24,12 @@ struct TrackDecision {
 	Decision        decision = Decision::Keep;
 	QString         reason;             // Human-readable explanation
 	bool            userOverride = false; // User manually changed this decision
+	// Same classifier/heuristic verdict RuleEngine's Tier 0 commentary pass used for
+	// this track (title-classified or channel-count heuristic) — distinct from
+	// stream.isCommentary, which is only FfprobeScanner's scan-time title-substring
+	// guess. Used by the "never leave zero main audio" safety net so it agrees with
+	// Tier 0 about which tracks are commentary rather than re-guessing.
+	bool            isCommentary = false;
 	// Set when this (kept) track's container FlagOriginal disagrees with what it
 	// should be given file.originalLanguage — true = should be set, false = should
 	// be cleared. Absent = flag already matches, nothing to fix. See RuleEngine::evaluateFile.

@@ -3306,9 +3306,10 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 			if (s.isExternal && !s.externalPath.isEmpty()) unmuxedSidecars << s;
 	}
 
-	// hasFlagFixes: a kept audio track's container Original flag disagrees with
-	// file.originalLanguage (see RuleEngine::evaluateFile) — proposed even when
-	// there's nothing to remove, so a flag-only correction still reaches the queue.
+	// hasFlagFixes: a kept audio or subtitle track's container Original flag
+	// disagrees with file.originalLanguage (see RuleEngine::evaluateFile) — proposed
+	// even when there's nothing to remove, so a flag-only correction still reaches
+	// the queue.
 	const bool hasFlagFixes = decision.hasFlagFixes();
 	const bool needsRemux   = decision.removalCount() > 0 || !unmuxedSidecars.isEmpty();
 	if (!needsRemux && !hasFlagFixes) return false;
@@ -3341,7 +3342,7 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 			: tr("Remove ") + parts.join(", ");
 		if (hasFlagFixes) summary += tr(" + fix Original flag");
 	} else {
-		summary = tr("Fix Original audio flag");
+		summary = tr("Fix Original flag");
 	}
 
 	// Build human-readable description of removed tracks

@@ -302,6 +302,7 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 			// Tier 0: commentary — title-classified or channel-count heuristic
 			const bool isClassifiedCommentary = (cls.type == TrackType::Commentary && cls.confidence >= 0.80);
 			const bool isHeuristicCommentary  = heuristicCommentary.contains(s.id);
+			td.isCommentary = isClassifiedCommentary || isHeuristicCommentary;
 
 			if (isClassifiedCommentary || isHeuristicCommentary) {
 				const QString source = (isHeuristicCommentary && !isClassifiedCommentary)
@@ -322,12 +323,10 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 			}
 
 			if (td.decision == Decision::Keep) {
-				const bool isCommentary = isClassifiedCommentary || isHeuristicCommentary;
-
 				// Tier 1: codec hierarchy — a higher-quality sibling in the same language
 				// makes this track redundant. Commentary tracks are exempt: DD 2.0 alongside
 				// TrueHD 7.1 is different content, not a redundant compatibility mix.
-				if (!isCommentary && isRedundantAudio(s, audioTracks)) {
+				if (!td.isCommentary && isRedundantAudio(s, audioTracks)) {
 					td.decision = Decision::Remove;
 					td.reason   = QStringLiteral("Redundant audio — higher-quality sibling exists for '%1'").arg(s.language);
 				}
@@ -464,20 +463,27 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 		fd.tracks.append(td);
 	}
 
-	// Safety net: never let every internal audio track end up Remove. This
-	// only fires when a file's *only* candidate audio track(s) all fail both
-	// the original-language and understood-language checks (e.g. a
-	// foreign-only dub with no fallback track at all, and originalLanguage
-	// detection didn't — or couldn't — match it). Redundant-format removal
-	// never triggers this, since it only removes a track when a sibling in
-	// the same language is being kept. A silent file is strictly worse than
-	// one in an unwanted language, so rescue the best remaining candidate —
-	// prefer a match against file.originalLanguage, else the highest channel
-	// count, else just the first audio track in file order.
+	// Safety net: never let every *main-content* internal audio track end up
+	// Remove. This only fires when a file's only candidate main audio track(s)
+	// all fail both the original-language and understood-language checks (e.g.
+	// a foreign-only dub with no fallback track at all, and originalLanguage
+	// detection didn't — or couldn't — match it, as happens when TMDB's
+	// original_language disagrees with the file's actual spoken-language track,
+	// e.g. Apocalypto). Redundant-format removal never triggers this, since it
+	// only removes a track when a sibling in the same language is being kept.
+	// Commentary tracks are excluded from both "is anything kept" and "what do
+	// we rescue" — a commentary-only file is just as silent as a truly empty
+	// one for normal viewing, and rescuing a commentary track would override an
+	// explicit "remove all commentary" policy decision made a few lines above.
+	// A silent file is strictly worse than one in an unwanted language, so
+	// rescue the best remaining candidate — prefer a match against
+	// file.originalLanguage, else the highest channel count, else just the
+	// first audio track in file order.
 	{
 		bool anyAudioKept = false;
 		for (const TrackDecision& td : fd.tracks) {
-			if (td.stream.codecType == "audio" && !td.stream.isExternal && td.decision == Decision::Keep) {
+			if (td.stream.codecType == "audio" && !td.stream.isExternal && !td.isCommentary
+			        && td.decision == Decision::Keep) {
 				anyAudioKept = true;
 				break;
 			}
@@ -486,7 +492,7 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 			int bestIdx = -1;
 			for (int i = 0; i < fd.tracks.size(); ++i) {
 				const StreamRecord& s = fd.tracks[i].stream;
-				if (s.codecType != "audio" || s.isExternal) continue;
+				if (s.codecType != "audio" || s.isExternal || fd.tracks[i].isCommentary) continue;
 				if (bestIdx < 0) { bestIdx = i; continue; }
 				const StreamRecord& best = fd.tracks[bestIdx].stream;
 				const bool sIsOrig    = !file.originalLanguage.isEmpty()
@@ -508,14 +514,21 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 		}
 	}
 
-	// Flag/language mismatch pass: propose correcting a kept audio track's container
-	// FlagOriginal when it disagrees with file.originalLanguage (now TMDB-sourced —
-	// see PosterManager). Only tracks staying in the file are worth fixing, and only
-	// when alwaysKeepOriginalAudio makes "original" mean anything to this app's policy.
-	// Multiple same-language tracks can all legitimately be original — no exclusivity.
-	if (m_profile && m_profile->alwaysKeepOriginalAudio() && !file.originalLanguage.isEmpty()) {
+	// Flag/language mismatch pass: propose correcting a kept audio or subtitle track's
+	// container FlagOriginal when it disagrees with file.originalLanguage (now
+	// TMDB-sourced — see PosterManager). Container FlagOriginal is frequently absent
+	// or wrong on real files (most encoders never set it), so this is the mechanism
+	// that keeps it trustworthy without relying on the source file having gotten it
+	// right. Only tracks staying in the file are worth fixing. This is a correctness
+	// fix, not a removal-policy decision, so it runs independent of
+	// alwaysKeepOriginalAudio (which only affects whether an audio track survives
+	// removal). Multiple same-language tracks can all legitimately be original — no
+	// exclusivity.
+	if (!file.originalLanguage.isEmpty()) {
 		for (auto& td : fd.tracks) {
-			if (td.stream.codecType != "audio" || td.decision != Decision::Keep) continue;
+			if ((td.stream.codecType != "audio" && td.stream.codecType != "subtitle")
+			        || td.decision != Decision::Keep)
+				continue;
 			const bool shouldBeOriginal =
 			    normalizeLang(td.stream.language) == normalizeLang(file.originalLanguage);
 			if (td.stream.isOriginal != shouldBeOriginal)
