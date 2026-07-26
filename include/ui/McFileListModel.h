@@ -169,6 +169,7 @@ public slots:
 	void setIgnoredBatch(const QList<qint64>& fileIds, bool ignored); // update flag in-place + refilter
 	void setQuickFilters(quint32 flags);
 	void setStorageGroupFilter(quint32 groupMask);   // bit (1<<group) per StorageGroupSettings group; 0 = show all
+	void setEditionFilter(const QSet<QString>& editions);   // empty = show all
 	void setSortOrder(int order);
 	void setRedundantOnlyFilter(bool on);   // GroupedByEdition only — hide non-redundant groups
 	void setRatingFilter(double minRating, double maxRating);
@@ -227,6 +228,7 @@ private:
 	bool                      m_filterIgnoredOnly  = false;
 	quint32                   m_quickFilters       = QF_None;
 	quint32                   m_storageGroupMask   = 0;   // 0 = no storage-group filtering
+	QSet<QString>             m_editionFilter;             // empty = no edition filtering
 	int                       m_sortOrder          = SortByName;
 	double                    m_ratingMin          = 0.0;
 	double                    m_ratingMax          = 10.0;

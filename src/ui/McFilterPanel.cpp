@@ -2,6 +2,7 @@
 
 #include "ui/RangeSlider.h"
 #include "ui/McStorageGroupChipToggle.h"
+#include "ui/McMultiCheckDropdown.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "core/StorageGroupSettings.h"
@@ -220,6 +221,19 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	};
 	addGroup(videoColor, resGroup);
 
+	// ── Edition checklist ─────────────────────────────────────────────────────
+	// Open-ended value set (whatever editions actually exist in the library
+	// today), so a fixed pill per value doesn't fit like it does for 3D/4K —
+	// a checklist dropdown instead. Combine with the 4K pill above to find,
+	// e.g., every 4K IMAX release.
+	lay->addWidget(vSep(this));
+	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), this);
+	m_editionDropdown->setToolTip(tr("Filter by edition (Theatrical, IMAX, Director's Cut, …)"));
+	connect(m_editionDropdown, &McMultiCheckDropdown::selectionChanged,
+	        this, &McFilterPanel::editionFilterChanged);
+	lay->addWidget(m_editionDropdown);
+	refreshEditions();
+
 	const PillDef hdrGroup[] = {
 		{ "DV",  QF_DV,  "Show only files with Dolby Vision" },
 		{ "HDR", QF_HDR, "Show only files with HDR (HDR10 / HLG / HDR10+)" },
@@ -371,6 +385,11 @@ void McFilterPanel::emitStorageGroupFilter()
 		if (chip->isChecked())
 			mask |= (1u << chip->group());
 	emit storageGroupFilterChanged(mask);
+}
+
+void McFilterPanel::refreshEditions()
+{
+	m_editionDropdown->setItems(DatabaseManager::instance().distinctEditions());
 }
 
 void McFilterPanel::updateRatingLabel()

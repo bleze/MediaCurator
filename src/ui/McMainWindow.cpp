@@ -1680,6 +1680,8 @@ void McMainWindow::setupUi()
 	        m_listModel, &McFileListModel::setRatingFilter);
 	connect(m_filterPanel, &McFilterPanel::storageGroupFilterChanged,
 	        m_listModel, &McFileListModel::setStorageGroupFilter);
+	connect(m_filterPanel, &McFilterPanel::editionFilterChanged,
+	        m_listModel, &McFileListModel::setEditionFilter);
 	connect(m_filterPanel, &McFilterPanel::redundantOnlyFilterChanged,
 	        m_listModel, &McFileListModel::setRedundantOnlyFilter);
 	connect(m_listModel, &McFileListModel::redundantGroupCountChanged,
@@ -3230,6 +3232,10 @@ void McMainWindow::startEditionBackfill()
 	connect(m_editionBackfillThread, &QThread::started, m_editionBackfillWorker, &EditionBackfillWorker::run);
 	connect(m_editionBackfillWorker, &EditionBackfillWorker::finished,
 	        m_editionBackfillThread, &QThread::quit);
+	connect(m_editionBackfillWorker, &EditionBackfillWorker::finished, this, [this] {
+		m_filterPanel->refreshEditions();
+		m_jobPanel->refreshEditions();
+	});
 	connect(m_editionBackfillWorker, &EditionBackfillWorker::finished,
 	        m_editionBackfillWorker, &QObject::deleteLater);
 	connect(m_editionBackfillThread, &QThread::finished,

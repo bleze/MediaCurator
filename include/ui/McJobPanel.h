@@ -2,6 +2,7 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <QWidget>
 
@@ -21,6 +22,7 @@ class JobQueue;
 class McGoalProgressBar;
 class McJobListModel;
 class McStorageGroupChipToggle;
+class McMultiCheckDropdown;
 
 class McJobPanel : public QWidget
 {
@@ -47,6 +49,11 @@ public:
 	// without requiring an app restart. Renders no chips (and takes no space)
 	// when a single storage group is in use.
 	void refreshStorageGroups();
+
+	// Repopulates the edition checklist from every distinct edition currently
+	// in the library. See McFilterPanel::refreshEditions() — same idea, same
+	// trigger points, just the job-queue bar's own independent copy.
+	void refreshEditions();
 
 	// Hide Movies/TV/Docs/Misc pills until the queue has at least one classified
 	// media type. Also called from refresh() so it tracks enrichment live.
@@ -156,6 +163,8 @@ private:
 	QWidget*     m_storageGroupContainer = nullptr;
 	QHBoxLayout* m_storageGroupLayout    = nullptr;
 	QList<McStorageGroupChipToggle*> m_storageGroupChips;
+
+	McMultiCheckDropdown* m_editionDropdown = nullptr;
 };
 
 } // namespace Mc

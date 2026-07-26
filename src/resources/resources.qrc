@@ -12,6 +12,7 @@
     <file>icons/play_arrow.svg</file>
     <file>icons/pause.svg</file>
     <file>icons/stop_circle.svg</file>
+    <file>icons/dropdown_arrow.svg</file>
     <file>icons/app_icon.svg</file>
   </qresource>
 </RCC>

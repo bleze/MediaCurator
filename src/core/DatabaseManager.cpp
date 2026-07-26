@@ -1787,6 +1787,27 @@ void DatabaseManager::updateEditionsBatch(const QHash<qint64, QString>& editions
 	db.commit();
 }
 
+QStringList DatabaseManager::distinctEditions() const
+{
+	QSet<QString> tokens;
+	QSqlQuery q(connection());
+	q.exec("SELECT DISTINCT edition FROM files WHERE edition != ''");
+	while (q.next()) {
+		const QString raw = q.value(0).toString();
+		for (const QString& tok : raw.split(QStringLiteral(" & "), Qt::SkipEmptyParts)) {
+			const QString trimmed = tok.trimmed();
+			// 3D releases ("3D", "3D (SBS)", ...) already have their own quick-filter
+			// pill (see McFilterPanel's QF_3D) — leave them out of this checklist
+			// rather than list the same thing twice.
+			if (trimmed.startsWith(QStringLiteral("3D"), Qt::CaseInsensitive)) continue;
+			tokens.insert(trimmed);
+		}
+	}
+	QStringList result(tokens.begin(), tokens.end());
+	result.sort(Qt::CaseInsensitive);
+	return result;
+}
+
 bool DatabaseManager::setFileIgnored(qint64 fileId, bool ignored)
 {
 	QSqlQuery q(connection());

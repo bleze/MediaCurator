@@ -341,6 +341,13 @@ public:
 	// in one pass, and SQLite's per-statement autocommit fsync would make that
 	// noticeably slow otherwise.
 	void updateEditionsBatch(const QHash<qint64, QString>& editionsByFileId);
+	// Every distinct edition token found across the library, split apart where
+	// a file's edition field itself combines more than one (e.g. a file named
+	// with both "Theatrical" and "IMAX" is stored as "Theatrical & IMAX" —
+	// see EditionDetector), deduplicated and sorted. Powers the edition
+	// checklist filter — its choices must always match what's actually in the
+	// library today, not a fixed compiled-in list.
+	QStringList distinctEditions() const;
 	bool setFileIgnored(qint64 fileId, bool ignored);
 	void deleteJobsForFile(qint64 fileId);
 	void deletePendingJobsForFile(qint64 fileId);

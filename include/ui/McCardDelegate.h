@@ -69,6 +69,14 @@ public:
 	                         const QString& flagLang = {},
 	                         const QMap<QString, bool>& streamFlags = {},
 	                         bool isSDH    = false);
+	// Splits an edition field ("Theatrical & IMAX") into one badge per token
+	// instead of one "&"-joined badge — EditionDetector can match multiple
+	// tokens in a single filename and packs them into one string; this draws
+	// each as its own distinct badge, consistent with how 4K/3D each get
+	// their own badge. Returns total width advanced (all badges + gaps),
+	// same convention as drawBadge's return value.
+	static int drawEditionBadges(QPainter* p, int x, int y, int h,
+	                             const QString& editionField, const QFont& font);
 	static QPixmap renderSvgIcon(const QString& resourcePath, const QColor& color,
 	                             int size, qreal dpr);
 	static QPixmap badgePixmap(const QString& text, const QString& codecType,

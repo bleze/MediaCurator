@@ -980,6 +980,16 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 	return w;
 }
 
+int McCardDelegate::drawEditionBadges(QPainter* p, int x, int y, int h,
+                                       const QString& editionField, const QFont& font)
+{
+	int advanced = 0;
+	const QStringList tokens = editionField.split(QStringLiteral(" & "), Qt::SkipEmptyParts);
+	for (const QString& token : tokens)
+		advanced += drawBadge(p, x + advanced, y, h, token, QColor(0x50, 0x50, 0x58), font) + kBadgeGap;
+	return advanced;
+}
+
 QPixmap McCardDelegate::badgePixmap(const QString& text, const QString& codecType,
                                      const QFont& baseFont, qreal dpr,
                                      const QString& flagLang, bool removed)
@@ -2064,8 +2074,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			}
 			if (!gm.edition.isEmpty()) {
 				const int badgeY = row.top() + (row.height() - kBadgeH) / 2;
-				leftX += drawBadge(painter, leftX, badgeY, kBadgeH, gm.edition,
-				                   QColor(0x50, 0x50, 0x58), memberBadgeFont) + kBadgeGap;
+				leftX += drawEditionBadges(painter, leftX, badgeY, kBadgeH, gm.edition, memberBadgeFont);
 			}
 
 			int rightEdge = playBtn.left() - kBadgeGap;
@@ -2248,14 +2257,13 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			                          QColor(0x50, 0x50, 0x58), resBadgeFont) + kBadgeGap;
 		}
 
-		// Edition badge — blank when undetected, so most single-edition files
-		// show nothing here.
+		// Edition badge(s) — blank when undetected, so most single-edition
+		// files show nothing here. One badge per token (see drawEditionBadges).
 		if (!d.edition.isEmpty()) {
 			QFont editionBadgeFont = option.font;
 			editionBadgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);
 			const int badgeY = hdr.top() + (hdr.height() - kBadgeH) / 2;
-			filenameLeft += drawBadge(painter, filenameLeft, badgeY, kBadgeH, d.edition,
-			                          QColor(0x50, 0x50, 0x58), editionBadgeFont) + kBadgeGap;
+			filenameLeft += drawEditionBadges(painter, filenameLeft, badgeY, kBadgeH, d.edition, editionBadgeFont);
 		}
 
 		// Filename — fills remaining left space

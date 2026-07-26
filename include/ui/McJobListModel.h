@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QImage>
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 
@@ -121,6 +122,7 @@ public slots:
 	void setFilterStatus(const QString& status);   // empty string = show all
 	void setQuickFilters(quint32 flags);           // McFilterPanel::QF_* bitmask
 	void setStorageGroupFilter(quint32 groupMask); // bit (1<<group) per StorageGroupSettings group; 0 = show all
+	void setEditionFilter(const QSet<QString>& editions); // empty = show all
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
@@ -176,6 +178,7 @@ private:
 	QString                m_filterStatus;
 	quint32                m_quickFilters = 0;
 	quint32                m_storageGroupMask = 0;  // 0 = no storage-group filtering
+	QSet<QString>          m_editionFilter;         // empty = no edition filtering
 	double                 m_ratingMin    = 0.0;
 	double                 m_ratingMax    = 10.0;
 	JobSortMode            m_sortMode     = JobSortMode::SmallestFirst;

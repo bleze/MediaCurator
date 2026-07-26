@@ -46,6 +46,7 @@ set(MC_SOURCES
     ui/McScanCompleteDialog.cpp
     ui/SvgIcon.cpp
     ui/McStorageGroupChipToggle.cpp
+    ui/McMultiCheckDropdown.cpp
     ui/McWindowGeometry.cpp
     ui/McDriveActivityIndicator.cpp
 
@@ -148,6 +149,7 @@ set(MC_HEADERS
     ../include/ui/SvgIcon.h
     ../include/ui/McFlagRowWidget.h
     ../include/ui/McStorageGroupChipToggle.h
+    ../include/ui/McMultiCheckDropdown.h
     ../include/ui/McDriveActivityIndicator.h
 )
 
@@ -280,6 +282,7 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/chat.svg
         resources/icons/system_update.svg
         resources/icons/storage_group.svg
+        resources/icons/dropdown_arrow.svg
 )
 
 # Country flags for track-badge language icons (lipis/flag-icons, MIT —

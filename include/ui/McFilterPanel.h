@@ -1,5 +1,7 @@
 #pragma once
 #include <QList>
+#include <QSet>
+#include <QString>
 #include <QWidget>
 
 class QComboBox;
@@ -12,6 +14,7 @@ class QToolButton;
 namespace Mc {
 
 class McStorageGroupChipToggle;
+class McMultiCheckDropdown;
 
 class McFilterPanel : public QWidget {
 	Q_OBJECT
@@ -26,6 +29,13 @@ public:
 	// chip set stays live without requiring an app restart. The row renders no chips
 	// (and takes no space) when a single storage group is in use.
 	void refreshStorageGroups();
+
+	// Repopulates the edition checklist from every distinct edition currently
+	// in the library (DatabaseManager::distinctEditions()). Call after a scan,
+	// analyze, or the edition backfill worker finishes — any of those can
+	// discover editions that didn't exist in the list before. Previously
+	// checked editions stay checked if they're still present.
+	void refreshEditions();
 
 	// Hide Movies/TV/Docs/Misc pills when the library has no classified entries
 	// (everything is still "unknown"). Active category filters are cleared on hide.
@@ -71,6 +81,7 @@ signals:
 	void ratingFilterChanged(double minRating, double maxRating);
 	void storageGroupFilterChanged(quint32 groupMask);   // bit (1<<group); 0 = show all
 	void redundantOnlyFilterChanged(bool on);   // GroupedByEdition only
+	void editionFilterChanged(const QSet<QString>& editions);   // empty = show all
 
 private:
 	void onPillToggled(quint32 flag, bool on);
@@ -103,6 +114,8 @@ private:
 	QToolButton*  m_redundantChip = nullptr;
 	int           m_redundantGroupCount = 0;
 	bool          m_groupModeActive = false;
+
+	McMultiCheckDropdown* m_editionDropdown = nullptr;
 
 	void updateRedundantChipVisibility();
 };

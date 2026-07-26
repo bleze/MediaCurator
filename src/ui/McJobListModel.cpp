@@ -386,6 +386,13 @@ void McJobListModel::setStorageGroupFilter(quint32 groupMask)
 	applyFilter();
 }
 
+void McJobListModel::setEditionFilter(const QSet<QString>& editions)
+{
+	if (m_editionFilter == editions) return;
+	m_editionFilter = editions;
+	applyFilter();
+}
+
 void McJobListModel::setRatingFilter(double minRating, double maxRating)
 {
 	if (qFuzzyCompare(m_ratingMin, minRating) && qFuzzyCompare(m_ratingMax, maxRating)) return;
@@ -687,6 +694,18 @@ void McJobListModel::applyFilter(bool forceFullReset)
 		// ── Storage group filter ─────────────────────────────────────────────────
 		if (m_storageGroupMask != 0 && !(m_storageGroupMask & (1u << e.storageGroup)))
 			continue;
+
+		// ── Edition filter ───────────────────────────────────────────────────────
+		// e.job.edition can itself combine more than one token ("Theatrical & IMAX"
+		// — see EditionDetector), so match per-token (same reasoning as
+		// McFileListModel::entryPassesFilter's edition check).
+		if (!m_editionFilter.isEmpty()) {
+			bool matched = false;
+			for (const QString& tok : e.job.edition.split(QLatin1String(" & "), Qt::SkipEmptyParts)) {
+				if (m_editionFilter.contains(tok.trimmed())) { matched = true; break; }
+			}
+			if (!matched) continue;
+		}
 
 		// ── Rating filter ────────────────────────────────────────────────────────
 		if (m_ratingMin > 0.0 || m_ratingMax < 10.0) {

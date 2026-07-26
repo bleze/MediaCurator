@@ -9,6 +9,7 @@
 #include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
 #include "ui/McStorageGroupChipToggle.h"
+#include "ui/McMultiCheckDropdown.h"
 #include "ui/McTrackContextMenu.h"
 #include "ui/McWindowGeometry.h"
 #include "ui/RangeSlider.h"
@@ -446,6 +447,16 @@ void McJobPanel::setupUi()
 	filterLayout->addWidget(vSep(filterBar));
 	addPill("4K",     videoColor, "4K files only (width >= 3840)", QF::QF_4K);
 	addPill("3D",     videoColor, "Files detected as a 3D release", QF::QF_3D);
+
+	// ── Edition checklist — same widget/reasoning as the library filter bar's.
+	filterLayout->addWidget(vSep(filterBar));
+	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), filterBar);
+	m_editionDropdown->setToolTip(tr("Filter by edition (Theatrical, IMAX, Director's Cut, …)"));
+	connect(m_editionDropdown, &McMultiCheckDropdown::selectionChanged,
+	        this, [this](const QSet<QString>& editions) { m_model->setEditionFilter(editions); });
+	filterLayout->addWidget(m_editionDropdown);
+	refreshEditions();
+
 	filterLayout->addWidget(vSep(filterBar));
 	addPill("DV",     hdrColor,   "Dolby Vision only",                       QF::QF_DV);
 	addPill("HDR",    hdrColor,   "HDR10 / HLG / HDR10+ only",              QF::QF_HDR);
@@ -1486,6 +1497,11 @@ void McJobPanel::refreshStorageGroups()
 	}
 	m_storageGroupContainer->setVisible(true);
 	applyStorageGroupFilter();
+}
+
+void McJobPanel::refreshEditions()
+{
+	m_editionDropdown->setItems(DatabaseManager::instance().distinctEditions());
 }
 
 void McJobPanel::applyStorageGroupFilter()

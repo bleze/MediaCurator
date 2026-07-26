@@ -191,6 +191,19 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 	if (m_storageGroupMask != 0 && !(m_storageGroupMask & (1u << e.storageGroup)))
 		return false;
 
+	// ── Edition filter ────────────────────────────────────────────────────────
+	// e.file.edition can itself combine more than one token ("Theatrical & IMAX"
+	// — see EditionDetector), so match per-token rather than against the raw
+	// field: selecting "IMAX" must match that file even though its edition
+	// string as a whole isn't literally "IMAX".
+	if (!m_editionFilter.isEmpty()) {
+		bool matched = false;
+		for (const QString& tok : e.file.edition.split(QLatin1String(" & "), Qt::SkipEmptyParts)) {
+			if (m_editionFilter.contains(tok.trimmed())) { matched = true; break; }
+		}
+		if (!matched) return false;
+	}
+
 	// ── Rating filter ─────────────────────────────────────────────────────────
 	const bool ratingFilterActive = (m_ratingMin > 0.0 || m_ratingMax < 10.0);
 	if (ratingFilterActive) {
@@ -751,6 +764,13 @@ void McFileListModel::setStorageGroupFilter(quint32 groupMask)
 {
 	if (m_storageGroupMask == groupMask) return;
 	m_storageGroupMask = groupMask;
+	applyFilter();
+}
+
+void McFileListModel::setEditionFilter(const QSet<QString>& editions)
+{
+	if (m_editionFilter == editions) return;
+	m_editionFilter = editions;
 	applyFilter();
 }
 
