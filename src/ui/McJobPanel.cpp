@@ -1861,13 +1861,13 @@ void McJobPanel::onPreviewCommand(qint64 jobId)
 		exePath = ExternalTools::instance().mkvpropeditPath();
 		args = ActionEngine::buildPropEditArgs(fileOpt->path, job.flagChangesJson);
 	} else {
-		if (job.commandArgsJson.isEmpty()) return;
+		if (job.commandArgsJson.isEmpty() || !fileOpt) return;
 		exePath = ExternalTools::instance().mkvmergePath();
-		const QJsonArray arr = QJsonDocument::fromJson(job.commandArgsJson.toUtf8()).array();
-		for (const auto& v : arr) args << v.toString();
+		const QList<StreamRecord> streams =
+		    DatabaseManager::instance().streamsForFile(job.fileId);
+		ActionEngine actions(exePath);
+		args = actions.rebuildRemuxCommand(*fileOpt, streams, job.commandArgsJson);
 		if (!job.flagChangesJson.isEmpty() && !args.isEmpty()) {
-			const QList<StreamRecord> streams =
-			    DatabaseManager::instance().streamsForFile(job.fileId);
 			const QString filteredJson = ActionEngine::filterFlagChangesForRemux(
 			    job.flagChangesJson, args, streams);
 			if (!filteredJson.isEmpty()) {

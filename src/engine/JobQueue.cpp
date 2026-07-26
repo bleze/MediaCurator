@@ -722,30 +722,43 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 		}
 	}
 
+	// Rebuild the actual mkvmerge command fresh, right here, instead of replaying
+	// whatever buildCommand() produced back when this job was proposed. A job can
+	// sit in Proposed/Queued for days; if a fix lands in ActionEngine::buildCommand()
+	// in the meantime (e.g. the mjpeg cover-art/attachment-stripping fix), replaying
+	// the frozen command would still ship the old, broken behavior even though the
+	// app itself has since been updated. The kept/removed *decision* — including any
+	// manual per-track override the user made in the Job Review dialog — is recovered
+	// from the ORIGINAL commandArgsJson via computeKeptStreams() and honored exactly
+	// as approved; only the low-level argument construction is redone with current code.
+	const QList<StreamRecord> streams = db.streamsForFile(fileId);
+
+	// Refresh the "before" snapshot from the current live streams right before
+	// this remux actually runs — a proposed job can sit queued long enough for
+	// the on-disk track/sidecar layout to change, so a snapshot frozen at
+	// proposal time would go stale. This is what the "done" card renders from.
+	db.updateJobOriginalStreams(jobId, ActionEngine::serializeStreamSnapshot(streams));
+
+	// What RemuxJob should find left over in the output once mkvmerge is done —
+	// computed from the same "before" snapshot and the ORIGINAL commandArgsJson,
+	// so it verifies against the same keep/remove expectation the queue is acting
+	// on. Attribute-based (see ActionEngine::diffStreams), not index-based.
+	QList<StreamRecord> expectedStreams = ActionEngine::computeKeptStreams(streams, commandArgsJson);
+
 	QStringList args;
-	const QJsonArray arr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
-	for (const auto& v : arr) args << v.toString();
+	if (fileOpt) {
+		ActionEngine actions(ExternalTools::instance().mkvmergePath());
+		args = actions.rebuildRemuxCommand(*fileOpt, streams, commandArgsJson);
+	} else {
+		const QJsonArray oldArr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
+		for (const auto& v : oldArr) args << v.toString();
+	}
 
 	// Inject flag changes and sidecar subtitle files into the mkvmerge command.
 	// Capture the source path before sidecar args are appended — each sidecar block
 	// ends with its file path, which would otherwise corrupt args.last().
 	QString sourcePath;
-	// What RemuxJob should find left over in the output once mkvmerge is done —
-	// computed from the same "before" snapshot and commandArgsJson used to build
-	// the command itself, so it verifies against the same expectation the queue
-	// is acting on. Attribute-based (see ActionEngine::diffStreams), not index-based.
-	QList<StreamRecord> expectedStreams;
 	if (!args.isEmpty()) {
-		const QList<StreamRecord> streams = db.streamsForFile(fileId);
-
-		// Refresh the "before" snapshot from the current live streams right before
-		// this remux actually runs — a proposed job can sit queued long enough for
-		// the on-disk track/sidecar layout to change, so a snapshot frozen at
-		// proposal time would go stale. This is what the "done" card renders from.
-		db.updateJobOriginalStreams(jobId, ActionEngine::serializeStreamSnapshot(streams));
-
-		expectedStreams = ActionEngine::computeKeptStreams(streams, commandArgsJson);
-
 		// Internal (container) track flag changes: inject before the input path.
 		if (!flagChangesJson.isEmpty()) {
 			const QString internalJson = ActionEngine::filterInternalFlagChanges(

@@ -112,6 +112,7 @@
 #include <QRandomGenerator>
 #include <QStandardPaths>
 #include <QSvgRenderer>
+#include <QtConcurrent>
 
 namespace {
 
@@ -320,6 +321,23 @@ static void removeSidecarFiles(const QString& videoPath)
 		if (entry.compare(info.fileName(), Qt::CaseInsensitive) == 0) continue;
 		QFile::remove(dir.filePath(entry));
 	}
+}
+
+// The library/DB row for a deleted file is already gone by the time this runs
+// (DatabaseManager::deleteFile committed first) — the actual disk removal is
+// best-effort and was always fire-and-forget (failures silently ignored), so
+// there is nothing for the caller to wait on. Running it on the UI thread,
+// though, meant a spun-down NAS share's wake-up delay (or a stalled SMB
+// reconnect) froze the entire window for as long as the share took to
+// respond — observed hangs of several minutes. QtConcurrent::run moves the
+// QFile::remove()/directory scan off the UI thread so the app stays
+// responsive while the share wakes up.
+static void deleteFileAndSidecarsAsync(const QString& videoPath)
+{
+	(void)QtConcurrent::run([videoPath] {
+		QFile::remove(videoPath);
+		removeSidecarFiles(videoPath);
+	});
 }
 
 // Repaint the full widget tree synchronously so the first visible frame is
@@ -1106,8 +1124,7 @@ void McMainWindow::setupUi()
 					db.deleteJobsForFile(rowFile.id);
 					if (db.deleteFile(rowFile.id)) {
 						if (dlg.clickedButton() == deleteBtn) {
-							QFile::remove(rowFile.path);
-							removeSidecarFiles(rowFile.path);
+							deleteFileAndSidecarsAsync(rowFile.path);
 						}
 						m_listModel->removeEntry(rowFile.id);
 						m_jobPanel->removeJobsForFile(rowFile.id);
@@ -1242,8 +1259,7 @@ void McMainWindow::setupUi()
 						db.deleteJobsForFile(fid);
 						if (!db.deleteFile(fid)) continue;
 						if (deleteFromDisk && fOpt) {
-							QFile::remove(fOpt->path);
-							removeSidecarFiles(fOpt->path);
+							deleteFileAndSidecarsAsync(fOpt->path);
 						}
 						m_listModel->removeEntry(fid);
 						m_jobPanel->removeJobsForFile(fid);
@@ -1605,8 +1621,7 @@ void McMainWindow::setupUi()
 				db.deleteJobsForFile(f.id);
 				if (!db.deleteFile(f.id)) continue;
 				if (deleteFromDisk) {
-					QFile::remove(f.path);
-					removeSidecarFiles(f.path);
+					deleteFileAndSidecarsAsync(f.path);
 				}
 				m_listModel->removeEntry(f.id);
 				// Targeted removal — m_jobPanel->refresh() would re-query and re-derive

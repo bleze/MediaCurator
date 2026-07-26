@@ -12,6 +12,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QVersionNumber>
@@ -228,7 +229,38 @@ bool UpdateChecker::launchInstaller(const QString& path)
 	}
 	logRestartDebug(QStringLiteral("launchInstaller: elevated installer process started (hProcess=%1)")
 	                    .arg(sei.hProcess != nullptr ? "valid" : "null"));
-	if (sei.hProcess) CloseHandle(sei.hProcess);
+
+	// Wait for the elevated installer to actually finish, then launch the
+	// freshly installed exe ourselves as a normal, non-elevated process.
+	// NSIS's own CPACK_NSIS_MUI_FINISHPAGE_RUN "run after install" option
+	// execs its target from inside the still-elevated installer process, so
+	// the child inherits that elevated token instead of running as a normal
+	// user launch — it does not behave like (or necessarily appear like) a
+	// regular double-click launch. Doing the relaunch here instead, once the
+	// installer has fully exited and released its own file locks, gives a
+	// normal, observable, non-elevated instance every time. Harmless to run
+	// alongside NSIS's own finish-page checkbox if that also fires — the
+	// single-instance guard in main() means whichever one loses the race just
+	// detects the other and exits before ever showing a window.
+	if (sei.hProcess) {
+		logRestartDebug(QStringLiteral("launchInstaller: waiting for installer to exit before relaunching"));
+		const DWORD waitResult = WaitForSingleObject(sei.hProcess, 5 * 60 * 1000); // 5 min ceiling
+		DWORD exitCode = 0;
+		GetExitCodeProcess(sei.hProcess, &exitCode);
+		CloseHandle(sei.hProcess);
+
+		if (waitResult == WAIT_OBJECT_0) {
+			const QString exePath = QCoreApplication::applicationFilePath();
+			logRestartDebug(QStringLiteral("launchInstaller: installer exited (code=%1) — relaunching %2")
+			                    .arg(exitCode).arg(exePath));
+			if (!QProcess::startDetached(exePath, {}))
+				logRestartDebug(QStringLiteral("launchInstaller: relaunch of %1 failed to start").arg(exePath));
+		} else {
+			logRestartDebug(QStringLiteral(
+			    "launchInstaller: WaitForSingleObject did not return WAIT_OBJECT_0 (result=%1) — not relaunching")
+			                    .arg(waitResult));
+		}
+	}
 	return true;
 #else
 	Q_UNUSED(path);

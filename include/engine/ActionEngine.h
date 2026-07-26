@@ -13,6 +13,22 @@ public:
 	explicit ActionEngine(const QString& mkvmergePath, QObject* parent = nullptr);
 	QStringList buildCommand(const FileDecision& decision, const QString& outputPath) const;
 
+	// Rebuilds a remux job's mkvmerge command fresh, using CURRENT buildCommand()
+	// logic, instead of replaying the literal argument list that was frozen in
+	// commandArgsJson back when the job was proposed. A job can sit in
+	// Proposed/Queued for a long time; if a bug fix lands in buildCommand() in the
+	// meantime (e.g. the mjpeg cover-art/attachment-stripping fix), replaying the
+	// frozen command would still reproduce the old, broken behavior even on an
+	// updated build. The kept/removed *decision* — including any manual per-track
+	// override the user made in the Job Review dialog — is recovered from
+	// commandArgsJson via computeKeptStreams() and honored exactly as approved;
+	// only the low-level argument construction is redone. Falls back to
+	// commandArgsJson verbatim if `file` has no matching output path to rebuild
+	// against (stored command not in the expected "-o", path, ... shape).
+	QStringList rebuildRemuxCommand(const FileRecord& file,
+	                                 const QList<StreamRecord>& streams,
+	                                 const QString& commandArgsJson) const;
+
 	// Returns extra mkvmerge flag-setting args to be inserted before the input path.
 	// flagChangesJson is the JSON array stored in jobs.flag_changes_json.
 	static QStringList buildFlagArgsForRemux(const QString& flagChangesJson);

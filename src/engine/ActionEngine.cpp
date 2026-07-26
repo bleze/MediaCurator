@@ -133,6 +133,38 @@ QStringList ActionEngine::buildCommand(const FileDecision& decision, const QStri
 	return args;
 }
 
+QStringList ActionEngine::rebuildRemuxCommand(const FileRecord& file,
+                                               const QList<StreamRecord>& streams,
+                                               const QString& commandArgsJson) const
+{
+	const QJsonArray oldArr = QJsonDocument::fromJson(commandArgsJson.toUtf8()).array();
+	QString outputPath;
+	if (oldArr.size() >= 2 && oldArr.at(0).toString() == QLatin1String("-o"))
+		outputPath = oldArr.at(1).toString();
+
+	if (!outputPath.isEmpty()) {
+		const QList<StreamRecord> kept = computeKeptStreams(streams, commandArgsJson);
+		QSet<int> keptIdx;
+		for (const StreamRecord& s : kept) keptIdx.insert(s.streamIndex);
+
+		FileDecision decision;
+		decision.file = file;
+		for (const StreamRecord& s : streams) {
+			TrackDecision td;
+			td.stream   = s;
+			td.decision = keptIdx.contains(s.streamIndex) ? Decision::Keep : Decision::Remove;
+			decision.tracks << td;
+		}
+
+		const QStringList fresh = buildCommand(decision, outputPath);
+		if (!fresh.isEmpty()) return fresh;
+	}
+
+	QStringList args;
+	for (const auto& v : oldArr) args << v.toString();
+	return args;
+}
+
 QJsonArray ActionEngine::identifyAttachments(const QString& filePath) const
 {
 	DriveActivityMonitor::touchPath(filePath);
