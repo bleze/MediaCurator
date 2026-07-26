@@ -6,6 +6,7 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 class QSlider;
 class QSpinBox;
@@ -43,6 +44,7 @@ private slots:
 	void onAddEditionToken();
 	void onRemoveEditionToken();
 	void onResetEditionTokens();
+	void onEditionTokenEdited(QListWidgetItem* item);
 
 private:
 	void accept() override;

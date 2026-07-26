@@ -240,7 +240,7 @@ QStringList UserProfile::defaultEditionTokens()
 		"Ultimate Edition",
 		"Collector's Edition|Collectors Edition",
 		"Deluxe Edition", "Anniversary Edition",
-		"Rich Mahogany Edition|Rich Mahogany",   // Anchorman's extended cut
+		"Rich Mahogany|Rich Mahogany Edition",   // Anchorman's extended cut
 		"Scratch Free",   // Planet Terror's clean (Grindhouse damage removed) cut
 		"Remastered", "Restored", "Redux",
 		"Final Cut", "Assembly Cut", "Alternate Cut", "International Cut",

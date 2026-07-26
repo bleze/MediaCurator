@@ -25,6 +25,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSize>
 #include <QSlider>
 #include <QSpinBox>
@@ -530,7 +531,9 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		   "An entry may list several spellings of the same cut separated by '|' — e.g. "
 		   "\"Director's Cut|Directors Cut|DC\" — matching any of them is treated as that one "
 		   "edition, labeled with whichever spelling is listed first. Not exhaustive — release "
-		   "naming isn't standardized — add any tag you run into."),
+		   "naming isn't standardized — add any tag you run into.\n\n"
+		   "Double-click an entry to edit it in place — reorder the '|' list to change which "
+		   "spelling is used as the badge."),
 		editionsPage);
 	editionsHint->setWordWrap(true);
 	editionsPageLo->addWidget(editionsHint);
@@ -538,8 +541,10 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_editionTokenList = new QListWidget(editionsPage);
 	m_editionTokenList->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	m_editionTokenList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	for (const QString& tok : profile->editionTokens())
-		new QListWidgetItem(tok, m_editionTokenList);
+	for (const QString& tok : profile->editionTokens()) {
+		auto* item = new QListWidgetItem(tok, m_editionTokenList);
+		item->setFlags(item->flags() | Qt::ItemIsEditable);
+	}
 	editionsPageLo->addWidget(m_editionTokenList, 1);
 
 	auto* editionRow = new QHBoxLayout;
@@ -557,6 +562,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	connect(editionRemoveBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveEditionToken);
 	connect(editionResetBtn,  &QPushButton::clicked, this, &McSettingsDialog::onResetEditionTokens);
 	connect(m_editEditionToken, &QLineEdit::returnPressed, this, &McSettingsDialog::onAddEditionToken);
+	connect(m_editionTokenList, &QListWidget::itemChanged, this, &McSettingsDialog::onEditionTokenEdited);
 
 	// ═══════════════════════════════════════════════════════════════════════════
 	// Tab 4 — Performance
@@ -920,7 +926,8 @@ void McSettingsDialog::onAddEditionToken()
 			return;
 		}
 
-	new QListWidgetItem(tok, m_editionTokenList);
+	auto* item = new QListWidgetItem(tok, m_editionTokenList);
+	item->setFlags(item->flags() | Qt::ItemIsEditable);
 	m_editEditionToken->clear();
 }
 
@@ -934,8 +941,32 @@ void McSettingsDialog::onRemoveEditionToken()
 void McSettingsDialog::onResetEditionTokens()
 {
 	m_editionTokenList->clear();
-	for (const QString& tok : UserProfile::defaultEditionTokens())
-		new QListWidgetItem(tok, m_editionTokenList);
+	for (const QString& tok : UserProfile::defaultEditionTokens()) {
+		auto* item = new QListWidgetItem(tok, m_editionTokenList);
+		item->setFlags(item->flags() | Qt::ItemIsEditable);
+	}
+}
+
+void McSettingsDialog::onEditionTokenEdited(QListWidgetItem* item)
+{
+	const QString tok = item->text().trimmed();
+	if (tok.isEmpty()) {
+		delete item;
+		return;
+	}
+
+	for (int i = 0; i < m_editionTokenList->count(); ++i) {
+		QListWidgetItem* other = m_editionTokenList->item(i);
+		if (other != item && other->text().compare(tok, Qt::CaseInsensitive) == 0) {
+			delete item;
+			return;
+		}
+	}
+
+	if (item->text() != tok) {
+		const QSignalBlocker blocker(m_editionTokenList);
+		item->setText(tok);
+	}
 }
 
 void McSettingsDialog::onAudioFormatUp()
