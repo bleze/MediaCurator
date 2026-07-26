@@ -682,6 +682,7 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 			t += "  " + s.language.toUpper();
 		if (s.isForced)           t += "  \xE2\x97\x8F";
 		if (s.isDefault)          t += "  \xE2\x98\x85"; // ★
+		if (isOriginal)           t += "  \xE2\x97\x8E"; // ◎
 		if (isCommentaryTrack(s)) t += "  \xE2\x9C\x8E"; // ✎
 		// A cleared externalPath means the sidecar was merged into the container
 		// and the standalone file deleted — it's no longer a sidecar, so no marker.
@@ -1538,7 +1539,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					}
 					if (s.isDefault)         lines << tr("\xE2\x98\x85  Default track");
 					if (s.isForced)          lines << tr("\xE2\x97\x8F  Forced");
-					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original audio track");
+					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original-language track");
 					if (s.isCommentary)      lines << tr("\xE2\x9C\x8E  Commentary");
 					const bool isSdhFlag = streamIsSDH(s);
 					if (isSdhFlag) lines << tr("SDH subtitle");

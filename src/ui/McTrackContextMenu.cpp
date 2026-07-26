@@ -18,7 +18,7 @@ void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream,
 	// Sidecar, Library view: nothing to toggle that would take visible effect yet —
 	// skip straight to the language submenu below.
 	if (!stream.isExternal || showFlagRowsForExternal) {
-		const bool isAudio = stream.codecType == QLatin1String("audio");
+		const bool isVideo = stream.codecType == QLatin1String("video");
 
 		const QColor trackColor = [&] {
 			if (stream.codecType == QLatin1String("audio"))    return QColor(0x10, 0x6a, 0xc0);
@@ -32,9 +32,10 @@ void buildTrackFlagMenu(QMenu& menu, const StreamRecord& stream,
 			{ QStringLiteral("forced"),   "\xe2\x97\x8f", stream.isForced,   QObject::tr("Forced") },
 			{ QStringLiteral("original"), "\xe2\x97\x8e", stream.isOriginal, QObject::tr("Original") },
 		};
-		// "Original" is only meaningful for audio tracks — skip it for subtitles/video.
+		// "Original" is meaningful for audio and subtitle tracks (RuleEngine proposes
+		// fixes for both — see the flag/language mismatch pass) but not video.
 		for (const FlagItem& fi : flagItems) {
-			if (fi.flag == QLatin1String("original") && !isAudio) continue;
+			if (fi.flag == QLatin1String("original") && isVideo) continue;
 			auto* wa  = new QWidgetAction(&menu);
 			auto* row = new McFlagRowWidget(
 				QString::fromUtf8(fi.badgeChar), trackColor, fi.label, fi.current);
