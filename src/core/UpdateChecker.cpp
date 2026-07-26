@@ -230,36 +230,35 @@ bool UpdateChecker::launchInstaller(const QString& path)
 	logRestartDebug(QStringLiteral("launchInstaller: elevated installer process started (hProcess=%1)")
 	                    .arg(sei.hProcess != nullptr ? "valid" : "null"));
 
-	// Wait for the elevated installer to actually finish, then launch the
-	// freshly installed exe ourselves as a normal, non-elevated process.
-	// NSIS's own CPACK_NSIS_MUI_FINISHPAGE_RUN "run after install" option
-	// execs its target from inside the still-elevated installer process, so
-	// the child inherits that elevated token instead of running as a normal
-	// user launch — it does not behave like (or necessarily appear like) a
-	// regular double-click launch. Doing the relaunch here instead, once the
-	// installer has fully exited and released its own file locks, gives a
-	// normal, observable, non-elevated instance every time. Harmless to run
-	// alongside NSIS's own finish-page checkbox if that also fires — the
-	// single-instance guard in main() means whichever one loses the race just
-	// detects the other and exits before ever showing a window.
+	// Do NOT wait on the installer here. Windows holds an exclusive lock on a
+	// process's own executable image for as long as that process is alive —
+	// destroying every window/thread we own does not release it, only actual
+	// process exit does. Blocking this call with WaitForSingleObject (as this
+	// used to do) kept this process — and its lock on MediaCurator.exe — alive
+	// for the entire install, so the installer's overwrite of our own exe
+	// raced (and lost to) that lock every single time, surfacing NSIS's "file
+	// in use" Retry/Abort/Skip prompt. Instead, hand the
+	// "wait for the installer, then relaunch" step to a detached helper
+	// process that outlives us, and return immediately so main() can exit and
+	// actually release the lock — the installer's wizard needs several
+	// seconds of user clicks before it touches any files, which is far more
+	// than this process needs to unwind.
 	if (sei.hProcess) {
-		logRestartDebug(QStringLiteral("launchInstaller: waiting for installer to exit before relaunching"));
-		const DWORD waitResult = WaitForSingleObject(sei.hProcess, 5 * 60 * 1000); // 5 min ceiling
-		DWORD exitCode = 0;
-		GetExitCodeProcess(sei.hProcess, &exitCode);
+		const DWORD installerPid = GetProcessId(sei.hProcess);
 		CloseHandle(sei.hProcess);
 
-		if (waitResult == WAIT_OBJECT_0) {
-			const QString exePath = QCoreApplication::applicationFilePath();
-			logRestartDebug(QStringLiteral("launchInstaller: installer exited (code=%1) — relaunching %2")
-			                    .arg(exitCode).arg(exePath));
-			if (!QProcess::startDetached(exePath, {}))
-				logRestartDebug(QStringLiteral("launchInstaller: relaunch of %1 failed to start").arg(exePath));
-		} else {
-			logRestartDebug(QStringLiteral(
-			    "launchInstaller: WaitForSingleObject did not return WAIT_OBJECT_0 (result=%1) — not relaunching")
-			                    .arg(waitResult));
-		}
+		const QString exePath = QCoreApplication::applicationFilePath();
+		const QString psCommand =
+		    QStringLiteral("Wait-Process -Id %1 -ErrorAction SilentlyContinue; Start-Process -FilePath '%2'")
+		        .arg(installerPid)
+		        .arg(QString(exePath).replace(QLatin1Char('\''), QStringLiteral("''")));
+
+		logRestartDebug(QStringLiteral("launchInstaller: spawning detached relaunch watcher for installer pid=%1")
+		                    .arg(installerPid));
+		if (!QProcess::startDetached(QStringLiteral("powershell.exe"),
+		                              {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
+		                               QStringLiteral("-Command"), psCommand}))
+			logRestartDebug(QStringLiteral("launchInstaller: failed to start relaunch watcher"));
 	}
 	return true;
 #else
