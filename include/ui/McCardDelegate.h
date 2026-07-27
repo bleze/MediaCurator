@@ -228,10 +228,12 @@ private:
 
 	CardData fetchData(const QModelIndex& index) const;
 
-	// Invalidates the size cache and asks the view to re-query sizeHint() for every
-	// row — called (debounced) once a viewport resize settles, since narrower/wider
-	// badge wrapping changes each card's required height. See m_resizeRelayoutTimer.
-	void relayoutForResize();
+	// Invalidates the size cache for the visible (+buffer) rows and asks the view
+	// to re-query their sizeHint() — called (debounced) once a viewport resize
+	// settles (narrower/wider badge wrapping changes each card's required height)
+	// or once scrolling settles (brings rows into view that may hold a size
+	// cached at some earlier, no-longer-current width). See m_resizeRelayoutTimer.
+	void relayoutVisibleRows();
 
 	static QRect   playButtonRect(const QRect& contentRect);
 
@@ -309,33 +311,30 @@ private:
 	// only needs to trigger a redraw, not advance any state itself.
 	QTimer*               m_animTimer        = nullptr;
 	QTimer*               m_artworkPrefetchTimer = nullptr;
-	// Debounces viewport resize: a live drag-resize fires many QEvent::Resize
-	// ticks, and re-querying sizeHint() for every row on each one would be janky
-	// with thousands of cards — only the width at rest, once dragging settles,
-	// triggers the size-cache invalidation + relayout.
+	// Debounces viewport resize AND scroll settling: a live drag-resize fires many
+	// QEvent::Resize ticks, and a scroll can move many rows through the visible
+	// range in quick succession — re-querying sizeHint() for every row on each
+	// tick would be janky with thousands of cards, so only once things are at
+	// rest (dragging stopped, or scrolling stopped) does this fire relayoutVisibleRows().
 	QTimer*               m_resizeRelayoutTimer = nullptr;
-	// Tracks the viewport width as of the last resize tick we acted on — kept
-	// separate from m_cacheWidth, which sizeHint() also mutates independently
-	// (e.g. from incidental hover/scrollbar-driven queries mid-drag), so this
-	// decision doesn't get fooled by a coincidental match against that shared value.
+	// Tracks the viewport width as of the last resize tick we acted on, so
+	// eventFilter's QEvent::Resize case only restarts the timer on an actual
+	// width change, not every incidental resize tick with the same width.
 	int                   m_lastResizeWidth = -1;
 
-	// Cached sizeHint() result plus the viewport width it was computed for. The
-	// width is checked on every lookup (see sizeHint()) so an off-screen row that
-	// cached a height for some transient mid-drag width — and was never touched
-	// by relayoutForResize() because it wasn't visible when a resize settled —
-	// self-corrects the next time it's actually queried at the current width,
-	// instead of keeping a stale (sometimes wildly oversized) height forever.
-	// This is a per-entry check, not an eager whole-cache clear, so it doesn't
-	// reintroduce the live-drag sluggishness relayoutForResize()'s design note
-	// below describes.
-	struct CachedSize { int width; QSize size; };
-	mutable QHash<qint64, CachedSize> m_sizeCache;
-	// Width sizeHint() last computed a fresh entry with — informational only
-	// (e.g. for debugging); no longer gates cache invalidation, since eagerly
-	// clearing the whole cache on every width tick during a live drag is what
-	// made resizing sluggish. relayoutForResize() owns invalidation instead.
-	mutable int               m_cacheWidth   = 0;
+	// Cached sizeHint() result, keyed by item id. Deliberately NOT keyed or
+	// gated by viewport width — paint() always draws with the live width
+	// regardless of what sizeHint() returns, so a briefly-stale cached height
+	// (e.g. an off-screen row that hasn't been touched since the last resize)
+	// is harmless to keep serving. Invalidation is owned entirely by
+	// relayoutVisibleRows() (visible rows + a small buffer, called once resize
+	// or scroll settles) — never by an eager whole-cache clear or a per-lookup
+	// width check, both of which force every one of potentially thousands of
+	// rows into a slow cache-miss recompute the moment Qt's own internal
+	// scrollbar-range bookkeeping walks the full list (setUniformItemSizes is
+	// false), which is what previously made resizing/restoring stall for
+	// several seconds.
+	mutable QHash<qint64, QSize> m_sizeCache;
 	mutable QFont             m_badgeFont;
 	mutable QFontMetrics      m_badgeFm      { QFont{} };
 

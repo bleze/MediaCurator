@@ -893,7 +893,7 @@ void McMainWindow::setupUi()
 	// doItemsLayout() (re-querying every row's sizeHint) on every single resize
 	// tick during a live drag — badly janky with thousands of cards. McCardDelegate
 	// now handles post-resize relayout itself (debounced, visible-rows-only; see
-	// McCardDelegate::relayoutForResize), so Qt's own per-tick relayout is redundant.
+	// McCardDelegate::relayoutVisibleRows), so Qt's own per-tick relayout is redundant.
 	m_listView->setResizeMode(QListView::Fixed);
 	m_listView->setContextMenuPolicy(Qt::CustomContextMenu);
 

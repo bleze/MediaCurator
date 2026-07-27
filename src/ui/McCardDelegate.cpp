@@ -50,7 +50,7 @@ static QHash<QString, QPixmap> s_fanartRawCache;
 // every single paint tick of the drag. While m_resizeRelayoutTimer is pending
 // (see McCardDelegate::eventFilter's QEvent::Resize case), paint() draws this
 // stale-but-cheap pixmap instead of rescaling, accepting a few px of edge
-// mismatch until relayoutForResize() settles and triggers one real rescale.
+// mismatch until relayoutVisibleRows() settles and triggers one real rescale.
 static QHash<QString, QPixmap> s_fanartLastScaled;
 
 // Backdrops now download at TMDB's "original" size (PosterManager, since the
@@ -431,7 +431,17 @@ McCardDelegate::McCardDelegate(Mode mode, QObject* parent)
 		m_resizeRelayoutTimer = new QTimer(this);
 		m_resizeRelayoutTimer->setSingleShot(true);
 		m_resizeRelayoutTimer->setInterval(120);
-		connect(m_resizeRelayoutTimer, &QTimer::timeout, this, &McCardDelegate::relayoutForResize);
+		connect(m_resizeRelayoutTimer, &QTimer::timeout, this, &McCardDelegate::relayoutVisibleRows);
+
+		if (auto* sb = view->verticalScrollBar()) {
+			// Scrolling brings rows into view that may hold a size cached at
+			// some earlier, no-longer-current width (see relayoutVisibleRows())
+			// — same debounced relayout as a resize settling.
+			connect(sb, &QScrollBar::valueChanged, this, [this]() {
+				if (m_resizeRelayoutTimer)
+					m_resizeRelayoutTimer->start();
+			});
+		}
 
 		if (m_mode == Mode::Library) {
 			m_artworkPrefetchTimer = new QTimer(this);
@@ -1611,28 +1621,25 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const
 {
-	// No eager "clear everything if width changed" check here anymore: during a
-	// live resize drag the width changes on nearly every tick, and Qt still makes
-	// incidental sizeHint() calls for routine bookkeeping (scrolling, hover)
-	// independent of resize mode — wiping the whole cache on each one meant every
-	// such call re-measured badge widths for whichever rows it touched, which is
-	// what made dragging feel sluggish. Serving a briefly-stale cached height
-	// during the drag is fine (paint() always draws the live, correct width
-	// regardless of what sizeHint() returns); relayoutForResize() is what clears
-	// the cache and forces a correct recompute once the resize actually settles.
+	// No "is this cache entry for the current width" check here: with
+	// setUniformItemSizes(false), Qt's own scrollbar-range bookkeeping queries
+	// sizeHint() for the *entire* model (not just visible rows) whenever it
+	// needs to recompute total content height — which happens right after any
+	// resize settles. A per-lookup width check would make literally every
+	// cached row a miss the instant the viewport width changes even slightly
+	// (every entry was necessarily cached at the old width), turning that
+	// internal full-list walk into a synchronous, multi-second recompute of
+	// every card's badge-wrap height. Serving a stale cached height is fine —
+	// paint() always draws with the live width regardless of what sizeHint()
+	// returns — so relayoutVisibleRows() alone owns invalidation (visible rows
+	// + a small buffer, debounced until resize or scroll actually settles).
 	const qint64 itemId = (m_mode == Mode::Library)
 	    ? index.data(McFileListModel::FileIdRole).toLongLong()
 	    : index.data(McJobListModel::JobIdRole).toLongLong();
 	const int w = m_view ? m_view->viewport()->width() : option.rect.width();
 	const auto cached = m_sizeCache.constFind(itemId);
-	// A cache hit only counts if it was computed for the current width — a row
-	// that cached a size for some earlier (possibly transient mid-drag) width
-	// and was never revisited by relayoutForResize() (e.g. it was off-screen
-	// when a resize settled) would otherwise keep that height forever.
-	if (cached != m_sizeCache.constEnd() && cached->width == w)
-		return cached->size;
-
-	m_cacheWidth = w;   // informational only now; relayoutForResize() drives invalidation
+	if (cached != m_sizeCache.constEnd())
+		return *cached;
 
 	const CardData d = fetchData(index);
 
@@ -1655,7 +1662,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 		const auto  layout = layoutGroupCard(pseudoContent, d.groupMembers, fm);
 		const int h = qMax(kPadV + kFolderH + kFolderGap + layout.totalContentH + kPadBottom, kMinRowH);
 		const QSize result{w, h};
-		m_sizeCache.insert(itemId, {w, result});
+		m_sizeCache.insert(itemId, result);
 		return result;
 	}
 
@@ -1705,7 +1712,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	const int h      = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + trackH + kPadBottom,
 	                         kMinRowH);
 	const QSize result{w, h};
-	m_sizeCache.insert(itemId, {w, result});
+	m_sizeCache.insert(itemId, result);
 	return result;
 }
 
@@ -1723,20 +1730,23 @@ int McCardDelegate::leftContentInset() const
 	return col > 0 ? col + kPosterGap : kPadH;
 }
 
-void McCardDelegate::relayoutForResize()
+void McCardDelegate::relayoutVisibleRows()
 {
-	// Do NOT clear the whole m_sizeCache here. With setUniformItemSizes(false),
-	// Qt's own scrollbar-range bookkeeping needs every row's height, so whenever
-	// it walks the full list after receiving even one sizeHintChanged, a wiped
-	// cache means it hits a miss (and a slow badge-width recompute) for every one
-	// of potentially thousands of rows — that full-table walk happening inside
-	// Qt's own internals, after this function returns, is what the multi-second
-	// stall after resizing actually was; limiting this function's OWN loop to
-	// visible rows never fixed it, because the blanket clear undid the benefit.
-	// Only entries for the rows we're about to explicitly relayout are removed;
-	// every other (possibly stale-width) entry stays cached so Qt's internal
-	// walk gets a fast hit for it — those far-off-screen rows still self-correct
-	// the moment they actually scroll into view (ordinary sizeHint() cache-miss).
+	// Do NOT clear the whole m_sizeCache here, and do NOT let sizeHint() gate
+	// cache hits on the current width (see its comment) — with
+	// setUniformItemSizes(false), Qt's own scrollbar-range bookkeeping needs
+	// every row's height, so whenever it walks the full list after receiving
+	// even one sizeHintChanged, a wiped/width-invalidated cache means it hits
+	// a miss (and a slow badge-width recompute) for every one of potentially
+	// thousands of rows — that full-table walk happening inside Qt's own
+	// internals, after this function returns, is what the multi-second stall
+	// after restoring from maximized actually was. Only entries for the rows
+	// we're about to explicitly relayout are removed here; every other
+	// (possibly stale) entry stays cached so Qt's internal walk gets a fast
+	// hit for it. Far-off-screen rows self-correct the moment they actually
+	// scroll into view, since the scrollbar's valueChanged also debounces into
+	// a call to this same function (see the constructor) — not via sizeHint()
+	// noticing a width mismatch on its own.
 	if (!m_view) return;
 
 	QAbstractItemModel* model = m_view->model();
