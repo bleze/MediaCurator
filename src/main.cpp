@@ -333,7 +333,9 @@ int main(int argc, char* argv[])
 		QObject::connect(client, &QLocalSocket::readyRead, [client, &activeMainWindow]() {
 			client->readAll();
 			if (activeMainWindow) {
-				if (activeMainWindow->isMinimized())
+				if (activeMainWindow->isHidden())
+					activeMainWindow->restoreFromTray();
+				else if (activeMainWindow->isMinimized())
 					activeMainWindow->showNormal();
 				activeMainWindow->raise();
 				activeMainWindow->activateWindow();

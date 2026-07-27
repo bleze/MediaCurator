@@ -22,6 +22,7 @@
 #include "ui/McJobReviewDialog.h"
 #include "ui/McScanCompleteDialog.h"
 #include "ui/McSettingsDialog.h"
+#include "ui/McTitleBar.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
 #include "engine/TrackFlagService.h"
@@ -50,6 +51,7 @@
 #ifdef Q_OS_WIN
 #include <shobjidl.h>
 #include <windows.h>
+#include <dwmapi.h>
 #endif
 
 #include <QAbstractItemView>
@@ -112,6 +114,7 @@
 #include <QRandomGenerator>
 #include <QStandardPaths>
 #include <QSvgRenderer>
+#include <QSystemTrayIcon>
 #include <QtConcurrent>
 
 namespace {
@@ -421,6 +424,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	m_highscoreBandPinned = AppSettings::instance().value("mainWindow/highscoreHidden", false).toBool();
 
 	setupActions();
+	setupTitleBar();
 	setupUi();
 	m_jobPanel->setVisible(false);   // hidden until we know there are jobs
 	{
@@ -2046,8 +2050,10 @@ void McMainWindow::applyDarkBackgrounds()
 	if (m_listView && m_listView->viewport())
 		fill(m_listView->viewport(), base, base, alt);
 	fill(m_jobPanel, win, base, alt);
-	if (auto* mb = menuBar())
-		fill(mb, win, base, alt);
+	if (m_menuBar)
+		fill(m_menuBar, win, base, alt);
+	if (m_titleBar)
+		fill(m_titleBar, win, base, alt);
 	if (auto* sb = statusBar())
 		fill(sb, win, base, alt);
 	for (auto* tb : findChildren<QToolBar*>())
@@ -2076,6 +2082,10 @@ void McMainWindow::dismissSplash()
 	if (!internalWinId())
 		winId();
 	setNativeWindowBackground();
+#ifdef Q_OS_WIN
+	if (m_titleBar)
+		disableSystemMaximizeAnimation();
+#endif
 	flushWidgetRepaints(this);
 	QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 #ifdef Q_OS_WIN
@@ -2099,6 +2109,8 @@ void McMainWindow::dismissSplash()
 		setWindowIcon(m_startupIcon);
 	if (QWindow* wh = windowHandle())
 		wh->setIcon(m_startupIcon);
+	if (m_titleBar && !m_startupIcon.isNull())
+		m_titleBar->setTitleBarWindowIcon(m_startupIcon);
 
 	QMetaObject::invokeMethod(this, &McMainWindow::completeStartup, Qt::QueuedConnection);
 }
@@ -2154,11 +2166,107 @@ bool McMainWindow::nativeEvent(const QByteArray& eventType, void* message, qintp
 					*result = 1;
 				return true;
 			}
+		} else if (msg->message == WM_NCCALCSIZE && m_titleBar) {
+			if (handleNcCalcSize(message, result))
+				return true;
+		} else if (msg->message == WM_NCHITTEST && m_titleBar) {
+			if (handleNcHitTest(message, result))
+				return true;
+		} else if (msg->message == WM_NCACTIVATE && m_titleBar) {
+			// With the native caption removed there's no non-client area left
+			// to (de)activate-paint; forcing lParam=-1 tells DefWindowProc to
+			// skip that repaint. Without this, the activate/deactivate pair
+			// Windows sends around a taskbar-click restore from minimized
+			// shows as a double flash.
+			if (result)
+				*result = DefWindowProc(msg->hwnd, msg->message, msg->wParam, -1);
+			return true;
 		}
 	}
 #endif
 	return QMainWindow::nativeEvent(eventType, message, result);
 }
+
+#ifdef Q_OS_WIN
+bool McMainWindow::handleNcCalcSize(void* message, qintptr* result)
+{
+	auto* msg = static_cast<MSG*>(message);
+	if (!msg->wParam)
+		return false;   // rare FALSE case — let default handling deal with it
+
+	auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(msg->lParam);
+	if (IsZoomed(msg->hwnd)) {
+		// Standard fix for maximized frameless windows overlapping the taskbar
+		// / spilling past monitor edges: pull the reported client rect in by
+		// the OS's own invisible-border thickness on all four sides.
+		const UINT dpi = GetDpiForWindow(msg->hwnd);
+		const int fx = GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+		const int fy = GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+		params->rgrc[0].left   += fx;
+		params->rgrc[0].right  -= fx;
+		params->rgrc[0].top    += fy;
+		params->rgrc[0].bottom -= fy;
+	}
+	// Not maximized: leave rgrc[0] unchanged — client rect ends up equal to
+	// the full window rect, i.e. zero non-client area, so no native
+	// titlebar/border gets painted and our McTitleBar fills that space instead.
+	if (result)
+		*result = 0;
+	return true;
+}
+
+bool McMainWindow::handleNcHitTest(void* message, qintptr* result)
+{
+	auto* msg = static_cast<MSG*>(message);
+	const int xPhys = static_cast<short>(LOWORD(msg->lParam));
+	const int yPhys = static_cast<short>(HIWORD(msg->lParam));
+
+	RECT wr;
+	GetWindowRect(msg->hwnd, &wr);
+	const UINT dpi = GetDpiForWindow(msg->hwnd);
+	const int borderX = GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+	const int borderY = GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+
+	if (!IsZoomed(msg->hwnd)) {
+		// Buttons take priority over the resize-edge bands below so clicks
+		// near the top corners are never stolen by an edge/corner resize
+		// hit-test — checked first, before the generic edge bands.
+		const qreal dpr = windowHandle() ? windowHandle()->devicePixelRatio() : 1.0;
+		const QPoint logicalGlobal = (QPointF(xPhys, yPhys) / dpr).toPoint();
+		const QPoint localInTitleBar = m_titleBar->mapFromGlobal(logicalGlobal);
+		if (m_titleBar->rect().contains(localInTitleBar)) {
+			if (result)
+				*result = m_titleBar->isDragRegion(localInTitleBar) ? HTCAPTION : HTCLIENT;
+			return true;
+		}
+
+		const bool left   = xPhys < wr.left + borderX;
+		const bool right  = xPhys >= wr.right - borderX;
+		const bool top    = yPhys < wr.top + borderY;
+		const bool bottom = yPhys >= wr.bottom - borderY;
+
+		LRESULT hit = HTCLIENT;
+		if (top && left)          hit = HTTOPLEFT;
+		else if (top && right)    hit = HTTOPRIGHT;
+		else if (bottom && left)  hit = HTBOTTOMLEFT;
+		else if (bottom && right) hit = HTBOTTOMRIGHT;
+		else if (left)            hit = HTLEFT;
+		else if (right)           hit = HTRIGHT;
+		else if (top)             hit = HTTOP;
+		else if (bottom)          hit = HTBOTTOM;
+
+		if (hit != HTCLIENT) {
+			if (result)
+				*result = hit;
+			return true;
+		}
+	}
+
+	if (result)
+		*result = HTCLIENT;
+	return true;
+}
+#endif
 
 void McMainWindow::setNativeWindowBackground()
 {
@@ -2172,6 +2280,59 @@ void McMainWindow::setNativeWindowBackground()
 	m_nativeBgBrush = CreateSolidBrush(cref);
 	SetClassLongPtr(reinterpret_cast<HWND>(winId()), GCLP_HBRBACKGROUND,
 	                reinterpret_cast<LONG_PTR>(m_nativeBgBrush));
+#endif
+}
+
+#ifdef Q_OS_WIN
+void McMainWindow::disableSystemMaximizeAnimation()
+{
+	if (!internalWinId())
+		return;
+	const BOOL disable = TRUE;
+	DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()), DWMWA_TRANSITIONS_FORCEDISABLED,
+	                       &disable, sizeof(disable));
+}
+
+void McMainWindow::minimizeToTray()
+{
+	if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+		showMinimized();
+		return;
+	}
+	if (!m_trayIcon) {
+		m_trayIcon = new QSystemTrayIcon(windowIcon(), this);
+		m_trayIcon->setToolTip(tr("MediaCurator"));
+
+		auto* menu = new QMenu(this);
+		connect(menu->addAction(tr("Show MediaCurator")), &QAction::triggered,
+		        this, &McMainWindow::restoreFromTray);
+		menu->addSeparator();
+		// Goes through the normal close() -> closeEvent() teardown (active-job
+		// confirmation, single-instance lock release, etc.) — not bypassed.
+		connect(menu->addAction(tr("Exit")), &QAction::triggered, this, &QWidget::close);
+		m_trayIcon->setContextMenu(menu);
+
+		connect(m_trayIcon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+			if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+				restoreFromTray();
+		});
+	}
+	m_trayIcon->show();
+	hide();   // not close() — must not go through closeEvent()
+}
+#endif
+
+void McMainWindow::restoreFromTray()
+{
+	showNormal();
+	raise();
+	activateWindow();
+#ifdef Q_OS_WIN
+	if (m_trayIcon) {
+		m_trayIcon->hide();
+		m_trayIcon->deleteLater();
+		m_trayIcon = nullptr;
+	}
 #endif
 }
 
@@ -2286,6 +2447,39 @@ void McMainWindow::setupActions()
 
 }
 
+void McMainWindow::setupTitleBar()
+{
+#ifdef Q_OS_WIN
+	// Custom-drawn titlebar (see nativeEvent's WM_NCCALCSIZE/WM_NCHITTEST
+	// handling below) so a minimize-to-tray button can sit next to the
+	// normal minimize button — Qt can't inject a widget into the native
+	// OS-drawn titlebar. m_menuBar is built manually here (rather than via
+	// the parameterless menuBar() accessor) because QMainWindow::menuBar()
+	// silently creates and re-installs a brand-new QMenuBar via
+	// setMenuWidget() whenever the current menu-widget slot isn't already a
+	// bare QMenuBar — which it no longer is once this container occupies it.
+	m_titleBar = new McTitleBar(this);
+	auto* container = new QWidget(this);
+	auto* vbox = new QVBoxLayout(container);
+	vbox->setContentsMargins(0, 0, 0, 0);
+	vbox->setSpacing(0);
+	m_menuBar = new QMenuBar(container);
+	vbox->addWidget(m_titleBar);
+	vbox->addWidget(m_menuBar);
+	setMenuWidget(container);
+
+	connect(m_titleBar, &McTitleBar::minimizeRequested, this, &QWidget::showMinimized);
+	connect(m_titleBar, &McTitleBar::maximizeRestoreRequested, this, [this] {
+		isMaximized() ? showNormal() : showMaximized();
+	});
+	connect(m_titleBar, &McTitleBar::closeRequested, this, &QWidget::close);
+	connect(m_titleBar, &McTitleBar::minimizeToTrayRequested, this, &McMainWindow::minimizeToTray);
+	m_titleBar->setTitleText(windowTitle());
+#else
+	m_menuBar = menuBar();   // unchanged native titlebar/menu bar elsewhere
+#endif
+}
+
 void McMainWindow::setupToolBar()
 {
 	auto* tb = addToolBar(tr("Main"));
@@ -2341,7 +2535,7 @@ void McMainWindow::setupToolBar()
 void McMainWindow::setupMenuBar()
 {
 	// File menu
-	QMenu* fileMenu = menuBar()->addMenu(tr("&File"));
+	QMenu* fileMenu = m_menuBar->addMenu(tr("&File"));
 	fileMenu->addAction(m_actScanFolder);
 	fileMenu->addSeparator();
 	fileMenu->addAction(m_actScanLibrary);
@@ -2355,7 +2549,7 @@ void McMainWindow::setupMenuBar()
 	fileMenu->addAction(quitAction);
 
 	// View menu
-	QMenu* viewMenu = menuBar()->addMenu(tr("&View"));
+	QMenu* viewMenu = m_menuBar->addMenu(tr("&View"));
 	viewMenu->addAction(m_actRefresh);
 	viewMenu->addSeparator();
 
@@ -2411,7 +2605,7 @@ void McMainWindow::setupMenuBar()
 	}
 
 	// Tools menu
-	QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
+	QMenu* toolsMenu = m_menuBar->addMenu(tr("&Tools"));
 	toolsMenu->addAction(m_actAnalyze);
 	toolsMenu->addAction(m_actQuickAnalyze);
 	toolsMenu->addSeparator();
@@ -2429,7 +2623,7 @@ void McMainWindow::setupMenuBar()
 #endif
 
 	// Help menu
-	QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
+	QMenu* helpMenu = m_menuBar->addMenu(tr("&Help"));
 	auto* onboardingAction = new QAction(svgIcon(":/icons/chat.svg"), tr("&Getting Started…"), this);
 	connect(onboardingAction, &QAction::triggered, this, [this] {
 		McOnboardingDialog dlg(this);
@@ -2471,7 +2665,7 @@ void McMainWindow::setupMenuBar()
 	donateBtn->setFlat(true);
 	donateBtn->setToolTip(tr("Support MediaCurator"));
 	connect(donateBtn, &QPushButton::clicked, this, &McMainWindow::onDonate);
-	menuBar()->setCornerWidget(donateBtn, Qt::TopRightCorner);
+	m_menuBar->setCornerWidget(donateBtn, Qt::TopRightCorner);
 }
 
 void McMainWindow::setupStatusBar()
@@ -2707,6 +2901,15 @@ void McMainWindow::showEvent(QShowEvent* event)
 		m_firstShowDone = true;
 	else
 		updateJobPanelVisibility();
+}
+
+void McMainWindow::changeEvent(QEvent* event)
+{
+#ifdef Q_OS_WIN
+	if (event->type() == QEvent::WindowStateChange && m_titleBar)
+		m_titleBar->setMaximized(isMaximized());
+#endif
+	QMainWindow::changeEvent(event);
 }
 
 // ── Slots ─────────────────────────────────────────────────────────────────────

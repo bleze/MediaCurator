@@ -17,9 +17,11 @@
 #include "engine/HighscoreClient.h"
 #include "scanner/ScanWorker.h"
 
+class QMenuBar;
 class QPaintEvent;
 class QProgressDialog;
 class QSplashScreen;
+class QSystemTrayIcon;
 
 #ifdef Q_OS_WIN
 struct ITaskbarList3;
@@ -37,6 +39,7 @@ class McFilterPanel;
 class McHighscoreBand;
 class McHighscoreDialog;
 class McJobPanel;
+class McTitleBar;
 class McWhatIfDialog;
 class SimulateWorker;
 class ScanWorker;
@@ -76,9 +79,16 @@ public:
 	// MediaCurator.exe/its DLLs.
 	QString pendingInstallerPath() const { return m_pendingInstallerPath; }
 
+	// Restores the window after minimizeToTray() hid it — also called by
+	// main()'s single-instance handler when a second launch arrives while this
+	// instance is hidden in the tray. Safe to call even if never minimized to
+	// tray (falls back to a plain showNormal()/raise()/activateWindow()).
+	void restoreFromTray();
+
 protected:
 	void closeEvent(QCloseEvent* event) override;
 	void showEvent(QShowEvent* event) override;
+	void changeEvent(QEvent* event) override;
 	void paintEvent(QPaintEvent* event) override;
 	void keyPressEvent(QKeyEvent* event) override;
 	bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
@@ -115,6 +125,7 @@ private slots:
 private:
 	void setupUi();
 	void setupActions();
+	void setupTitleBar();
 	void setupToolBar();
 	void setupMenuBar();
 	void setupStatusBar();
@@ -152,6 +163,21 @@ private:
 #ifdef Q_OS_WIN
 	void setTaskbarProgress(int value, int total = 100);
 	void clearTaskbarProgress();
+	void minimizeToTray();
+	// WM_NCCALCSIZE / WM_NCHITTEST handlers backing the custom titlebar — see
+	// setupTitleBar(). Both called from nativeEvent() with the raw MSG*
+	// (typed void* here so this header doesn't need <windows.h>); return true
+	// if handled.
+	bool handleNcCalcSize(void* msg, qintptr* result);
+	bool handleNcHitTest(void* msg, qintptr* result);
+	// DWM's animated maximize/minimize/restore transition assumes a normal
+	// non-client frame; with it removed, the transition forces full live
+	// repaints of the (heavy) central widget at every intermediate frame
+	// instead of animating a cached bitmap like it does for native windows —
+	// visibly slow on this app's list view. Disabling it makes those
+	// transitions instant instead, which is the standard fix for custom-chrome
+	// windows. Called once the HWND exists (dismissSplash()).
+	void disableSystemMaximizeAnimation();
 #endif
 
 	// Actions (created once, shared between toolbar and menu)
@@ -187,6 +213,11 @@ private:
 	QPushButton*     m_btnCancelPosterRefresh = nullptr;
 	QProgressDialog* m_updateProgressDlg   = nullptr;
 	QSplitter*       m_splitter          = nullptr;
+	// Cached manually-constructed menu bar — see setupTitleBar() for why the
+	// parameterless menuBar() accessor must not be called anywhere once the
+	// menu-widget slot holds our titlebar+menubar container instead of a bare
+	// QMenuBar (QMainWindow::menuBar() would silently recreate/replace it).
+	QMenuBar*        m_menuBar           = nullptr;
 	struct ScanGroupState {
 		QThread*    thread       = nullptr;
 		ScanWorker* worker       = nullptr;
@@ -243,6 +274,8 @@ private:
 #ifdef Q_OS_WIN
 	ITaskbarList3*   m_taskbar = nullptr;
 	void*            m_nativeBgBrush = nullptr;   // HBRUSH — deleted before replace / in dtor
+	McTitleBar*      m_titleBar = nullptr;
+	QSystemTrayIcon* m_trayIcon = nullptr;   // lazily created by minimizeToTray(), torn down by restoreFromTray()
 #endif
 };
 

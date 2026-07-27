@@ -19,6 +19,7 @@ set(MC_SOURCES
     ui/McFilterPanel.cpp
     ui/McLibraryPanel.cpp
     ui/McMainWindow.cpp
+    ui/McTitleBar.cpp
     ui/McTrackTableModel.cpp
     ui/McFileListModel.cpp
     ui/McCardDelegate.cpp
@@ -117,6 +118,7 @@ set(MC_HEADERS
 
     # UI
     ../include/ui/McMainWindow.h
+    ../include/ui/McTitleBar.h
     ../include/ui/McTrackTableModel.h
     ../include/ui/McFileListModel.h
     ../include/ui/McCardDelegate.h
@@ -242,7 +244,7 @@ target_link_libraries(MediaCurator PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(MediaCurator PRIVATE Ole32 Shell32)
+    target_link_libraries(MediaCurator PRIVATE Ole32 Shell32 Dwmapi)
 endif()
 
 qt_add_resources(MediaCurator "mc_resources"
@@ -283,6 +285,11 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/system_update.svg
         resources/icons/storage_group.svg
         resources/icons/dropdown_arrow.svg
+        resources/icons/titlebar_minimize.svg
+        resources/icons/titlebar_maximize.svg
+        resources/icons/titlebar_restore.svg
+        resources/icons/titlebar_close.svg
+        resources/icons/titlebar_tray.svg
 )
 
 # Country flags for track-badge language icons (lipis/flag-icons, MIT —
