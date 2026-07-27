@@ -222,24 +222,6 @@ static QFrame* vSep(QWidget* parent)
 	return f;
 }
 
-static QToolButton* makePill(const QString& text, const QColor& color, QWidget* parent)
-{
-	auto* btn = new QToolButton(parent);
-	btn->setText(text);
-	btn->setCheckable(true);
-	btn->setAutoRaise(true);
-	const QString full  = color.name();
-	const QString muted = QString("rgba(%1,%2,%3,80)")
-	    .arg(color.red()).arg(color.green()).arg(color.blue());
-	btn->setStyleSheet(QString(
-		"QToolButton { border: none; border-radius: 4px;"
-		"              padding: 2px 7px; background: %2;"
-		"              color: white; font-weight: 600; }"
-		"QToolButton:checked { background: %1; }"
-	).arg(full, muted));
-	return btn;
-}
-
 } // anonymous namespace
 
 namespace Mc {
@@ -409,7 +391,7 @@ void McJobPanel::setupUi()
 
 	const auto addPillTo = [&](QWidget* parent, QHBoxLayout* layout,
 	                           const char* label, const QColor& color, const char* tip, quint32 flag) {
-		auto* btn = makePill(QLatin1String(label), color, parent);
+		auto* btn = makeFilterPill(QLatin1String(label), color, parent);
 		btn->setToolTip(QLatin1String(tip));
 		connect(btn, &QToolButton::toggled, this, [this, flag](bool on) {
 			m_qfFlags = on ? (m_qfFlags | flag) : (m_qfFlags & ~flag);

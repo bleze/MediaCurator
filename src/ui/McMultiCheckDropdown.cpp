@@ -2,11 +2,46 @@
 #include "ui/SvgIcon.h"
 
 #include <QApplication>
+#include <QFontMetrics>
 #include <QListWidget>
 #include <QScreen>
 #include <QVBoxLayout>
 
 namespace Mc {
+
+namespace {
+
+// Shared by McMultiCheckDropdown and makeFilterPill() below so a filter bar mixing
+// pill buttons and a dropdown always lines up — computed from font metrics rather
+// than either widget's own sizeHint(), since an icon-bearing QToolButton and a
+// text-only one don't size their icon+text row the same way.
+int filterButtonFixedHeight(const QFont& font)
+{
+	return QFontMetrics(font).height() + 4; // matches the 2px top/bottom QSS padding
+}
+
+} // namespace
+
+QToolButton* makeFilterPill(const QString& text, const QColor& color, QWidget* parent)
+{
+	auto* btn = new QToolButton(parent);
+	btn->setText(text);
+	btn->setCheckable(true);
+	btn->setAutoRaise(true);
+	// Unchecked: muted semi-transparent fill (looks like a dimmed badge).
+	// Checked: full-color fill — same appearance as the track badges on cards.
+	const QString full  = color.name();
+	const QString muted = QString("rgba(%1,%2,%3,80)")
+	    .arg(color.red()).arg(color.green()).arg(color.blue());
+	btn->setStyleSheet(QString(
+		"QToolButton { border: none; border-radius: 4px;"
+		"              padding: 2px 7px; background: %2;"
+		"              color: white; font-weight: 600; }"
+		"QToolButton:checked { background: %1; }"
+	).arg(full, muted));
+	btn->setFixedHeight(filterButtonFixedHeight(btn->font()));
+	return btn;
+}
 
 McMultiCheckDropdown::McMultiCheckDropdown(const QString& label, QWidget* parent,
                                            const QColor& fillColor)
@@ -24,10 +59,11 @@ McMultiCheckDropdown::McMultiCheckDropdown(const QString& label, QWidget* parent
 	// white text) when fillColor is set; otherwise the usual theme-tracking icon.
 	setIcon(m_fillColor.isValid() ? svgIcon(QStringLiteral(":/icons/dropdown_arrow.svg"), Qt::white)
 	                              : svgIcon(QStringLiteral(":/icons/dropdown_arrow.svg")));
-	setIconSize(QSize(20, 20));
+	setIconSize(QSize(19, 19));
 	// QToolButton defaults to icon-only outside a QToolBar — without this, the
 	// icon above replaces the label entirely instead of sitting beside it.
 	setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	setFixedHeight(filterButtonFixedHeight(font()));
 	updateButtonText();
 
 	m_popup = new QWidget(this, Qt::Popup);

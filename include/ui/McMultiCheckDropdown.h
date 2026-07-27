@@ -10,6 +10,13 @@ class QListWidgetItem;
 
 namespace Mc {
 
+// Togglable pill-style QToolButton used for quick-filter chips in both McFilterPanel
+// (library) and McJobPanel (job queue) filter bars — one shared definition so the two
+// bars can't drift apart the way makePill()'s duplicated copies once did. Fixed height
+// matches McMultiCheckDropdown's own (see McMultiCheckDropdown.cpp) so a row mixing
+// pills and a dropdown lines up.
+QToolButton* makeFilterPill(const QString& text, const QColor& color, QWidget* parent);
+
 // A dropdown checklist filter — button shows "<label>" or "<label> (N)" once
 // N items are checked, and clicking it opens a popup list of checkable items
 // below the button. Used for open-ended, data-driven value sets (e.g. every

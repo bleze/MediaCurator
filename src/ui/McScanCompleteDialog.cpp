@@ -74,7 +74,7 @@ QPixmap pillPixmap(const QString& label, const QColor& color, const QFont& baseF
 	p.setRenderHint(QPainter::Antialiasing);
 	p.setPen(Qt::NoPen);
 	p.setBrush(color);
-	p.drawRoundedRect(QRectF(0, 0, w, h), h / 2.0, h / 2.0);
+	p.drawRoundedRect(QRectF(0, 0, w, h), 3, 3);
 	p.setPen(Qt::white);
 	p.setFont(chipFont);
 	p.drawText(QRectF(0, 0, w, h), Qt::AlignCenter, label);

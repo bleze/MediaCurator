@@ -33,26 +33,6 @@ QFrame* vSep(QWidget* parent)
 	return f;
 }
 
-QToolButton* makePill(const QString& text, const QColor& color, QWidget* parent)
-{
-	auto* btn = new QToolButton(parent);
-	btn->setText(text);
-	btn->setCheckable(true);
-	btn->setAutoRaise(true);
-	// Unchecked: muted semi-transparent fill (looks like a dimmed badge).
-	// Checked: full-color fill — same appearance as the track badges on cards.
-	const QString full  = color.name();
-	const QString muted = QString("rgba(%1,%2,%3,80)")
-	    .arg(color.red()).arg(color.green()).arg(color.blue());
-	btn->setStyleSheet(QString(
-		"QToolButton { border: none; border-radius: 4px;"
-		"              padding: 2px 7px; background: %2;"
-		"              color: white; font-weight: 600; }"
-		"QToolButton:checked { background: %1; }"
-	).arg(full, muted));
-	return btn;
-}
-
 // Flat dropdown delegate — matches the styling of McStatusComboDelegate in
 // the job panel so all comboboxes look consistent.
 class McFlatComboDelegate final : public QStyledItemDelegate
@@ -116,7 +96,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 
 	// "N duplicate versions" toggle — only meaningful (and only shown) once
 	// GroupedByEdition is selected, so it starts hidden.
-	m_redundantChip = makePill(tr("0 duplicates"), QColor(0xb0, 0x30, 0x30), this);
+	m_redundantChip = makeFilterPill(tr("0 duplicates"), QColor(0xb0, 0x30, 0x30), this);
 	m_redundantChip->setToolTip(tr("Show only movies with a duplicated edition"));
 	m_redundantChip->setVisible(false);
 	connect(m_redundantChip, &QToolButton::toggled, this, [this](bool on) {
@@ -170,7 +150,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	auto addGroup = [&](const QColor& color, auto& pills) {
 		lay->addWidget(vSep(this));
 		for (const auto& pd : pills) {
-			auto* btn = makePill(QLatin1String(pd.label), color, this);
+			auto* btn = makeFilterPill(QLatin1String(pd.label), color, this);
 			btn->setToolTip(pd.tip);
 			const quint32 f = pd.flag;
 			connect(btn, &QToolButton::toggled, this, [this, f](bool on) { onPillToggled(f, on); });
@@ -204,7 +184,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 			  QStringLiteral("Show misc / unmatched files only") },
 		};
 		for (const auto& pd : mediaGroup) {
-			auto* btn = makePill(QLatin1String(pd.label),
+			auto* btn = makeFilterPill(QLatin1String(pd.label),
 			                     MediaTypes::badgeColor(QLatin1String(pd.type)),
 			                     m_mediaCategoryContainer);
 			btn->setToolTip(pd.tip);
