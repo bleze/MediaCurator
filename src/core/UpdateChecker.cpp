@@ -12,7 +12,6 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QProcess>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QVersionNumber>
@@ -229,37 +228,27 @@ bool UpdateChecker::launchInstaller(const QString& path)
 	}
 	logRestartDebug(QStringLiteral("launchInstaller: elevated installer process started (hProcess=%1)")
 	                    .arg(sei.hProcess != nullptr ? "valid" : "null"));
+	if (sei.hProcess) CloseHandle(sei.hProcess);
 
-	// Do NOT wait on the installer here. Windows holds an exclusive lock on a
-	// process's own executable image for as long as that process is alive —
-	// destroying every window/thread we own does not release it, only actual
-	// process exit does. Blocking this call with WaitForSingleObject (as this
-	// used to do) kept this process — and its lock on MediaCurator.exe — alive
-	// for the entire install, so the installer's overwrite of our own exe
-	// raced (and lost to) that lock every single time, surfacing NSIS's "file
-	// in use" Retry/Abort/Skip prompt. Instead, hand the
-	// "wait for the installer, then relaunch" step to a detached helper
-	// process that outlives us, and return immediately so main() can exit and
-	// actually release the lock — the installer's wizard needs several
-	// seconds of user clicks before it touches any files, which is far more
-	// than this process needs to unwind.
-	if (sei.hProcess) {
-		const DWORD installerPid = GetProcessId(sei.hProcess);
-		CloseHandle(sei.hProcess);
-
-		const QString exePath = QCoreApplication::applicationFilePath();
-		const QString psCommand =
-		    QStringLiteral("Wait-Process -Id %1 -ErrorAction SilentlyContinue; Start-Process -FilePath '%2'")
-		        .arg(installerPid)
-		        .arg(QString(exePath).replace(QLatin1Char('\''), QStringLiteral("''")));
-
-		logRestartDebug(QStringLiteral("launchInstaller: spawning detached relaunch watcher for installer pid=%1")
-		                    .arg(installerPid));
-		if (!QProcess::startDetached(QStringLiteral("powershell.exe"),
-		                              {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
-		                               QStringLiteral("-Command"), psCommand}))
-			logRestartDebug(QStringLiteral("launchInstaller: failed to start relaunch watcher"));
-	}
+	// Do NOT wait on or relaunch after the installer here. This process no
+	// longer exists by the time the install actually finishes (main() returns
+	// and exits right after this call), and there is nothing left to relaunch
+	// with anyway: CPACK_NSIS_MUI_FINISHPAGE_RUN (cmake/Packaging.cmake)
+	// already checks "Run MediaCurator.exe" by default on the wizard's finish
+	// page, which NSIS executes from inside the installer itself the instant
+	// the user clicks Finish — deterministic, no PID-tracking required.
+	//
+	// A prior version of this function tried to track the installer's PID
+	// (via GetProcessId(sei.hProcess)) with Wait-Process in a detached
+	// PowerShell helper, then relaunched the app itself once that PID exited.
+	// Debug logs (2026-07-27) showed that PID exiting near-instantly — long
+	// before the wizard was actually done — so the helper relaunched the app
+	// while the installer was still open, handing MediaCurator.exe's file
+	// lock right back to the installer mid-copy and stepping on the finish
+	// page's own relaunch. Whatever process ShellExecuteExW's "runas" verb
+	// handed back a handle for, it wasn't the long-lived wizard process, so
+	// watching it was never reliable. Let the finish page be the only
+	// relaunch path instead of duplicating it.
 	return true;
 #else
 	Q_UNUSED(path);
