@@ -2052,8 +2052,10 @@ void McMainWindow::applyDarkBackgrounds()
 	fill(m_jobPanel, win, base, alt);
 	if (m_menuBar)
 		fill(m_menuBar, win, base, alt);
+#ifdef Q_OS_WIN
 	if (m_titleBar)
 		fill(m_titleBar, win, base, alt);
+#endif
 	if (auto* sb = statusBar())
 		fill(sb, win, base, alt);
 	for (auto* tb : findChildren<QToolBar*>())
@@ -2109,8 +2111,10 @@ void McMainWindow::dismissSplash()
 		setWindowIcon(m_startupIcon);
 	if (QWindow* wh = windowHandle())
 		wh->setIcon(m_startupIcon);
+#ifdef Q_OS_WIN
 	if (m_titleBar && !m_startupIcon.isNull())
 		m_titleBar->setTitleBarWindowIcon(m_startupIcon);
+#endif
 
 	QMetaObject::invokeMethod(this, &McMainWindow::completeStartup, Qt::QueuedConnection);
 }
