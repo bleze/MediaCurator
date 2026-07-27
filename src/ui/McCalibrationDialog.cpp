@@ -154,6 +154,13 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 	// ── Buttons ─────────────────────────────────────────────────────────────
 	auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Close, this);
 
+	auto* recomputeBtn = new QPushButton(tr("Recompute From Job History"), this);
+	recomputeBtn->setToolTip(tr(
+		"Rebuilds every row from scratch by replaying all completed jobs — use this "
+		"after a change to the ratio formula in updateCalibrationFromJob(), since "
+		"existing rows otherwise stay mixed with samples recorded under the old formula."));
+	btnBox->addButton(recomputeBtn, QDialogButtonBox::ActionRole);
+
 	auto* clearBtn = new QPushButton(tr("Clear Calibration Data"), this);
 	btnBox->addButton(clearBtn, QDialogButtonBox::ResetRole);
 
@@ -164,6 +171,20 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 	btnBox->addButton(codeBtn, QDialogButtonBox::ActionRole);
 
 	connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::accept);
+
+	connect(recomputeBtn, &QPushButton::clicked, this, [this] {
+		const auto reply = QMessageBox::question(
+			this,
+			tr("Recompute From Job History"),
+			tr("This replaces every row with values rebuilt from scratch by replaying "
+			   "all completed jobs through the current ratio formula. Continue?"),
+			QMessageBox::Yes | QMessageBox::Cancel,
+			QMessageBox::Cancel);
+		if (reply == QMessageBox::Yes) {
+			DatabaseManager::instance().recomputeAllCalibration();
+			accept(); // Close and re-open to show the rebuilt data
+		}
+	});
 
 	connect(clearBtn, &QPushButton::clicked, this, [this, entries, MIN_SAMPLES, MIN_DRIFT] {
 		// Only the formats that were actually confident-and-drifting — i.e. the

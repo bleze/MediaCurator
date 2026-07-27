@@ -1470,14 +1470,31 @@ void DatabaseManager::updateCalibrationFromJob(qint64 jobId)
 	const QJsonArray tracks = QJsonDocument::fromJson(job.streamEstimatesJson.toUtf8()).array();
 	if (tracks.isEmpty()) return;
 
-	// One accuracy ratio per job, applied to every FALLBACK-estimated track removed
-	// in that job. For multi-track jobs this is an approximation; single-track jobs
-	// give an exact signal. Over many jobs the average converges per codec family.
-	// Declared-bitrate tracks are excluded below: ffprobe already reported a real
-	// bitrate for them, so a job-wide error caused by an unrelated fallback track
-	// must not be attributed to them too.
-	const double ratio = static_cast<double>(job.savedBytes)
-	                   / static_cast<double>(job.estimatedSavedBytes);
+	// Isolate the error attributable to fallback-estimated tracks specifically, rather
+	// than using the whole-job ratio (savedBytes / estimatedSavedBytes) as before.
+	// Declared-bitrate tracks already have a real ffprobe bitrate and estimate very
+	// close to their actual size — mixing their (accurate) contribution into a
+	// whole-job ratio dilutes the fallback-specific error, sometimes drastically: a
+	// job removing one exactly-estimated 232 MB AC3 track alongside 26 fallback-
+	// estimated PGS subtitle tracks measured a whole-job ratio of 0.31, while the
+	// subtitle-only portion was actually 0.18 once the accurate audio track's
+	// contribution is factored out (job 4815). One ratio per job is still an
+	// approximation when a job mixes several different fallback formats, but no
+	// longer contaminated by any declared-bitrate tracks removed alongside them.
+	double declaredEstimated       = 0.0;
+	double fallbackEstimatedTotal  = 0.0;
+	for (const QJsonValue& v : tracks) {
+		const QJsonObject obj     = v.toObject();
+		const qint64 estBytes     = obj[QStringLiteral("estimatedBytes")].toVariant().toLongLong();
+		const bool usedFallback   = obj[QStringLiteral("declaredBitrate")].toVariant().toLongLong() == 0;
+		if (usedFallback) fallbackEstimatedTotal += estBytes;
+		else              declaredEstimated      += estBytes;
+	}
+	if (fallbackEstimatedTotal <= 0.0) return; // nothing fallback-estimated to calibrate
+
+	const double actualFallbackPortion = qMax(0.0,
+	    static_cast<double>(job.savedBytes) - declaredEstimated);
+	const double ratio = actualFallbackPortion / fallbackEstimatedTotal;
 
 	QSqlQuery q(connection());
 	q.prepare(R"(
@@ -1565,6 +1582,21 @@ void DatabaseManager::clearCalibration(const QStringList& codecNames)
 	for (const QString& name : codecNames) q.addBindValue(name);
 	if (!q.exec())
 		qWarning() << "clearCalibration failed:" << q.lastError().text();
+}
+
+void DatabaseManager::recomputeAllCalibration()
+{
+	QSqlQuery clear(connection());
+	clear.exec("DELETE FROM codec_calibration");
+
+	QSqlQuery ids(connection());
+	ids.exec("SELECT id FROM jobs WHERE status='done' AND saved_bytes>0"
+	         " AND estimated_saved_bytes>0 AND stream_estimates_json != ''");
+	QList<qint64> jobIds;
+	while (ids.next()) jobIds << ids.value(0).toLongLong();
+
+	for (qint64 id : jobIds)
+		updateCalibrationFromJob(id);
 }
 
 bool DatabaseManager::updateJobType(qint64 jobId, const QString& jobType)

@@ -316,6 +316,13 @@ public:
 	// accumulating samples (too few to have been actionable yet) isn't reset
 	// just because some other format's constant was just updated in code.
 	void clearCalibration(const QStringList& codecNames = {});
+	// Rebuilds codec_calibration from scratch by replaying every completed job's
+	// stream_estimates_json through updateCalibrationFromJob() again. Needed after a
+	// change to that method's ratio formula — existing accumulated sum_ratio/sum_sq_ratio
+	// reflect whatever formula was in effect when each sample was recorded, so an
+	// in-place formula fix only affects samples from jobs completed afterward, leaving
+	// old (differently-biased) samples mixed in with new ones indefinitely otherwise.
+	void recomputeAllCalibration();
 	bool updateJobType(qint64 jobId, const QString& jobType);
 	bool updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson);
 	bool updateJobFlagChanges(qint64 jobId, const QString& flagChangesJson);
