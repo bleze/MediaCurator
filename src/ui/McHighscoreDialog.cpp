@@ -101,10 +101,12 @@ void McHighscoreDialog::rebuildTable(const QList<HighscoreEntry>& entries)
 
 	for (int row = 0; row < shown.size(); ++row) {
 		const HighscoreEntry& e = shown[row];
-		auto* rankItem       = new QTableWidgetItem(QString::number(row + 1));
+		const QString rankText = row == 0 ? QStringLiteral("🏆 1") : QString::number(row + 1);
+		auto* rankItem       = new QTableWidgetItem(rankText);
 		auto* nameItem       = new QTableWidgetItem(e.name);
 		auto* scoreItem      = new QTableWidgetItem(formatReclaimed(e.score));
 		auto* lastActiveItem = new QTableWidgetItem(formatLastActive(e.lastActive));
+		rankItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		scoreItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		lastActiveItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
