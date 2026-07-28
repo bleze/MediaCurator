@@ -81,14 +81,26 @@ if(WIN32)
     # all as part of a new install.
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 
+    # Exe is installed to $INSTDIR (see src/CMakeLists.txt: RUNTIME DESTINATION .),
+    # not $INSTDIR/bin. CMake's NSIS generator always expands both
+    # CPACK_NSIS_MUI_FINISHPAGE_RUN and CPACK_PACKAGE_EXECUTABLES as
+    # $INSTDIR\<CPACK_NSIS_EXECUTABLES_DIRECTORY>\<name> — and the default for
+    # that directory is "bin". Leaving it at the default made the finish-page
+    # "Run MediaCurator" checkbox invoke $INSTDIR\bin\MediaCurator.exe, which
+    # does not exist, so self-update appeared to finish successfully with the
+    # checkbox checked but never relaunched the app.
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
+
     # Default-on "Run MediaCurator" checkbox on the finish page of an interactive
     # install. This is what resumes the app after UpdateChecker's self-update flow
     # (download installer -> run it elevated, wizard UI -> close this process),
     # since that install is no longer silent (see UpdateChecker::launchInstaller).
     set(CPACK_NSIS_MUI_FINISHPAGE_RUN "MediaCurator.exe")
 
-    # Explicit NSIS script commands — more reliable than CPACK_PACKAGE_EXECUTABLES
-    # when the exe lives in the install root rather than a bin/ subdirectory.
+    # Explicit NSIS script commands — keep start-menu/desktop shortcuts pointed at
+    # the install-root exe. (CPACK_PACKAGE_EXECUTABLES alone would also work now
+    # that CPACK_NSIS_EXECUTABLES_DIRECTORY is ".", but these remain for the
+    # silent-install relaunch branch and WER LocalDumps registration below.)
     #
     # The IfSilent branch only matters for a manual `installer.exe /S` run (e.g. a
     # scripted deployment) — NSIS skips the finish page (and its checkbox above)

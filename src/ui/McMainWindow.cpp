@@ -2742,6 +2742,7 @@ void McMainWindow::keyPressEvent(QKeyEvent* event)
 	// On Windows, Ctrl+F4 maps to QKeySequence::Close. Route it through close()
 	// so the active-job guard in closeEvent fires the same as Alt+F4/close button.
 	if (event->matches(QKeySequence::Close)) {
+		logRestartDebug(QStringLiteral("keyPressEvent: Ctrl+F4/Close shortcut, calling close()"));
 		close();
 		return;
 	}
@@ -2750,9 +2751,18 @@ void McMainWindow::keyPressEvent(QKeyEvent* event)
 
 void McMainWindow::closeEvent(QCloseEvent* event)
 {
-	logRestartDebug(QStringLiteral("closeEvent entered (closeHandled=%1, activeJob=%2)")
+	// spontaneous()==true means Windows itself generated this (WM_CLOSE from
+	// the X button, Alt+F4, taskbar, WM_QUERYENDSESSION, or another process
+	// posting WM_CLOSE to our HWND). false means our own code called close()
+	// (Ctrl+F4's keyPressEvent, or onUpdateInstallerReady after a download) —
+	// logged here because an unattended close 6-8s after a fresh launch was
+	// observed (2026-07-28) with neither of those two call sites' own debug
+	// lines present, and no OS event-log trace either; see
+	// project_update_installer_race memory for the investigation.
+	logRestartDebug(QStringLiteral("closeEvent entered (closeHandled=%1, activeJob=%2, spontaneous=%3)")
 	                    .arg(m_closeHandled ? "yes" : "no")
-	                    .arg(m_jobQueue->hasActiveJob() ? "yes" : "no"));
+	                    .arg(m_jobQueue->hasActiveJob() ? "yes" : "no")
+	                    .arg(event->spontaneous() ? "yes" : "no"));
 
 	if (m_closeHandled) {
 		// Windows can re-deliver WM_QUERYENDSESSION/WM_CLOSE while this window is
