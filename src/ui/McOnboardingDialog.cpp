@@ -1,5 +1,6 @@
 #include "ui/McOnboardingDialog.h"
 #include "ui/McCardDelegate.h"
+#include "ui/McMultiCheckDropdown.h"
 #include "ui/SvgIcon.h"
 
 #include <QApplication>
@@ -92,6 +93,78 @@ QLabel* groupChip(QWidget* parent, int group)
 	return lbl;
 }
 
+// Renders the same per-edition badge row a Group by Movie mega card draws for each
+// member file (McCardDelegate::drawEditionBadges), standalone — two-pass since that
+// call only reports its total width once it has already drawn, unlike drawGroupChip's
+// separate groupChipWidth().
+QLabel* editionBadgesSample(QWidget* parent, const QString& editionField)
+{
+	const QFont font = parent->font();
+	const qreal dpr = parent->devicePixelRatioF();
+	constexpr int h = McCardDelegate::kBadgeH;
+
+	QPixmap scratch(1, 1);
+	QPainter measure(&scratch);
+	const int w = McCardDelegate::drawEditionBadges(&measure, 0, 0, h, editionField, font);
+	measure.end();
+
+	QPixmap pm(qCeil(w * dpr), qCeil(h * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	McCardDelegate::drawEditionBadges(&p, 0, 0, h, editionField, font);
+	p.end();
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
+	lbl->setFixedSize(w, h);
+	return lbl;
+}
+
+// Deck-of-cards glyph representing "several files collapsed into one card" — hand-drawn
+// rather than a bundled SVG since no icon in resources/icons/ fits Group by Movie without
+// being misleading (e.g. copy.svg already means clipboard-copy elsewhere), matching the
+// tinted-icon convention (parent->palette().color(QPalette::Highlight)) the SVG icons use.
+QLabel* stackedCardsIcon(QWidget* parent, int size)
+{
+	const qreal dpr = parent->devicePixelRatioF();
+	QPixmap pm(qCeil(size * dpr), qCeil(size * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing);
+	const QColor color = parent->palette().color(QPalette::Highlight);
+	const int cardW = qRound(size * 0.62);
+	const int cardH = qRound(size * 0.46);
+	const int step  = qRound(size * 0.12);
+	for (int i = 0; i < 3; ++i) {
+		const int x = (size - cardW) / 2 - step + i * step;
+		const int y = (size - cardH) / 2 - step + i * step;
+		QColor c = color;
+		c.setAlphaF(i == 2 ? 1.0 : 0.35 + 0.25 * i);
+		p.setPen(Qt::NoPen);
+		p.setBrush(c);
+		p.drawRoundedRect(QRect(x, y, cardW, cardH), 4, 4);
+	}
+	p.end();
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
+	lbl->setAlignment(Qt::AlignHCenter);
+	return lbl;
+}
+
+// The real "N duplicates" filter pill (McFilterPanel::m_redundantChip), shown checked/
+// disabled so it reads as a static preview of the "on" state rather than an inert control.
+QWidget* duplicatesChipSample(QWidget* parent)
+{
+	auto* chip = makeFilterPill(QObject::tr("1 duplicate"), QColor(0xb0, 0x30, 0x30), parent);
+	chip->setChecked(true);
+	chip->setEnabled(false);
+	return chip;
+}
+
 // One onboarding page: icon, bold title, body text, and an optional row of extra widgets
 // (e.g. sample badges) placed between the body and the bottom stretch.
 QWidget* buildPage(QWidget* parent, QLabel* icon, const QString& title,
@@ -172,6 +245,17 @@ McOnboardingDialog::McOnboardingDialog(QWidget* parent)
 		   "icon means. Run <b>Tools → Analyze</b> to preview the savings, then queue the job: "
 		   "the Job Queue panel and status bar track how much space you've reclaimed."),
 		{ sizeBarSample(m_stack, 220, 3, 0.10) }));
+
+	m_stack->addWidget(buildPage(m_stack, stackedCardsIcon(m_stack, 56),
+		tr("Group by Movie"),
+		tr("Switch the library's sort dropdown to <b>Group by Movie</b> and every file that "
+		   "matches the same title collapses into one card, with a badge for each edition you "
+		   "have — 2D, 3D, Theatrical, Extended, whatever cuts you actually own side by side. "
+		   "That's normal and expected. The <b>duplicates</b> chip next to it only lights up "
+		   "when a movie has the <i>same</i> edition twice — an accidental re-download or a "
+		   "stray copy — so you can find and clear out the real redundant files."),
+		{ editionBadgesSample(m_stack, QStringLiteral("Theatrical & Theatrical")),
+		  duplicatesChipSample(m_stack) }));
 
 	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/refresh.svg"), 56),
 		tr("Posters, fanart, and NFOs"),
