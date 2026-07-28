@@ -95,10 +95,20 @@ if(WIN32)
     # entirely during a silent install, so without this branch a silent install
     # would leave the user with nothing running. UpdateChecker's own self-update
     # no longer goes through this branch, since it launches the wizard UI instead.
+    # Registers MediaCurator.exe with Windows Error Reporting's LocalDumps
+    # feature so an unhandled crash (not a hang — WER never sees those, since
+    # the process hasn't faulted) automatically writes a .dmp to
+    # %LOCALAPPDATA%\CrashDumps without any custom exception-handler code.
+    # DumpType 2 = full memory dump (not just a minidump) — bigger on disk,
+    # but far more useful for post-mortem debugging of a Qt/desktop app whose
+    # relevant state usually isn't just on the crashing thread's stack.
+    # DumpCount caps how many are kept per DumpFolder before old ones roll off.
     set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
       CreateDirectory '$SMPROGRAMS\\\\MediaCurator'
       CreateShortCut  '$SMPROGRAMS\\\\MediaCurator\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'
       CreateShortCut  '$DESKTOP\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'
+      WriteRegDWORD HKLM 'SOFTWARE\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\LocalDumps\\\\MediaCurator.exe' 'DumpType' 2
+      WriteRegDWORD HKLM 'SOFTWARE\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\LocalDumps\\\\MediaCurator.exe' 'DumpCount' 5
       IfSilent 0 mc_run_done
         Exec '$INSTDIR\\\\MediaCurator.exe'
       mc_run_done:
@@ -107,6 +117,7 @@ if(WIN32)
       Delete '$SMPROGRAMS\\\\MediaCurator\\\\MediaCurator.lnk'
       RMDir  '$SMPROGRAMS\\\\MediaCurator'
       Delete '$DESKTOP\\\\MediaCurator.lnk'
+      DeleteRegKey HKLM 'SOFTWARE\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\LocalDumps\\\\MediaCurator.exe'
     ")
 
 # ── macOS — DragNDrop (.dmg) ───────────────────────────────────────────────────

@@ -39,6 +39,16 @@ if(MSVC)
     # Treat angle-bracket includes (Qt, STL, third-party) as external so MSVC
     # Code Analysis does not flag issues inside third-party headers.
     add_compile_options(/external:anglebrackets /external:W0)
+
+    # Emit a PDB for every configuration, including Release — CMake's built-in
+    # Release flags (/O2 /Ob2 /DNDEBUG) carry no debug-info flag at all by
+    # default, so without this a Release build (what CI ships and what runs
+    # from the NSIS installer) has literally no symbols anywhere. A matching
+    # PDB is what turns a post-mortem crash/hang dump into an actual call
+    # stack instead of raw addresses. Requires CMP0141 (NEW by default here
+    # since cmake_minimum_required is already 3.25+), which also wires up the
+    # matching /DEBUG linker flag automatically.
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase")
 endif()
 
 # ── Find Qt6 ──────────────────────────────────────────────────────────────────

@@ -117,6 +117,17 @@ jobs:
         path: build/packages/MediaCurator-*.exe
         if-no-files-found: error
 
+    # Not bundled into the installer itself (would bloat it and expose local
+    # build paths) — published as its own release asset so a crash/hang dump
+    # from this exact build can be symbolicated later in Visual Studio by just
+    # pointing Symbols settings at the folder this was downloaded into.
+    - name: Upload debug symbols (PDB)
+      uses: actions/upload-artifact@v6
+      with:
+        name: MediaCurator-Windows-PDB
+        path: build/bin/MediaCurator.pdb
+        if-no-files-found: error
+
   build-macos:
     # See build-windows's identical condition for why this exists.
     if: >-
