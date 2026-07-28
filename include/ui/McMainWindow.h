@@ -204,6 +204,7 @@ private:
 	JobQueue*        m_jobQueue    = nullptr;
 	QLabel*          m_statusLabel  = nullptr;
 	QLabel*          m_savedLabel   = nullptr;
+	QLabel*          m_moneyLabel   = nullptr;
 	McDriveActivityIndicator* m_driveActivityIndicator = nullptr;
 	QProgressBar*    m_progressBar  = nullptr;
 	QProgressBar*    m_posterProgressBar   = nullptr;

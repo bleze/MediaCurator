@@ -49,7 +49,8 @@ After setting rules to retain only english and danish audio and subtitle tracks 
 - **Play in default player** — Play any file directly from the library view, using whatever app is registered as your system's default for that file type.
 - **Dark mode support** — Uses the system colour scheme; icons and UI elements adapt automatically.
 - **Automatic updates** — MediaCurator checks GitHub for new releases and lets you install with one click — it downloads the installer, runs it silently in the background, and relaunches automatically once done. You can also skip a version or check manually.
-- **Leaderboard** *(opt-in)* — Compare total space reclaimed against other MediaCurator users on a global leaderboard. Off by default; requires a personal write key for the leaderboard backend.
+- **Money Saved estimate** — The status bar shows an estimated dollar value next to your reclaimed space, based on live average HDD pricing fetched periodically from [DatacenterDisk.com](https://datacenterdisk.com). By default this also includes space reclaimed by manually deleting files from within the app (e.g. clearing out flagged duplicates) — toggle this off in **Settings → Interface** if you'd rather see mkvmerge savings only.
+- **Leaderboard** *(opt-in)* — Compare total space reclaimed against other MediaCurator users on a global leaderboard. Off by default; requires a personal write key for the leaderboard backend. Only counts space saved by mkvmerge track removal — manually deleted files are never included here, regardless of the local Money Saved setting above.
 
 ## Why Disk Space Matters
 

@@ -45,6 +45,7 @@
 #include "core/ExternalTools.h"
 #include "core/LibraryLoader.h"
 #include "core/StorageGroupSettings.h"
+#include "core/StoragePriceService.h"
 #include "core/UpdateChecker.h"
 #include "core/UserProfile.h"
 
@@ -338,8 +339,18 @@ static void removeSidecarFiles(const QString& videoPath)
 static void deleteFileAndSidecarsAsync(const QString& videoPath)
 {
 	(void)QtConcurrent::run([videoPath] {
+		// Stat before removing — after QFile::remove() the size is gone, and a
+		// stat can itself be slow to fail on a stale/unmounted share, so it
+		// happens here on the worker thread rather than blocking the caller.
+		const qint64 sizeBytes = QFileInfo(videoPath).size();
 		QFile::remove(videoPath);
 		removeSidecarFiles(videoPath);
+
+		if (sizeBytes > 0) {
+			QMetaObject::invokeMethod(qApp, [sizeBytes] {
+				Mc::StoragePriceService::instance().recordManualDeletion(sizeBytes);
+			}, Qt::QueuedConnection);
+		}
 	});
 }
 
@@ -586,6 +597,11 @@ McMainWindow::McMainWindow(QWidget* parent)
 		if (!AppSettings::instance().value("highscore/playerName").toString().isEmpty())
 			QTimer::singleShot(0, this, &McMainWindow::submitHighscoreIfDue);
 	}
+
+	connect(&StoragePriceService::instance(), &StoragePriceService::priceRefreshed,
+	        this, &McMainWindow::updateSavedLabel);
+	connect(&StoragePriceService::instance(), &StoragePriceService::moneySavedChanged,
+	        this, &McMainWindow::updateSavedLabel);
 
 	connect(m_jobQueue, &JobQueue::reviewRequested, this,
 	        [this](qint64 jobId, const QString& filename, const QString& warningText,
@@ -2359,6 +2375,8 @@ void McMainWindow::completeStartup()
 	if (HighscoreClient::instance().isEnabled())
 		HighscoreClient::instance().fetchLeaderboard();
 
+	StoragePriceService::instance().refreshIfStale();
+
 	startBackgroundLibraryLoad();
 }
 
@@ -2731,6 +2749,10 @@ void McMainWindow::setupStatusBar()
 	m_savedLabel = new QLabel(this);
 	m_savedLabel->setVisible(false);
 	statusBar()->addPermanentWidget(m_savedLabel);
+
+	m_moneyLabel = new QLabel(this);
+	m_moneyLabel->setVisible(false);
+	statusBar()->addPermanentWidget(m_moneyLabel);
 
 	// Last permanent widget added = rightmost in the status bar.
 	m_driveActivityIndicator = new McDriveActivityIndicator(this);
@@ -3936,7 +3958,13 @@ void McMainWindow::setScanningState(bool scanning, bool quickScan)
 
 void McMainWindow::updateSavedLabel()
 {
-	const qint64 total = AppSettings::instance().reclaimedBytes();
+	auto&      settings       = AppSettings::instance();
+	const bool includeManual  = settings.value(
+	    QStringLiteral("settings/includeManualDeletesInTotals"), true).toBool();
+
+	qint64 total = settings.reclaimedBytes();
+	if (includeManual)
+		total += settings.manualDeletedBytes();
 
 	QString text;
 	if (total > 0) {
@@ -3948,7 +3976,34 @@ void McMainWindow::updateSavedLabel()
 		text = tr("Reclaimed: None");
 	}
 	m_savedLabel->setText(text);
+	m_savedLabel->setToolTip(includeManual
+	    ? tr("Includes files manually deleted from within the app (e.g. duplicates), not just "
+	         "mkvmerge track removal. The leaderboard is unaffected by this — it only ever "
+	         "counts mkvmerge track removal.")
+	    : QString());
 	m_savedLabel->setVisible(true);
+
+	auto&        priceService = StoragePriceService::instance();
+	qint64       cents        = priceService.moneySavedCentsUsd();
+	if (includeManual)
+		cents += priceService.manualMoneySavedCentsUsd();
+	const double dollars = cents / 100.0;
+	m_moneyLabel->setText(tr("Money Saved: $%1").arg(dollars, 0, 'f', 2));
+
+	const QDateTime updated       = priceService.sourceUpdatedAt();
+	const QString   sourceClause  = priceService.hasLivePrice()
+	    ? tr("live average SATA HDD pricing (source: DatacenterDisk.com, updated %1)")
+	          .arg(updated.isValid()
+	                   ? QLocale().toString(updated.toLocalTime(), QLocale::ShortFormat)
+	                   : tr("recently"))
+	    : tr("a fallback storage-price estimate — live pricing from DatacenterDisk.com hasn't "
+	         "been fetched yet");
+	m_moneyLabel->setToolTip(includeManual
+	    ? tr("Estimated from %1, including files manually deleted from within the app. The "
+	         "leaderboard is unaffected by this — it only ever counts mkvmerge track removal.")
+	          .arg(sourceClause)
+	    : tr("Estimated from %1.").arg(sourceClause));
+	m_moneyLabel->setVisible(true);
 }
 
 void McMainWindow::updateRemuxStatusBar()
@@ -4221,6 +4276,7 @@ void McMainWindow::onSettings()
 	// this matches what was just live-previewed; on Cancel it reverts the
 	// preview back to whatever was saved before the dialog opened.
 	applyFanartOpacity(AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
+	updateSavedLabel();
 }
 
 void McMainWindow::onAbout()

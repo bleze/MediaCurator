@@ -4,6 +4,7 @@
 #include <QDialogButtonBox>
 #include <QFont>
 #include <QHeaderView>
+#include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -41,6 +42,13 @@ McHighscoreDialog::McHighscoreDialog(const QList<HighscoreEntry>& entries,
 	resize(480, 480);
 
 	auto* root = new QVBoxLayout(this);
+
+	auto* hint = new QLabel(
+	    tr("Reclaimed reflects space saved by removing tracks via mkvmerge only — manually "
+	       "deleted files (e.g. duplicates) are never counted here, regardless of your local "
+	       "Settings preference."), this);
+	hint->setWordWrap(true);
+	root->addWidget(hint);
 
 	m_table = new QTableWidget(this);
 	m_table->setColumnCount(4);

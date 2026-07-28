@@ -46,6 +46,27 @@ public:
 	// 0 — so a false positive doesn't permanently erase real history.
 	void restoreReclaimedBytes(qint64 bytesValue);
 
+	// Lifetime "money saved" counter, in USD cents — derived from reclaimed
+	// bytes at whatever storage price was cached at the time each job
+	// finished (see StoragePriceService). Plain counter, no HMAC: it's an
+	// estimate, not something posted to the dreamlo leaderboard, so there's
+	// nothing worth protecting against hand-editing.
+	qint64 moneySavedCentsUsd();
+	void   addMoneySavedCentsUsd(qint64 deltaCents);
+
+	// Lifetime bytes/money reclaimed by manually deleting files from within
+	// the app (e.g. clearing out flagged duplicates), as opposed to lossless
+	// track removal via mkvmerge. Tracked separately from the counters above
+	// — and never submitted to the dreamlo leaderboard — because a manual
+	// delete is trivially game-able (copy a file, then "reclaim" it) in a way
+	// mkvmerge track removal isn't. Whether these get folded into the
+	// figures shown in the status bar is the user's call
+	// (settings/includeManualDeletesInTotals in McSettingsDialog).
+	qint64 manualDeletedBytes();
+	void   addManualDeletedBytes(qint64 deltaBytes);
+	qint64 manualMoneySavedCentsUsd();
+	void   addManualMoneySavedCentsUsd(qint64 deltaCents);
+
 	// "profile" section — used by UserProfile ─────────────────────────────────
 	QJsonObject profileSection() const;
 	void        setProfileSection(const QJsonObject& obj);

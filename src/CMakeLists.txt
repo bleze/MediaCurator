@@ -10,6 +10,7 @@ set(MC_SOURCES
     core/UserProfile.cpp
     core/UpdateChecker.cpp
     core/DriveActivityMonitor.cpp
+    core/StoragePriceService.cpp
 
     # Scanner
     scanner/FfprobeScanner.cpp
@@ -86,6 +87,7 @@ set(MC_HEADERS
     ../include/core/ExternalTools.h
     ../include/core/UpdateChecker.h
     ../include/core/DriveActivityMonitor.h
+    ../include/core/StoragePriceService.h
 
     # Scanner
     ../include/scanner/FfprobeScanner.h

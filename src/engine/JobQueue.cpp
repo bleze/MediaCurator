@@ -6,6 +6,7 @@
 #include "core/DatabaseManager.h"
 #include "core/DriveActivityMonitor.h"
 #include "core/StorageGroupSettings.h"
+#include "core/StoragePriceService.h"
 #include "core/ExternalTools.h"
 #include "scanner/FfprobeScanner.h"
 #include "scanner/ScanWorker.h"
@@ -1194,6 +1195,7 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 		db.updateJobSavedBytes(jobId, savedBytes);
 		db.updateCalibrationFromJob(jobId);
 		AppSettings::instance().addReclaimedBytes(savedBytes);
+		StoragePriceService::instance().recordSavings(savedBytes);
 	}
 
 	const QString finalOutput   = remux->finalOutputPath();
@@ -1403,6 +1405,7 @@ void JobQueue::commitReview(qint64 jobId)
 
 			if (savedBytes > 0) {
 				AppSettings::instance().addReclaimedBytes(savedBytes);
+				StoragePriceService::instance().recordSavings(savedBytes);
 			}
 
 			emit self->jobFinished(jobId, true, savedBytes);

@@ -649,13 +649,40 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	// Job Queue
 	auto* jobGroup  = new QGroupBox(tr("Job Queue"), ifacePage);
 	auto* jobLayout = new QVBoxLayout(jobGroup);
-	m_chkAutoTrack  = new QCheckBox(tr("Track running job"), jobGroup);
-	m_chkAutoTrack->setToolTip(tr(
-		"When a job starts: scroll it into view, switching the filter to Running "
-		"first if another filter is active"));
+	m_chkAutoTrack  = new QCheckBox(tr("Automatically scroll to the running job"), jobGroup);
 	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
 	jobLayout->addWidget(m_chkAutoTrack);
+
+	auto* jobHint = new QLabel(
+	    tr("When a job starts, the Job Queue panel scrolls it into view — switching to the "
+	       "Running filter first if a different filter is active, so the job doesn't stay "
+	       "hidden behind it."), jobGroup);
+	jobHint->setWordWrap(true);
+	jobLayout->addWidget(jobHint);
+
 	ifacePageLo->addWidget(jobGroup);
+
+	// Stats
+	auto* statsGroup  = new QGroupBox(tr("Stats"), ifacePage);
+	auto* statsLayout = new QVBoxLayout(statsGroup);
+	m_chkAggregateManualDeletes = new QCheckBox(
+	    tr("Include manually deleted files (e.g. duplicates) in Reclaimed / Money Saved"), statsGroup);
+	m_chkAggregateManualDeletes->setToolTip(tr(
+	    "Files deleted via \"Delete File from Disk\" aren't posted to the leaderboard — unlike "
+	    "mkvmerge track removal, a manual delete is easy to fake (copy a file, then \"reclaim\" "
+	    "it) — but you can still choose to see them reflected in your own local totals here."));
+	m_chkAggregateManualDeletes->setChecked(
+	    AppSettings::instance().value("settings/includeManualDeletesInTotals", true).toBool());
+	statsLayout->addWidget(m_chkAggregateManualDeletes);
+
+	auto* statsHint = new QLabel(
+	    tr("This only affects your local Reclaimed / Money Saved totals in the status bar. "
+	       "The leaderboard is unaffected either way — it only ever counts space saved by "
+	       "removing tracks via mkvmerge."), statsGroup);
+	statsHint->setWordWrap(true);
+	statsLayout->addWidget(statsHint);
+
+	ifacePageLo->addWidget(statsGroup);
 
 	// Cards
 	auto* cardsGroup  = new QGroupBox(tr("Cards"), ifacePage);
@@ -1071,6 +1098,8 @@ void McSettingsDialog::accept()
 	m_profile->save();
 
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());
+	AppSettings::instance().setValue("settings/includeManualDeletesInTotals",
+	                                  m_chkAggregateManualDeletes->isChecked());
 	StorageGroupSettings::setUiMaxGroup(m_spinScanGroups->value());
 	PosterManager::instance().setParallelWorkers(m_spinPosterWorkers->value());
 	AppSettings::instance().setValue("library/fanartOpacity", m_sliderFanartOpacity->value());

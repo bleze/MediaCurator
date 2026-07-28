@@ -195,6 +195,37 @@ void AppSettings::restoreReclaimedBytes(qint64 bytesValue)
 	setValue(QStringLiteral("stats/reclaimedHmacMigrated"), true);
 }
 
+qint64 AppSettings::moneySavedCentsUsd()
+{
+	return value(QStringLiteral("stats/totalMoneySavedCentsUsd"), 0LL).toLongLong();
+}
+
+void AppSettings::addMoneySavedCentsUsd(qint64 deltaCents)
+{
+	setValue(QStringLiteral("stats/totalMoneySavedCentsUsd"), moneySavedCentsUsd() + deltaCents);
+}
+
+qint64 AppSettings::manualDeletedBytes()
+{
+	return value(QStringLiteral("stats/totalManualDeletedBytes"), 0LL).toLongLong();
+}
+
+void AppSettings::addManualDeletedBytes(qint64 deltaBytes)
+{
+	setValue(QStringLiteral("stats/totalManualDeletedBytes"), manualDeletedBytes() + deltaBytes);
+}
+
+qint64 AppSettings::manualMoneySavedCentsUsd()
+{
+	return value(QStringLiteral("stats/totalManualDeletedMoneyCentsUsd"), 0LL).toLongLong();
+}
+
+void AppSettings::addManualMoneySavedCentsUsd(qint64 deltaCents)
+{
+	setValue(QStringLiteral("stats/totalManualDeletedMoneyCentsUsd"),
+	         manualMoneySavedCentsUsd() + deltaCents);
+}
+
 // ── "profile" section ──────────────────────────────────────────────────────────
 
 QJsonObject AppSettings::profileSection() const

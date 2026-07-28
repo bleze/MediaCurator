@@ -86,6 +86,7 @@ private:
 	QListWidget* m_editionTokenList;
 	QLineEdit*   m_editEditionToken;
 	QCheckBox*   m_chkAutoTrack;
+	QCheckBox*   m_chkAggregateManualDeletes;
 	QSpinBox*    m_spinScanGroups;
 	QSpinBox*    m_spinPosterWorkers;
 	QSlider*     m_sliderFanartOpacity;
