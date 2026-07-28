@@ -21,6 +21,8 @@ struct ScanChangeEntry
 	                          // "unknown" for a just-added file (TMDB classification
 	                          // hasn't run yet); the real value for a removed one.
 	StreamRecord videoStream; // default-constructed (empty codecType) if no video track
+	QString      edition;     // blank if undetected — always known by scan time (unlike
+	                          // mediaType, which awaits an async TMDB lookup)
 };
 using ScanChangeList = QList<ScanChangeEntry>;
 

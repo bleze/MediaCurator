@@ -503,6 +503,24 @@ void ScanWorker::run()
 				            << "— tracks will be missing until the next rescan";
 		}
 
+		// Like media_type, edition is heuristically filled once and never re-touched
+		// afterward, so a manual correction (once that UI exists) survives — only
+		// (re-)detect when the DB's current value is still blank, whether this file
+		// is brand new or an existing one whose content just changed. Written via
+		// updateEdition() even when nothing was detected, since that call also marks
+		// the file as edition_checked so EditionBackfillWorker doesn't redo this.
+		// Tracked in a local rather than left on result.file (ffprobe's own output
+		// never carries edition at all) so both the ScanChangeEntry below and the
+		// fileProcessed emit further down can carry the real value straight to the
+		// live UI — without this, a freshly scanned or freshly re-detected file
+		// shows no edition badge/column until the app is restarted and reloads the
+		// row from the DB.
+		QString editionValue = existing ? existing->edition : QString();
+		if (!existing || existing->edition.isEmpty()) {
+			editionValue = EditionDetector::detect(result.file, m_editionTokens);
+			db.updateEdition(*fileId, editionValue);
+		}
+
 		if (existed) {
 			++updated;
 			// File changed on disk — any pending remux job was built against the old
@@ -511,17 +529,9 @@ void ScanWorker::run()
 		} else {
 			++added;
 			newFiles << ScanChangeEntry{ *fileId, path, result.file.sizeBytes,
-			                             result.file.mediaType, firstVideoStream(allStreams) };
+			                             result.file.mediaType, firstVideoStream(allStreams),
+			                             editionValue };
 		}
-
-		// Like media_type, edition is heuristically filled once and never re-touched
-		// afterward, so a manual correction (once that UI exists) survives — only
-		// (re-)detect when the DB's current value is still blank, whether this file
-		// is brand new or an existing one whose content just changed. Written via
-		// updateEdition() even when nothing was detected, since that call also marks
-		// the file as edition_checked so EditionBackfillWorker doesn't redo this.
-		if (!existing || existing->edition.isEmpty())
-			db.updateEdition(*fileId, EditionDetector::detect(result.file, m_editionTokens));
 
 		// Resolve IMDb ID: embedded container tag takes priority, then .nfo sidecar.
 		// Store immediately so the poster worker can begin TMDB lookup without delay.
@@ -535,7 +545,8 @@ void ScanWorker::run()
 
 		// Emit the data we already have in memory — no DB round-trip needed on the UI side.
 		FileRecord fileWithId = result.file;
-		fileWithId.id = *fileId;
+		fileWithId.id      = *fileId;
+		fileWithId.edition  = editionValue;
 		emit fileProcessed(fileWithId, allStreams);
 
 		// Kick off poster lookup in parallel with the next FFprobe call.
@@ -642,7 +653,7 @@ void ScanWorker::run()
 					db.deleteFile(dbFile.id);
 					emit fileRemoved(dbFile.id);
 					removedFiles << ScanChangeEntry{ dbFile.id, dbFile.path, dbFile.sizeBytes,
-					                                dbFile.mediaType, videoStream };
+					                                dbFile.mediaType, videoStream, dbFile.edition };
 					++removed;
 				}
 			}
@@ -687,7 +698,7 @@ void ScanWorker::run()
 				db.deleteFile(dbFile.id);
 				emit fileRemoved(dbFile.id);
 				removedFiles << ScanChangeEntry{ dbFile.id, dbFile.path, dbFile.sizeBytes,
-				                                dbFile.mediaType, videoStream };
+				                                dbFile.mediaType, videoStream, dbFile.edition };
 				++removed;
 			}
 		}

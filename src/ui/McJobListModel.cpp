@@ -386,6 +386,11 @@ void McJobListModel::setFilterText(const QString& text)
 {
 	if (m_filterText == text) return;
 	m_filterText = text;
+	// Split on whitespace so e.g. "terminator 1991" matches "Terminator 2:
+	// Judgment Day (1991).mkv" — each word has to appear somewhere across the
+	// job's fields, but not as one literal phrase or in a particular order
+	// (see the tokenized match in applyFilter() below).
+	m_filterTokens = text.toLower().split(QLatin1Char(' '), Qt::SkipEmptyParts);
 	applyFilter();
 }
 
@@ -614,27 +619,34 @@ void McJobListModel::applyFilter(bool forceFullReset)
 		const JobCardEntry& e = m_allEntries[i];
 
 		// ── Text search ──────────────────────────────────────────────────────────
-		if (!m_filterText.isEmpty()) {
+		// Every token in m_filterTokens must independently match somewhere across
+		// the job's fields — a token can hit the filename while another hits a
+		// stream's language, say — rather than requiring the whole typed phrase
+		// to appear literally in one single field.
+		if (!m_filterTokens.isEmpty()) {
 			const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
-			bool hit = e.job.filename.contains(m_filterText, cs)
-			        || e.job.summary.contains(m_filterText, cs);
-			if (!hit) {
-				const QString folder = QFileInfo(e.job.filePath).dir().dirName();
-				hit = folder.contains(m_filterText, cs);
-			}
-			if (!hit) {
-				for (const StreamRecord& s : e.allStreams) {
-					if (s.language.contains(m_filterText, cs)
-					 || s.title.contains(m_filterText, cs)
-					 || s.codecName.contains(m_filterText, cs)
-					 || s.codecProfile.contains(m_filterText, cs)
-					 || s.hdrFormat.contains(m_filterText, cs)) {
-						hit = true;
-						break;
+			const QString folder = QFileInfo(e.job.filePath).dir().dirName();
+
+			bool allTokensHit = true;
+			for (const QString& token : m_filterTokens) {
+				bool hit = e.job.filename.contains(token, cs)
+				        || e.job.summary.contains(token, cs)
+				        || folder.contains(token, cs);
+				if (!hit) {
+					for (const StreamRecord& s : e.allStreams) {
+						if (s.language.contains(token, cs)
+						 || s.title.contains(token, cs)
+						 || s.codecName.contains(token, cs)
+						 || s.codecProfile.contains(token, cs)
+						 || s.hdrFormat.contains(token, cs)) {
+							hit = true;
+							break;
+						}
 					}
 				}
+				if (!hit) { allTokensHit = false; break; }
 			}
-			if (!hit) continue;
+			if (!allTokensHit) continue;
 		}
 
 		// ── Status filter ────────────────────────────────────────────────────────

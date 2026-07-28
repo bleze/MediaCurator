@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(MediaCurator
-    VERSION 1.9.8
+    VERSION 1.9.9
     DESCRIPTION "Smart media library curator — scan, filter, and clean your video collection"
     HOMEPAGE_URL "https://github.com/bleze/MediaCurator"
     LANGUAGES CXX
@@ -46,9 +46,18 @@ if(MSVC)
     # from the NSIS installer) has literally no symbols anywhere. A matching
     # PDB is what turns a post-mortem crash/hang dump into an actual call
     # stack instead of raw addresses. Requires CMP0141 (NEW by default here
-    # since cmake_minimum_required is already 3.25+), which also wires up the
-    # matching /DEBUG linker flag automatically.
+    # since cmake_minimum_required is already 3.25+) for the compiler side
+    # (/Zi via MSVC_DEBUG_INFORMATION_FORMAT).
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase")
+
+    # CMP0141 only covers the compiler flag above — CMake's own Release/
+    # MinSizeRel linker-flag defaults still omit /DEBUG (only Debug and
+    # RelWithDebInfo include it), so without this the linker throws the debug
+    # info away again at link time and no .pdb is written despite the /Zi
+    # above. /DEBUG (not /DEBUG:FULL) matches what Debug/RelWithDebInfo
+    # already get from CMake's own defaults.
+    string(APPEND CMAKE_EXE_LINKER_FLAGS_RELEASE    " /DEBUG")
+    string(APPEND CMAKE_SHARED_LINKER_FLAGS_RELEASE " /DEBUG")
 endif()
 
 # ── Find Qt6 ──────────────────────────────────────────────────────────────────

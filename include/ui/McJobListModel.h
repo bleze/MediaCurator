@@ -181,6 +181,7 @@ private:
 	QHash<qint64, QString> m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer
 	QTimer                 m_fanartBatchTimer;
 	QString                m_filterText;
+	QStringList            m_filterTokens; // m_filterText split on whitespace, lowercased — each must match independently (AND, order-independent)
 	QString                m_filterStatus;
 	quint32                m_quickFilters = 0;
 	quint32                m_storageGroupMask = 0;  // 0 = no storage-group filtering

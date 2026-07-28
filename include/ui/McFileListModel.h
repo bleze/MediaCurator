@@ -225,6 +225,7 @@ private:
 	QHash<qint64, int>        m_folderCounts;    // fileId → count of files sharing the same parent folder
 	QHash<qint64, QSet<int>>  m_forcedRemovals;  // fileId → stream indices user wants removed
 	QString                   m_filterText;
+	QStringList               m_filterTokens;    // m_filterText split on whitespace, lowercased — each must match independently (AND, order-independent)
 	bool                      m_filterHasRemovals  = false;
 	bool                      m_filterMissingImdb  = false;
 	bool                      m_filterIgnoredOnly  = false;

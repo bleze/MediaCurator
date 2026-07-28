@@ -131,8 +131,13 @@ void McFileListModel::computeDerived(FileEntry& e)
 bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 {
 	// ── Text search: filename, parent folder, stream metadata, container ──────
-	if (!m_filterText.isEmpty()) {
-		if (!e.searchText.contains(m_filterText, Qt::CaseInsensitive))
+	// Every whitespace-separated word in the query has to appear somewhere in
+	// e.searchText (already lowercased), independently — not as one literal
+	// phrase, and not in the order they were typed. e.searchText is already
+	// lowercase, and m_filterTokens was lowercased at setFilterText() time, so
+	// this is a plain case-sensitive contains() per token.
+	for (const QString& token : m_filterTokens) {
+		if (!e.searchText.contains(token))
 			return false;
 	}
 
@@ -611,6 +616,11 @@ void McFileListModel::setFilterText(const QString& text)
 {
 	if (m_filterText == text) return;
 	m_filterText = text;
+	// Split on whitespace so e.g. "terminator 1991" matches "Terminator 2: Judgment
+	// Day (1991)" — each word has to appear somewhere in the entry, but not as one
+	// literal phrase or in a particular order, the way a single .contains() call
+	// required before this.
+	m_filterTokens = text.toLower().split(QLatin1Char(' '), Qt::SkipEmptyParts);
 	applyFilter();
 }
 

@@ -34,9 +34,10 @@ constexpr int kColSign    = 0;
 constexpr int kColMedia   = 1;
 constexpr int kColTitle   = 2;
 constexpr int kColQuality = 3;
-constexpr int kColSize    = 4;
-constexpr int kColFolder  = 5;
-constexpr int kColGroup   = 6; // only present when showGroupColumn
+constexpr int kColEdition = 4;
+constexpr int kColSize    = 5;
+constexpr int kColFolder  = 6;
+constexpr int kColGroup   = 7; // only present when showGroupColumn
 
 struct ChangeRow
 {
@@ -115,6 +116,46 @@ QPixmap mediaTypeChipPixmap(const QString& mediaType, const QFont& baseFont, qre
 	return pillPixmap(label, MediaTypes::badgeColor(mt), baseFont, dpr);
 }
 
+// One pill per '&'-joined edition token (e.g. "Extended Cut & Special Edition" —
+// see EditionDetector), same coloring rule as the card view's drawEditionBadges:
+// a "3D..." token reads as a format dimension (video-badge color), everything
+// else as a narrative cut (edition-badge grey). Returns a null pixmap when
+// undetected so the cell is simply left blank, same as every other chip column here.
+QPixmap editionChipPixmap(const QString& editionField, const QFont& baseFont, qreal dpr)
+{
+	constexpr qreal kChipGap = 4; // matches McCardDelegate::kBadgeGap (private to that class)
+	const QStringList tokens = editionField.split(QStringLiteral(" & "), Qt::SkipEmptyParts);
+	if (tokens.isEmpty())
+		return {};
+
+	QList<QPixmap> pills;
+	pills.reserve(tokens.size());
+	qreal totalW = 0;
+	for (const QString& token : tokens) {
+		const QColor color = token.startsWith(QLatin1String("3D"))
+		    ? McCardDelegate::badgeColor(QStringLiteral("video"))
+		    : McCardDelegate::badgeColor(QStringLiteral("edition"));
+		const QPixmap pill = pillPixmap(token, color, baseFont, dpr);
+		if (pill.isNull()) continue;
+		if (!pills.isEmpty()) totalW += kChipGap;
+		totalW += pill.width() / dpr;
+		pills << pill;
+	}
+	if (pills.isEmpty())
+		return {};
+
+	QPixmap pix(QSize(qCeil(totalW), McCardDelegate::kBadgeH) * dpr);
+	pix.setDevicePixelRatio(dpr);
+	pix.fill(Qt::transparent);
+	QPainter p(&pix);
+	qreal x = 0;
+	for (const QPixmap& pill : pills) {
+		p.drawPixmap(QPointF(x, 0), pill);
+		x += pill.width() / dpr + kChipGap;
+	}
+	return pix;
+}
+
 // Renders the same storage-group chip the card badges and McManageFoldersDialog's
 // group picker use, so "which drive did this come from" reads identically everywhere.
 QPixmap groupChipPixmap(int group, const QFont& baseFont, qreal dpr)
@@ -163,13 +204,14 @@ McScanCompleteDialog::McScanCompleteDialog(const ScanChangeList& newFiles,
 	const bool showGroupColumn = StorageGroupSettings::multipleGroupsInUse();
 
 	m_table = new QTableWidget(this);
-	m_table->setColumnCount(showGroupColumn ? 7 : 6);
+	m_table->setColumnCount(showGroupColumn ? 8 : 7);
 	QStringList headers;
-	headers.resize(showGroupColumn ? 7 : 6);
+	headers.resize(showGroupColumn ? 8 : 7);
 	headers[kColSign]    = QString();
 	headers[kColMedia]   = tr("Category");
 	headers[kColTitle]   = tr("Title");
 	headers[kColQuality] = tr("Video");
+	headers[kColEdition] = tr("Edition");
 	headers[kColSize]    = tr("Size");
 	headers[kColFolder]  = tr("Folder");
 	if (showGroupColumn) headers[kColGroup] = tr("Storage Group");
@@ -182,6 +224,7 @@ McScanCompleteDialog::McScanCompleteDialog(const ScanChangeList& newFiles,
 	hHeader->setSectionResizeMode(kColMedia, QHeaderView::ResizeToContents);
 	hHeader->setSectionResizeMode(kColTitle, QHeaderView::ResizeToContents);
 	hHeader->setSectionResizeMode(kColQuality, QHeaderView::ResizeToContents);
+	hHeader->setSectionResizeMode(kColEdition, QHeaderView::ResizeToContents);
 	hHeader->setSectionResizeMode(kColSize, QHeaderView::ResizeToContents);
 	hHeader->setSectionResizeMode(kColFolder, QHeaderView::Stretch);
 	if (showGroupColumn)
@@ -270,6 +313,15 @@ McScanCompleteDialog::McScanCompleteDialog(const ScanChangeList& newFiles,
 				chip->setAlignment(Qt::AlignCenter);
 				m_table->setCellWidget(row, kColQuality, chip);
 			}
+		}
+
+		// Blank for most files — same "only show when detected" rule as the card view.
+		const QPixmap editionPix = editionChipPixmap(e.edition, m_table->font(), dpr);
+		if (!editionPix.isNull()) {
+			auto* chip = new QLabel(m_table);
+			chip->setPixmap(editionPix);
+			chip->setAlignment(Qt::AlignCenter);
+			m_table->setCellWidget(row, kColEdition, chip);
 		}
 
 		if (showGroupColumn) {
