@@ -504,10 +504,16 @@ QList<StreamRecord> ActionEngine::deserializeStreamSnapshot(const QString& json)
 
 QList<StreamRecord> ActionEngine::computeKeptStreams(
 	const QList<StreamRecord>& all,
-	const QString& commandArgsJson)
+	const QString& commandArgsJson,
+	bool includeUnmergedSidecars)
 {
-	if (commandArgsJson.isEmpty())
-		return all;
+	if (commandArgsJson.isEmpty()) {
+		if (includeUnmergedSidecars) return all;
+		QList<StreamRecord> filtered;
+		for (const StreamRecord& s : all)
+			if (!s.isExternal) filtered << s;
+		return filtered;
+	}
 
 	// mkvmerge args contain --audio-tracks N,M and --subtitle-tracks N,M
 	// where N,M are stream indices to *include*.  Video tracks are always kept.
@@ -541,7 +547,7 @@ QList<StreamRecord> ActionEngine::computeKeptStreams(
 
 	QList<StreamRecord> kept;
 	for (const StreamRecord& s : all) {
-		if (s.isExternal) { kept << s; continue; }  // sidecar — not in container, mkvmerge args don't apply
+		if (s.isExternal) { if (includeUnmergedSidecars) kept << s; continue; }  // sidecar — not in container, mkvmerge args don't apply
 		if (s.codecType == "video") {
 			if (noVideo) continue;
 			// When --video-tracks is absent, keep all video (backward-compatible default).

@@ -100,8 +100,17 @@ public:
 	// equivalent video/subtitle flags). Single source of truth shared by the job
 	// panel's display order and JobQueue's live "largest savings first" pick order —
 	// they must agree, or the queue can process jobs out of the order shown on screen.
+	//
+	// includeUnmergedSidecars controls whether an external/sidecar subtitle counts as
+	// "kept" even when it won't actually be absorbed into the mkvmerge output. Display
+	// call sites want true (the sidecar file still exists, still belongs to the movie).
+	// Post-mux verification against a container-only ffprobe rescan must instead pass
+	// the same condition JobQueue used to decide whether to append the sidecar to the
+	// mkvmerge command (JobQueue::m_mergeSidecarSubtitles) — otherwise the expectation
+	// promises a track that was never going to be muxed in.
 	static QList<StreamRecord> computeKeptStreams(const QList<StreamRecord>& all,
-	                                               const QString& commandArgsJson);
+	                                               const QString& commandArgsJson,
+	                                               bool includeUnmergedSidecars = true);
 
 	// Result of comparing the streams a remux was expected to produce against what
 	// actually came out of mkvmerge.

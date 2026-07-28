@@ -743,7 +743,14 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	// computed from the same "before" snapshot and the ORIGINAL commandArgsJson,
 	// so it verifies against the same keep/remove expectation the queue is acting
 	// on. Attribute-based (see ActionEngine::diffStreams), not index-based.
-	QList<StreamRecord> expectedStreams = ActionEngine::computeKeptStreams(streams, commandArgsJson);
+	// A sidecar only counts as "expected" here if m_mergeSidecarSubtitles is on —
+	// the same condition that decides, a few dozen lines below, whether it actually
+	// gets appended to the mkvmerge command. Passing anything else would let the
+	// two fall out of sync again (e.g. the setting is off, so the sidecar is never
+	// muxed in, but expectedStreams still promised it — see the "Track Mismatch"
+	// dialog this caused for an unmerged sidecar subtitle).
+	QList<StreamRecord> expectedStreams =
+		ActionEngine::computeKeptStreams(streams, commandArgsJson, m_mergeSidecarSubtitles);
 
 	QStringList args;
 	if (fileOpt) {
