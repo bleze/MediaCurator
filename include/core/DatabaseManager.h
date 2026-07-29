@@ -204,6 +204,7 @@ struct JobDisplayRecord {
 	int     displayYear = 0;  // release year from TMDB (0 = unknown)
 	QString mediaType = QStringLiteral("unknown"); // MediaTypes::* from files.media_type
 	QString edition;           // from files.edition; empty = undetected — see EditionDetector
+	bool    ignored = false;   // hidden from the job panel's normal filters — see setJobIgnored()
 };
 
 enum class JobSortMode {
@@ -356,13 +357,16 @@ public:
 	// library today, not a fixed compiled-in list.
 	QStringList distinctEditions() const;
 	bool setFileIgnored(qint64 fileId, bool ignored);
+	bool setJobIgnored(qint64 jobId, bool ignored);
 	void deleteJobsForFile(qint64 fileId);
 	void deletePendingJobsForFile(qint64 fileId);
 	[[nodiscard]] std::optional<JobRecord> jobById(qint64 jobId) const;
 	QList<JobRecord> queuedJobs(JobSortMode sortMode = JobSortMode::SmallestFirst) const;
 	QList<JobRecord> allJobs() const;
 	QList<JobDisplayRecord> allJobsForPanel(JobSortMode sortMode = JobSortMode::SmallestFirst) const;
-	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}, JobSortMode sortMode = JobSortMode::SmallestFirst) const;
+	// ignoredOnly selects jobs with jobs.ignored=1 instead of applying statusFilter —
+	// mirrors McJobListModel's m_filterIgnoredOnly (see setFilterStatus()).
+	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}, JobSortMode sortMode = JobSortMode::SmallestFirst, bool ignoredOnly = false) const;
 	[[nodiscard]] std::optional<JobDisplayRecord> jobDisplayRecordById(qint64 jobId) const;
 	QList<JobDisplayRecord> liveJobsForPanel() const;
 	int                     totalJobCount() const;

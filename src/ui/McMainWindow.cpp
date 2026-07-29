@@ -1355,46 +1355,6 @@ void McMainWindow::setupUi()
 			}
 			if (!selectedFileIds.contains(file.id)) selectedFileIds.prepend(file.id);
 		}
-		if (file.ignored) {
-			const QString unignoreLabel = selectedFileIds.size() > 1
-			    ? tr("&Unignore %1 Files").arg(selectedFileIds.size())
-			    : tr("&Unignore File");
-			auto* unignoreAction = menu.addAction(svgIcon(":/icons/visibility_off.svg"), unignoreLabel);
-			connect(unignoreAction, &QAction::triggered, this, [this, selectedFileIds, firstSelRow] {
-				auto& db = DatabaseManager::instance();
-				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, false);
-				m_listModel->setIgnoredBatch(selectedFileIds, false);
-				m_statusLabel->setText(tr("Unignored %1 file(s)").arg(selectedFileIds.size()));
-				QTimer::singleShot(0, this, [this, firstSelRow] {
-					const int n = m_listModel->rowCount();
-					if (n > 0) {
-						const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
-						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
-						m_listView->scrollTo(next, QAbstractItemView::EnsureVisible);
-					}
-				});
-			});
-		} else {
-			const QString ignoreLabel = selectedFileIds.size() > 1
-			    ? tr("&Ignore %1 Files").arg(selectedFileIds.size())
-			    : tr("&Ignore File");
-			auto* ignoreAction = menu.addAction(svgIcon(":/icons/block.svg"), ignoreLabel);
-			connect(ignoreAction, &QAction::triggered, this, [this, selectedFileIds, firstSelRow] {
-				auto& db = DatabaseManager::instance();
-				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, true);
-				m_listModel->setIgnoredBatch(selectedFileIds, true);
-				m_statusLabel->setText(tr("Ignored %1 file(s) — switch to \"Ignored files\" filter to manage them")
-				    .arg(selectedFileIds.size()));
-				QTimer::singleShot(0, this, [this, firstSelRow] {
-					const int n = m_listModel->rowCount();
-					if (n > 0) {
-						const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
-						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
-						m_listView->scrollTo(next, QAbstractItemView::EnsureVisible);
-					}
-				});
-			});
-		}
 
 		// Set Category — manual override when TMDB is wrong or unmatched.
 		{
@@ -1614,6 +1574,51 @@ void McMainWindow::setupUi()
 		connect(openFolderAction, &QAction::triggered, this, [file] {
 			revealInExplorer(file.path);
 		});
+
+		menu.addSeparator();
+
+		// Ignore / Unignore — second-to-last, directly above Remove, matching
+		// the job queue's context menu (see McJobPanel.cpp).
+		if (file.ignored) {
+			const QString unignoreLabel = selectedFileIds.size() > 1
+			    ? tr("&Unignore %1 Files").arg(selectedFileIds.size())
+			    : tr("&Unignore File");
+			auto* unignoreAction = menu.addAction(svgIcon(":/icons/visibility_off.svg"), unignoreLabel);
+			connect(unignoreAction, &QAction::triggered, this, [this, selectedFileIds, firstSelRow] {
+				auto& db = DatabaseManager::instance();
+				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, false);
+				m_listModel->setIgnoredBatch(selectedFileIds, false);
+				m_statusLabel->setText(tr("Unignored %1 file(s)").arg(selectedFileIds.size()));
+				QTimer::singleShot(0, this, [this, firstSelRow] {
+					const int n = m_listModel->rowCount();
+					if (n > 0) {
+						const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
+						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+						m_listView->scrollTo(next, QAbstractItemView::EnsureVisible);
+					}
+				});
+			});
+		} else {
+			const QString ignoreLabel = selectedFileIds.size() > 1
+			    ? tr("&Ignore %1 Files").arg(selectedFileIds.size())
+			    : tr("&Ignore File");
+			auto* ignoreAction = menu.addAction(svgIcon(":/icons/block.svg"), ignoreLabel);
+			connect(ignoreAction, &QAction::triggered, this, [this, selectedFileIds, firstSelRow] {
+				auto& db = DatabaseManager::instance();
+				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, true);
+				m_listModel->setIgnoredBatch(selectedFileIds, true);
+				m_statusLabel->setText(tr("Ignored %1 file(s) — switch to \"Ignored files\" filter to manage them")
+				    .arg(selectedFileIds.size()));
+				QTimer::singleShot(0, this, [this, firstSelRow] {
+					const int n = m_listModel->rowCount();
+					if (n > 0) {
+						const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
+						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+						m_listView->scrollTo(next, QAbstractItemView::EnsureVisible);
+					}
+				});
+			});
+		}
 
 		menu.addSeparator();
 
@@ -2175,17 +2180,21 @@ bool McMainWindow::nativeEvent(const QByteArray& eventType, void* message, qintp
 	if (eventType == "windows_generic_MSG" || eventType == "windows_dispatcher_MSG") {
 		const auto* msg = static_cast<MSG*>(message);
 		if (msg->message == WM_ERASEBKGND) {
-			const QColor bg = palette().color(QPalette::Window);
-			if (bg.lightness() < 128) {
-				HBRUSH brush = CreateSolidBrush(RGB(bg.red(), bg.green(), bg.blue()));
-				RECT rect;
-				GetClientRect(msg->hwnd, &rect);
-				FillRect(reinterpret_cast<HDC>(msg->wParam), &rect, brush);
-				DeleteObject(brush);
-				if (result)
-					*result = 1;
-				return true;
-			}
+			// Skip the erase entirely rather than filling the invalidated rect
+			// with the theme background color: McMainWindow::paintEvent()
+			// already fills that same rect with real content moments later,
+			// so painting it here first just produces two visibly different
+			// frames in quick succession — which read as a flash on
+			// something as small as a single card's hover repaint, since
+			// WM_ERASEBKGND fires for *any* invalidated region anywhere in
+			// the widget tree, not just top-level resizes. Leaving the old
+			// pixels in place until the real repaint lands avoids that extra
+			// frame; DontShowOnScreen already keeps the window off-screen
+			// for its actual first paint (see dismissSplash()), so there's
+			// no bare-white-erase moment to guard against here either.
+			if (result)
+				*result = 1;
+			return true;
 		} else if (msg->message == WM_NCCALCSIZE && m_titleBar) {
 			if (handleNcCalcSize(message, result))
 				return true;
@@ -2227,9 +2236,18 @@ bool McMainWindow::handleNcCalcSize(void* message, qintptr* result)
 		params->rgrc[0].top    += fy;
 		params->rgrc[0].bottom -= fy;
 	}
-	// Not maximized: leave rgrc[0] unchanged — client rect ends up equal to
-	// the full window rect, i.e. zero non-client area, so no native
-	// titlebar/border gets painted and our McTitleBar fills that space instead.
+	// Not maximized: shrink the client rect by 1 physical pixel on every side
+	// instead of leaving it exactly equal to the window rect. A live A/B test
+	// (temporarily disabling this handler entirely) traced a black flash
+	// during interactive resize drags to a genuinely zero non-client area —
+	// DWM has nothing left of its own to anchor live-resize double-buffering
+	// to. A 1px sliver is imperceptible (still no visible native titlebar/
+	// border — McTitleBar fills the rest) but gives DWM back enough real
+	// non-client area to take over compositing the resize border again.
+	params->rgrc[0].left   += 1;
+	params->rgrc[0].top    += 1;
+	params->rgrc[0].right  -= 1;
+	params->rgrc[0].bottom -= 1;
 	if (result)
 		*result = 0;
 	return true;
@@ -2248,9 +2266,29 @@ bool McMainWindow::handleNcHitTest(void* message, qintptr* result)
 	const int borderY = GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
 
 	if (!IsZoomed(msg->hwnd)) {
-		// Buttons take priority over the resize-edge bands below so clicks
-		// near the top corners are never stolen by an edge/corner resize
-		// hit-test — checked first, before the generic edge bands.
+		const bool left   = xPhys < wr.left + borderX;
+		const bool right  = xPhys >= wr.right - borderX;
+		const bool top    = yPhys < wr.top + borderY;
+		const bool bottom = yPhys >= wr.bottom - borderY;
+
+		// The top resize band takes priority over the titlebar's own
+		// hit-testing (buttons/drag area) below — McTitleBar sits flush
+		// against the very top of the window, so without this check its
+		// rect swallows the whole top edge and top-edge/corner resizing is
+		// never reachable at all. This matches native window behavior,
+		// where the outermost strip of the caption is still a resize handle.
+		if (top) {
+			LRESULT hit = HTTOP;
+			if (left)       hit = HTTOPLEFT;
+			else if (right) hit = HTTOPRIGHT;
+			if (result)
+				*result = hit;
+			return true;
+		}
+
+		// Buttons take priority over the remaining (non-top) resize-edge
+		// bands below so clicks near them are never stolen by an edge/corner
+		// resize hit-test.
 		const qreal dpr = windowHandle() ? windowHandle()->devicePixelRatio() : 1.0;
 		const QPoint logicalGlobal = (QPointF(xPhys, yPhys) / dpr).toPoint();
 		const QPoint localInTitleBar = m_titleBar->mapFromGlobal(logicalGlobal);
@@ -2260,19 +2298,11 @@ bool McMainWindow::handleNcHitTest(void* message, qintptr* result)
 			return true;
 		}
 
-		const bool left   = xPhys < wr.left + borderX;
-		const bool right  = xPhys >= wr.right - borderX;
-		const bool top    = yPhys < wr.top + borderY;
-		const bool bottom = yPhys >= wr.bottom - borderY;
-
 		LRESULT hit = HTCLIENT;
-		if (top && left)          hit = HTTOPLEFT;
-		else if (top && right)    hit = HTTOPRIGHT;
-		else if (bottom && left)  hit = HTBOTTOMLEFT;
+		if (bottom && left)       hit = HTBOTTOMLEFT;
 		else if (bottom && right) hit = HTBOTTOMRIGHT;
 		else if (left)            hit = HTLEFT;
 		else if (right)           hit = HTRIGHT;
-		else if (top)             hit = HTTOP;
 		else if (bottom)          hit = HTBOTTOM;
 
 		if (hit != HTCLIENT) {

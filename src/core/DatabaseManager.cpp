@@ -380,6 +380,13 @@ bool DatabaseManager::initSchema()
 		// Ignore errors — means the column already exists
 	}
 
+	// Migration: add ignored flag to jobs (queue-panel hide, mirrors files.ignored)
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE jobs ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0");
+		// Ignore errors — means the column already exists
+	}
+
 	// Migration: add per-stream original/commentary disposition flags
 	{
 		QSqlQuery m(connection());
@@ -1849,6 +1856,15 @@ bool DatabaseManager::setFileIgnored(qint64 fileId, bool ignored)
 	return q.exec();
 }
 
+bool DatabaseManager::setJobIgnored(qint64 jobId, bool ignored)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET ignored=? WHERE id=?");
+	q.addBindValue(ignored ? 1 : 0);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
 void DatabaseManager::deleteJobsForFile(qint64 fileId)
 {
 	QSqlQuery q(connection());
@@ -1995,6 +2011,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.displayYear        = q.value("display_year").toInt();
 		r.mediaType          = MediaTypes::normalize(q.value("media_type").toString());
 		r.edition            = q.value("edition").toString();
+		r.ignored            = q.value("ignored").toBool();
 		result.append(r);
 	}
 }
@@ -2024,7 +2041,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
-		"       COALESCE(f.edition, '') AS edition"
+		"       COALESCE(f.edition, '') AS edition,"
+		"       COALESCE(j.ignored, 0) AS ignored"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -2035,7 +2053,7 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 	return result;
 }
 
-QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const QString& statusFilter, JobSortMode sortMode) const
+QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const QString& statusFilter, JobSortMode sortMode, bool ignoredOnly) const
 {
 	QList<JobDisplayRecord> result;
 	QSqlQuery q(connection());
@@ -2060,7 +2078,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
-		"       COALESCE(f.edition, '') AS edition"
+		"       COALESCE(f.edition, '') AS edition,"
+		"       COALESCE(j.ignored, 0) AS ignored"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	// The panel's "running" filter tab means "actively running OR queued to run
@@ -2071,14 +2090,21 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 	// reload() instead), which meant every job's data got fetched and materialized
 	// on every refresh — measured taking multiple seconds against a real ~900-job
 	// queue, on the UI thread, at startup.
-	const bool runningTab = statusFilter == QLatin1String("running");
-	if (runningTab)
-		sql += QStringLiteral(" WHERE j.status IN ('running', 'queued')");
+	// ignoredOnly selects jobs.ignored=1 jobs regardless of statusFilter — the
+	// job panel's "Ignored" tab (mirrors files.ignored/McFileListModel). Every
+	// other tab excludes ignored jobs so they stay out of the LIMIT-ed page.
+	const bool runningTab = !ignoredOnly && statusFilter == QLatin1String("running");
+	if (ignoredOnly)
+		sql += QStringLiteral(" WHERE j.ignored = 1");
+	else if (runningTab)
+		sql += QStringLiteral(" WHERE j.status IN ('running', 'queued') AND COALESCE(j.ignored, 0) = 0");
 	else if (!statusFilter.isEmpty())
-		sql += QStringLiteral(" WHERE j.status = ?");
+		sql += QStringLiteral(" WHERE j.status = ? AND COALESCE(j.ignored, 0) = 0");
+	else
+		sql += QStringLiteral(" WHERE COALESCE(j.ignored, 0) = 0");
 	sql += QStringLiteral(" ORDER BY %1 LIMIT ?").arg(orderBy);
 	q.prepare(sql);
-	if (!statusFilter.isEmpty() && !runningTab) q.addBindValue(statusFilter);
+	if (!ignoredOnly && !statusFilter.isEmpty() && !runningTab) q.addBindValue(statusFilter);
 	q.addBindValue(limit);
 	q.exec();
 	parseJobDisplayRecord(q, result);
@@ -2106,7 +2132,8 @@ std::optional<JobDisplayRecord> DatabaseManager::jobDisplayRecordById(qint64 job
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
-		"       COALESCE(f.edition, '') AS edition"
+		"       COALESCE(f.edition, '') AS edition,"
+		"       COALESCE(j.ignored, 0) AS ignored"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.id = ?"));
@@ -2139,7 +2166,8 @@ QList<JobDisplayRecord> DatabaseManager::liveJobsForPanel() const
 		"       COALESCE(f.display_title, '') AS display_title,"
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
-		"       COALESCE(f.edition, '') AS edition"
+		"       COALESCE(f.edition, '') AS edition,"
+		"       COALESCE(j.ignored, 0) AS ignored"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.status IN ('running', 'queued')"

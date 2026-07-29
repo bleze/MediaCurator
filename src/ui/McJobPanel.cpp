@@ -350,6 +350,7 @@ void McJobPanel::setupUi()
 	m_statusFilter->addItem(tr("Running"),  QStringLiteral("running"));  // 4
 	m_statusFilter->addItem(tr("Done"),     QStringLiteral("done"));     // 5
 	m_statusFilter->addItem(tr("Failed"),   QStringLiteral("failed"));   // 6
+	m_statusFilter->addItem(tr("Ignored"),  McJobListModel::ignoredFilterValue()); // 7
 	if (auto* m = qobject_cast<QStandardItemModel*>(m_statusFilter->model()))
 		if (auto* item = m->item(0))
 			item->setEnabled(false);
@@ -824,6 +825,7 @@ void McJobPanel::setupUi()
 		QList<qint64> selectedQueuedJobIds;
 		QList<qint64> selectedFailedJobIds;   // failed only → retryable
 		QList<qint64> selectedRemovableJobIds; // all non-running selected jobs
+		QList<qint64> selectedAllJobIds;       // every selected job, any status — for Ignore/Unignore
 		int firstSelRow = idx.row();
 		{
 			QSet<int> seen;
@@ -838,6 +840,7 @@ void McJobPanel::setupUi()
 				else if (st == QLatin1String("queued")) selectedQueuedJobIds << jid;
 				else if (st == QLatin1String("failed")) selectedFailedJobIds << jid;
 				if (st != QLatin1String("running")) selectedRemovableJobIds << jid;
+				selectedAllJobIds << jid;
 			}
 			// Ensure the right-clicked item is included even if outside the selection.
 			if (status == QLatin1String("proposed") && !selectedProposedJobIds.contains(jobId))
@@ -848,6 +851,8 @@ void McJobPanel::setupUi()
 				selectedFailedJobIds.prepend(jobId);
 			if (status != QLatin1String("running") && !selectedRemovableJobIds.contains(jobId))
 				selectedRemovableJobIds.prepend(jobId);
+			if (!selectedAllJobIds.contains(jobId))
+				selectedAllJobIds.prepend(jobId);
 		}
 
 		if (status == QLatin1String("proposed")) {
@@ -1211,6 +1216,46 @@ void McJobPanel::setupUi()
 
 				dlg->show();
 			});
+		}
+
+		{
+			menu.addSeparator();
+			const bool ignored = idx.data(McJobListModel::IgnoredRole).toBool();
+			if (ignored) {
+				const QString unignoreLabel = selectedAllJobIds.size() > 1
+				    ? tr("&Unignore %1 Jobs").arg(selectedAllJobIds.size())
+				    : tr("&Unignore Job");
+				auto* unignoreAct = menu.addAction(svgIcon(":/icons/visibility_off.svg"), unignoreLabel);
+				connect(unignoreAct, &QAction::triggered, this, [this, selectedAllJobIds, firstSelRow] {
+					auto& db = DatabaseManager::instance();
+					for (qint64 jid : selectedAllJobIds) db.setJobIgnored(jid, false);
+					m_model->setIgnoredBatch(selectedAllJobIds, false);
+					updateFooter();
+					const int n = m_model->rowCount();
+					if (n > 0) {
+						const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+						m_listView->scrollTo(next);
+					}
+				});
+			} else {
+				const QString ignoreLabel = selectedAllJobIds.size() > 1
+				    ? tr("&Ignore %1 Jobs").arg(selectedAllJobIds.size())
+				    : tr("&Ignore Job");
+				auto* ignoreAct = menu.addAction(svgIcon(":/icons/block.svg"), ignoreLabel);
+				connect(ignoreAct, &QAction::triggered, this, [this, selectedAllJobIds, firstSelRow] {
+					auto& db = DatabaseManager::instance();
+					for (qint64 jid : selectedAllJobIds) db.setJobIgnored(jid, true);
+					m_model->setIgnoredBatch(selectedAllJobIds, true);
+					updateFooter();
+					const int n = m_model->rowCount();
+					if (n > 0) {
+						const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+						m_listView->scrollTo(next);
+					}
+				});
+			}
 		}
 
 		if (!selectedRemovableJobIds.isEmpty()) {

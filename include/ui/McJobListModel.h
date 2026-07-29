@@ -54,6 +54,7 @@ public:
 		MediaTypeRole         = Qt::UserRole + 28,  // QString MediaTypes::* (movie/tv/documentary/misc/unknown)
 		TmdbIdRole            = Qt::UserRole + 29,  // int — TMDB movie/tv numeric id, 0 if unknown
 		EditionRole           = Qt::UserRole + 30,  // QString from files.edition; empty = undetected — see EditionDetector
+		IgnoredRole           = Qt::UserRole + 31,  // bool — hidden from normal filters; see setIgnoredBatch()
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -122,6 +123,16 @@ public:
 
 	QString filterStatus() const { return m_filterStatus; }
 
+	// Sentinel passed to setFilterStatus() to switch to the "Ignored" tab —
+	// shows only ignored jobs instead of matching a real jobs.status value.
+	// Shared by McJobPanel (combo item data) and McJobListModel (this file).
+	static QString ignoredFilterValue() { return QStringLiteral("__ignored__"); }
+
+	/** Marks jobs as ignored/unignored — hides them from every filter except
+	 *  the dedicated "Ignored" tab (ignoredFilterValue()), mirroring
+	 *  McFileListModel::setIgnoredBatch() for the Library view. */
+	void setIgnoredBatch(const QList<qint64>& jobIds, bool ignored);
+
 public slots:
 	void setFilterText(const QString& text);
 	void setSortMode(JobSortMode sortMode);
@@ -183,6 +194,7 @@ private:
 	QString                m_filterText;
 	QStringList            m_filterTokens; // m_filterText split on whitespace, lowercased — each must match independently (AND, order-independent)
 	QString                m_filterStatus;
+	bool                   m_filterIgnoredOnly = false;  // "Ignored" tab — see ignoredFilterValue()
 	quint32                m_quickFilters = 0;
 	quint32                m_storageGroupMask = 0;  // 0 = no storage-group filtering
 	QSet<QString>          m_editionFilter;         // empty = no edition filtering

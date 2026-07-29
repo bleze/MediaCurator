@@ -253,7 +253,7 @@ void McJobListModel::reloadPaged(int limit)
 	auto& db = DatabaseManager::instance();
 	m_posterPaths = db.allDonePosterPaths();
 	m_fanartPaths = db.allDoneFanartPaths();
-	QList<JobDisplayRecord> displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode);
+	QList<JobDisplayRecord> displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode, m_filterIgnoredOnly);
 	QSet<qint64> seenJobIds;
 	seenJobIds.reserve(displayJobs.size());
 	for (const JobDisplayRecord& djr : displayJobs)
@@ -396,8 +396,19 @@ void McJobListModel::setFilterText(const QString& text)
 
 void McJobListModel::setFilterStatus(const QString& status)
 {
-	if (m_filterStatus == status) return;
-	m_filterStatus = status;
+	const bool ignoredOnly = (status == ignoredFilterValue());
+	const QString effectiveStatus = ignoredOnly ? QString() : status;
+	if (m_filterStatus == effectiveStatus && m_filterIgnoredOnly == ignoredOnly) return;
+	m_filterStatus = effectiveStatus;
+	m_filterIgnoredOnly = ignoredOnly;
+	applyFilter();
+}
+
+void McJobListModel::setIgnoredBatch(const QList<qint64>& jobIds, bool ignored)
+{
+	const QSet<qint64> idSet(jobIds.begin(), jobIds.end());
+	for (auto& e : m_allEntries)
+		if (idSet.contains(e.job.jobId)) e.job.ignored = ignored;
 	applyFilter();
 }
 
@@ -649,6 +660,13 @@ void McJobListModel::applyFilter(bool forceFullReset)
 			if (!allTokensHit) continue;
 		}
 
+		// ── Ignored filter ───────────────────────────────────────────────────────
+		if (m_filterIgnoredOnly) {
+			if (!e.job.ignored) continue;
+		} else {
+			if (e.job.ignored) continue;
+		}
+
 		// ── Status filter ────────────────────────────────────────────────────────
 		if (!statusMatchesFilter(e.job.status))
 			continue;
@@ -855,6 +873,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case JobIdRole:         return e.job.jobId;
 	case FileIdRole:        return e.job.fileId;
 	case StatusRole:        return e.job.status;
+	case IgnoredRole:       return e.job.ignored;
 	case SavedRole:         return e.job.savedBytes;
 	case AllStreamsRole:     return QVariant::fromValue(e.allStreams);
 	case KeptStreamsRole:    return QVariant::fromValue(e.keptStreams);
