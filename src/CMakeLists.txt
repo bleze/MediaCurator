@@ -47,6 +47,7 @@ set(MC_SOURCES
     ui/McHighscoreDialog.cpp
     ui/McScanCompleteDialog.cpp
     ui/SvgIcon.cpp
+    ui/FileReveal.cpp
     ui/McStorageGroupChipToggle.cpp
     ui/McMultiCheckDropdown.cpp
     ui/McWindowGeometry.cpp
@@ -151,6 +152,7 @@ set(MC_HEADERS
     ../include/ui/McHighscoreDialog.h
     ../include/ui/McScanCompleteDialog.h
     ../include/ui/SvgIcon.h
+    ../include/ui/FileReveal.h
     ../include/ui/McFlagRowWidget.h
     ../include/ui/McStorageGroupChipToggle.h
     ../include/ui/McMultiCheckDropdown.h

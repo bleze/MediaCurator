@@ -662,6 +662,23 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	ifacePageLo->addWidget(jobGroup);
 
+	// File Manager
+	auto* fileMgrGroup  = new QGroupBox(tr("File Manager"), ifacePage);
+	auto* fileMgrLayout = new QVBoxLayout(fileMgrGroup);
+	m_chkAlwaysUseExplorer = new QCheckBox(
+	    tr("Always use File Explorer for \"Open Containing Folder\" (selects the file)"), fileMgrGroup);
+	m_chkAlwaysUseExplorer->setToolTip(tr(
+	    "Off (default): opens your system default file manager, but it just opens the "
+	    "folder without selecting the file.\n"
+	    "On: always launches File Explorer specifically, with the file pre-selected — "
+	    "useful if your default file manager isn't File Explorer but you still want the "
+	    "file highlighted."));
+	m_chkAlwaysUseExplorer->setChecked(
+	    AppSettings::instance().value("settings/alwaysUseExplorerForReveal", false).toBool());
+	fileMgrLayout->addWidget(m_chkAlwaysUseExplorer);
+
+	ifacePageLo->addWidget(fileMgrGroup);
+
 	// Stats
 	auto* statsGroup  = new QGroupBox(tr("Stats"), ifacePage);
 	auto* statsLayout = new QVBoxLayout(statsGroup);
@@ -1100,6 +1117,8 @@ void McSettingsDialog::accept()
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());
 	AppSettings::instance().setValue("settings/includeManualDeletesInTotals",
 	                                  m_chkAggregateManualDeletes->isChecked());
+	AppSettings::instance().setValue("settings/alwaysUseExplorerForReveal",
+	                                  m_chkAlwaysUseExplorer->isChecked());
 	StorageGroupSettings::setUiMaxGroup(m_spinScanGroups->value());
 	PosterManager::instance().setParallelWorkers(m_spinPosterWorkers->value());
 	AppSettings::instance().setValue("library/fanartOpacity", m_sliderFanartOpacity->value());

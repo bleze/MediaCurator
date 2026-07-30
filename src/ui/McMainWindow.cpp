@@ -7,6 +7,7 @@
 #include "ui/McHighscoreDialog.h"
 #include "ui/McManageFoldersDialog.h"
 #include "ui/SvgIcon.h"
+#include "ui/FileReveal.h"
 #include "core/DriveActivityMonitor.h"
 #include "ui/McCardDelegate.h"
 #include "ui/McDriveActivityIndicator.h"
@@ -92,7 +93,6 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressDialog>
-#include <QProcess>
 #include <QProgressBar>
 #include <QGuiApplication>
 #include <QWindow>
@@ -292,21 +292,6 @@ private:
 	bool     m_hovered = false;
 	bool     m_checked = false;
 };
-
-// Opens the file's containing folder with the file itself selected/highlighted,
-// rather than just opening the folder with nothing selected. Windows-specific
-// (explorer.exe's /select switch); falls back to plain folder-open elsewhere,
-// since neither macOS's "open -R" nor Linux file managers have a portable
-// equivalent worth special-casing for a Windows-primary project.
-static void revealInExplorer(const QString& path)
-{
-#ifdef Q_OS_WIN
-	QProcess::startDetached(QStringLiteral("explorer.exe"),
-	                        { QStringLiteral("/select,"), QDir::toNativeSeparators(path) });
-#else
-	QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
-#endif
-}
 
 // Deletes sidecar files that share the video's base filename (subtitles,
 // .nfo, thumbnails, etc.) — e.g. "Movie.srt"/"Movie.en.srt"/"Movie.nfo"
@@ -1121,7 +1106,7 @@ void McMainWindow::setupUi()
 				auto* openFolderAction = menu.addAction(svgIcon(":/icons/folder_open.svg"),
 				                                         tr("Open &Containing Folder"));
 				connect(openFolderAction, &QAction::triggered, this, [rowFile] {
-					revealInExplorer(rowFile.path);
+					revealInFileManager(rowFile.path);
 				});
 
 				menu.addSeparator();
@@ -1572,7 +1557,7 @@ void McMainWindow::setupUi()
 		auto* openFolderAction = menu.addAction(svgIcon(":/icons/folder_open.svg"),
 		                                         tr("Open &Containing Folder"));
 		connect(openFolderAction, &QAction::triggered, this, [file] {
-			revealInExplorer(file.path);
+			revealInFileManager(file.path);
 		});
 
 		menu.addSeparator();

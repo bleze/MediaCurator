@@ -15,6 +15,7 @@
 #include "ui/McWindowGeometry.h"
 #include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
+#include "ui/FileReveal.h"
 #include "engine/ActionEngine.h"
 #include "engine/JobQueue.h"
 #include "engine/PosterManager.h"
@@ -999,8 +1000,7 @@ void McJobPanel::setupUi()
 		connect(openFolderAct, &QAction::triggered, this, [fileId] {
 			const auto fileOpt = DatabaseManager::instance().fileById(fileId);
 			if (fileOpt)
-				QDesktopServices::openUrl(
-					QUrl::fromLocalFile(QFileInfo(fileOpt->path).absolutePath()));
+				revealInFileManager(fileOpt->path);
 		});
 
 		// Show log for any job that has actually run
