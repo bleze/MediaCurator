@@ -3,6 +3,8 @@
 #include "core/AppSettings.h"
 #include "ui/ImdbSearchDialog.h"
 #include "ui/McFilterPanel.h"
+#include "ui/McDownloadQueueBand.h"
+#include "ui/McDownloadQueueDialog.h"
 #include "ui/McHighscoreBand.h"
 #include "ui/McHighscoreDialog.h"
 #include "ui/McManageFoldersDialog.h"
@@ -27,6 +29,7 @@
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
 #include "engine/TrackFlagService.h"
+#include "engine/DownloadClientRegistry.h"
 #include "engine/HighscoreClient.h"
 #include "engine/SimulateWorker.h"
 #include "ui/McWhatIfDialog.h"
@@ -43,6 +46,7 @@
 #include "scanner/ScanWorker.h"
 #include "scanner/EditionBackfillWorker.h"
 #include "core/DatabaseManager.h"
+#include "core/DownloadIntegrationSettings.h"
 #include "core/ExternalTools.h"
 #include "core/LibraryLoader.h"
 #include "core/StorageGroupSettings.h"
@@ -418,6 +422,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
 	m_jobPanelPinned     = AppSettings::instance().value("mainWindow/queueHidden",    false).toBool();
 	m_highscoreBandPinned = AppSettings::instance().value("mainWindow/highscoreHidden", false).toBool();
+	m_downloadQueueBandPinned = AppSettings::instance().value("mainWindow/downloadQueueHidden", false).toBool();
 
 	setupActions();
 	setupTitleBar();
@@ -582,6 +587,11 @@ McMainWindow::McMainWindow(QWidget* parent)
 		if (!AppSettings::instance().value("highscore/playerName").toString().isEmpty())
 			QTimer::singleShot(0, this, &McMainWindow::submitHighscoreIfDue);
 	}
+
+	connect(&DownloadClientRegistry::instance(), &DownloadClientRegistry::queueChanged,
+	        this, &McMainWindow::onDownloadQueueChanged);
+	connect(&DownloadClientRegistry::instance(), &DownloadClientRegistry::downloadsCompleted,
+	        this, &McMainWindow::onDownloadsCompleted);
 
 	connect(&StoragePriceService::instance(), &StoragePriceService::priceRefreshed,
 	        this, &McMainWindow::updateSavedLabel);
@@ -1750,6 +1760,22 @@ void McMainWindow::setupUi()
 		});
 	}
 
+	m_downloadQueueBand = new McDownloadQueueBand(topWidget);
+	m_downloadQueueBand->setVisible(false);   // hidden until there's an active/queued download
+	topLayout->addWidget(m_downloadQueueBand);
+	connect(m_downloadQueueBand, &McDownloadQueueBand::clicked, this, [this] {
+		if (!m_downloadQueueDialog) {
+			m_downloadQueueDialog = new McDownloadQueueDialog(
+			    DownloadClientRegistry::instance().allQueueItems(), m_profile->editionTokens(), this);
+			m_downloadQueueDialog->setAttribute(Qt::WA_DeleteOnClose);
+			connect(m_downloadQueueDialog, &QObject::destroyed, this,
+			        [this] { m_downloadQueueDialog = nullptr; });
+		}
+		m_downloadQueueDialog->show();
+		m_downloadQueueDialog->raise();
+		m_downloadQueueDialog->activateWindow();
+	});
+
 	topLayout->addWidget(m_filterPanel);
 	topLayout->addWidget(m_listView, 1);
 
@@ -2390,6 +2416,9 @@ void McMainWindow::completeStartup()
 	if (HighscoreClient::instance().isEnabled())
 		HighscoreClient::instance().fetchLeaderboard();
 
+	DownloadClientRegistry::instance().reconfigureAll();
+	updateDownloadQueueVisibility();
+
 	StoragePriceService::instance().refreshIfStale();
 
 	startBackgroundLibraryLoad();
@@ -2482,6 +2511,16 @@ void McMainWindow::setupActions()
 		});
 	}
 
+	m_actToggleDownloadQueue = new QAction(tr("Download Queue"), this);
+	m_actToggleDownloadQueue->setCheckable(true);
+	m_actToggleDownloadQueue->setToolTip(tr("Show / hide the download queue band"));
+	m_actToggleDownloadQueue->setIcon(svgIcon(":/icons/add_to_queue.svg"));
+	m_actToggleDownloadQueue->setVisible(false);   // shown once a download-client integration is configured
+	connect(m_actToggleDownloadQueue, &QAction::toggled, this, [this](bool checked) {
+		m_downloadQueueBandPinned = !checked;
+		AppSettings::instance().setValue("mainWindow/downloadQueueHidden", m_downloadQueueBandPinned);
+		updateDownloadQueueVisibility();
+	});
 }
 
 void McMainWindow::setupTitleBar()
@@ -2559,6 +2598,7 @@ void McMainWindow::setupToolBar()
 	tb->addAction(m_actToggleQueue);
 	if (m_actToggleHighscore)
 		tb->addAction(m_actToggleHighscore);
+	tb->addAction(m_actToggleDownloadQueue);
 	tb->addSeparator();
 	tb->addAction(m_actRefresh);
 
@@ -2637,6 +2677,31 @@ void McMainWindow::setupMenuBar()
 		};
 
 		m_menuHighscoreBtn = toggle;
+		wa->setDefaultWidget(toggle);
+		viewMenu->addAction(wa);
+	}
+
+	// Download queue toggle — same McQueueToggle widget, reused as-is.
+	{
+		const QColor h   = palette().color(QPalette::Highlight);
+		const QColor hov = h.lighter(175);
+
+		auto* wa     = new QWidgetAction(viewMenu);
+		auto* toggle = new McQueueToggle(
+		    svgIcon(":/icons/add_to_queue.svg"),
+		    tr("Download Queue"),
+		    hov,
+		    QColor(h.red(), h.green(), h.blue(), 140),
+		    QColor(h.red(), h.green(), h.blue(), 180),
+		    viewMenu);
+		toggle->setChecked(m_actToggleDownloadQueue->isChecked());
+
+		toggle->onToggled = [this, viewMenu](bool on) {
+			m_actToggleDownloadQueue->setChecked(on);
+			viewMenu->hide();
+		};
+
+		m_menuDownloadQueueBtn = toggle;
 		wa->setDefaultWidget(toggle);
 		viewMenu->addAction(wa);
 	}
@@ -2930,6 +2995,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	AppSettings::instance().setValue("mainWindow/jobPanelHeight", m_savedJobPanelHeight);
 	AppSettings::instance().setValue("mainWindow/queueHidden",    m_jobPanelPinned);
 	AppSettings::instance().setValue("mainWindow/highscoreHidden", m_highscoreBandPinned);
+	AppSettings::instance().setValue("mainWindow/downloadQueueHidden", m_downloadQueueBandPinned);
 	AppSettings::instance().setValue("library/sortOrder",         m_filterPanel->sortCombo()->currentData().toInt());
 	DriveActivityMonitor::persist();
 
@@ -3065,7 +3131,7 @@ bool McMainWindow::isScanning() const
 	return false;
 }
 
-void McMainWindow::startScanRoots(const QStringList& roots, bool quickScan)
+void McMainWindow::startScanRoots(const QStringList& roots, bool quickScan, bool silent)
 {
 	m_scanGroups.clear();
 	m_newFilesFound.clear();
@@ -3073,6 +3139,7 @@ void McMainWindow::startScanRoots(const QStringList& roots, bool quickScan)
 	m_scannedSoFar = 0;
 	m_updatedSoFar = 0;
 	m_removedSoFar = 0;
+	m_currentScanSilent = silent;
 
 	const QHash<int, QStringList> byGroup = StorageGroupSettings::partitionRootsByGroup(roots);
 	for (auto it = byGroup.cbegin(); it != byGroup.cend(); ++it) {
@@ -3252,12 +3319,14 @@ void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*
 
 	setScanningState(false);
 
-	if (m_newFilesFound.isEmpty() && m_updatedSoFar == 0 && m_removedSoFar == 0) {
-		QMessageBox::information(this, tr("Scan Complete"), tr("No changes found."));
-	} else {
-		auto* dlg = new McScanCompleteDialog(m_newFilesFound, m_removedFilesFound, m_updatedSoFar,
-		                                     this);
-		dlg->exec();
+	if (!m_currentScanSilent) {
+		if (m_newFilesFound.isEmpty() && m_updatedSoFar == 0 && m_removedSoFar == 0) {
+			QMessageBox::information(this, tr("Scan Complete"), tr("No changes found."));
+		} else {
+			auto* dlg = new McScanCompleteDialog(m_newFilesFound, m_removedFilesFound, m_updatedSoFar,
+			                                     this);
+			dlg->exec();
+		}
 	}
 
 	// A scan only invalidates existing jobs when a known file changed or a file
@@ -3280,6 +3349,12 @@ void McMainWindow::onScanFinishedForGroup(int groupId, int scanned, int /*added*
 	if (jobCount > 0)
 		text += tr(", %1 in queue").arg(jobCount);
 	m_statusLabel->setText(text);
+
+	m_currentScanSilent = false;
+	if (m_pendingAutoAnalyze) {
+		m_pendingAutoAnalyze = false;
+		onQuickAnalyze();
+	}
 }
 
 void McMainWindow::stopAllScanWorkers(bool waitForThreads)
@@ -4262,6 +4337,54 @@ void McMainWindow::updateHighscoreVisibility()
 		m_highscoreBand->setVisible(shouldShow);
 }
 
+void McMainWindow::onDownloadQueueChanged()
+{
+	const QList<DownloadQueueItem> items = DownloadClientRegistry::instance().allQueueItems();
+	if (m_downloadQueueBand)
+		m_downloadQueueBand->setItems(items);
+	if (m_downloadQueueDialog)
+		m_downloadQueueDialog->setItems(items);
+	updateDownloadQueueVisibility();
+}
+
+void McMainWindow::updateDownloadQueueVisibility()
+{
+	const bool configured = DownloadClientRegistry::instance().anyConfigured();
+	const bool hasData    = !DownloadClientRegistry::instance().allQueueItems().isEmpty();
+	const bool shouldShow = configured && hasData && !m_downloadQueueBandPinned;
+
+	if (m_actToggleDownloadQueue) {
+		QSignalBlocker blocker(m_actToggleDownloadQueue);
+		m_actToggleDownloadQueue->setVisible(configured);
+		m_actToggleDownloadQueue->setChecked(shouldShow);
+		m_actToggleDownloadQueue->setEnabled(hasData);
+	}
+	if (m_menuDownloadQueueBtn) {
+		auto* toggle = static_cast<McQueueToggle*>(m_menuDownloadQueueBtn);
+		toggle->setVisible(configured);
+		toggle->setChecked(shouldShow);
+		toggle->setEnabled(hasData);
+	}
+	if (m_downloadQueueBand)
+		m_downloadQueueBand->setVisible(shouldShow);
+}
+
+void McMainWindow::onDownloadsCompleted(QStringList /*names*/, QString /*providerId*/)
+{
+	const NzbGetConfig nzbConfig = DownloadIntegrationSettings::nzbgetConfig();
+	if (!nzbConfig.autoQuickScan)
+		return;
+	if (isScanning())
+		return;   // skip silently — no modal, unlike the manual Quick Scan path
+
+	const QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
+	if (roots.isEmpty())
+		return;   // nothing configured to scan yet
+
+	m_pendingAutoAnalyze = nzbConfig.autoQuickAnalyze;
+	startScanRoots(roots, /*quickScan=*/true, /*silent=*/true);
+}
+
 void McMainWindow::launchInDefaultPlayer(const QString& rawPath)
 {
 	// Delegates to the OS shell (ShellExecute / LSOpenURLsWithRole / xdg-open),
@@ -4292,6 +4415,7 @@ void McMainWindow::onSettings()
 	// preview back to whatever was saved before the dialog opened.
 	applyFanartOpacity(AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
 	updateSavedLabel();
+	updateDownloadQueueVisibility();
 }
 
 void McMainWindow::onAbout()

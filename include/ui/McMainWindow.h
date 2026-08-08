@@ -14,6 +14,7 @@
 
 #include <functional>
 
+#include "engine/DownloadClient.h"
 #include "engine/HighscoreClient.h"
 #include "scanner/ScanWorker.h"
 
@@ -33,6 +34,8 @@ class AnalyzeWorker;
 class EditionBackfillWorker;
 class JobQueue;
 class LibraryLoader;
+class McDownloadQueueBand;
+class McDownloadQueueDialog;
 class McDriveActivityIndicator;
 class McFileListModel;
 class McFilterPanel;
@@ -121,6 +124,8 @@ private slots:
 	void onUpdateDownloadProgress(qint64 received, qint64 total);
 	void onUpdateDownloadFailed(QString error);
 	void onUpdateInstallerReady(QString path);
+	void onDownloadQueueChanged();
+	void onDownloadsCompleted(QStringList names, QString providerId);
 
 private:
 	void setupUi();
@@ -137,7 +142,7 @@ private:
 	void startEditionBackfill();
 	void ensureOnScreen();
 	void setNativeWindowBackground();
-	void startScanRoots(const QStringList& roots, bool quickScan);
+	void startScanRoots(const QStringList& roots, bool quickScan, bool silent = false);
 	void enqueueScanRoot(const QString& root, bool quickScan);
 	void createScanWorkerForGroup(int groupId, const QString& folderPath, bool quickScan);
 	void onScanProgressForGroup(int groupId, int current, int total, const QString& currentFile);
@@ -153,6 +158,7 @@ private:
 	void updateJobPanelVisibility(bool forceShow = false);   // show/hide job panel based on whether any jobs exist
 	void updateRemuxStatusBar();
 	void updateHighscoreVisibility();
+	void updateDownloadQueueVisibility();
 	void submitHighscoreIfDue();
 	QString promptForHighscoreName(qint64 mb);
 	void onHighscoreLeaderboardReady(QList<HighscoreEntry> entries);
@@ -195,6 +201,8 @@ private:
 	QAction*  m_actCheckUpdates  = nullptr;
 	QAction*  m_actToggleHighscore = nullptr;
 	QWidget*  m_menuHighscoreBtn   = nullptr;  // view-menu McQueueToggle for the highscore toggle
+	QAction*  m_actToggleDownloadQueue = nullptr;
+	QWidget*  m_menuDownloadQueueBtn   = nullptr;  // view-menu McQueueToggle for the download-queue toggle
 
 	UserProfile*     m_profile      = nullptr;
 	McFileListModel* m_listModel    = nullptr;
@@ -262,6 +270,11 @@ private:
 	QTimer*            m_highscoreDebounce   = nullptr;
 	bool               m_highscoreBandPinned = false;
 	QList<HighscoreEntry> m_lastHighscoreEntries;
+	McDownloadQueueBand*   m_downloadQueueBand   = nullptr;
+	McDownloadQueueDialog* m_downloadQueueDialog = nullptr;
+	bool             m_downloadQueueBandPinned = false;
+	bool             m_currentScanSilent   = false;   // suppresses scan-complete modals for auto-triggered scans
+	bool             m_pendingAutoAnalyze  = false;   // set by onDownloadsCompleted(), consumed once the silent scan finishes
 	bool             m_firstShowDone       = false;
 	bool             m_startupCompleteDone = false;
 	bool             m_splashDismissed     = false;

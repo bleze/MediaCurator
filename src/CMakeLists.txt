@@ -11,6 +11,7 @@ set(MC_SOURCES
     core/UpdateChecker.cpp
     core/DriveActivityMonitor.cpp
     core/StoragePriceService.cpp
+    core/DownloadIntegrationSettings.cpp
 
     # Scanner
     scanner/FfprobeScanner.cpp
@@ -46,6 +47,8 @@ set(MC_SOURCES
     ui/McHighscoreBand.cpp
     ui/McHighscoreDialog.cpp
     ui/McScanCompleteDialog.cpp
+    ui/McDownloadQueueBand.cpp
+    ui/McDownloadQueueDialog.cpp
     ui/SvgIcon.cpp
     ui/FileReveal.cpp
     ui/McStorageGroupChipToggle.cpp
@@ -66,6 +69,8 @@ set(MC_SOURCES
     engine/OpenSubtitlesClient.cpp
     engine/SubtitleSyncMatcher.cpp
     engine/HighscoreClient.cpp
+    engine/DownloadClientRegistry.cpp
+    engine/NzbGetClient.cpp
 
     # Classifier
     classifier/RegexClassifier.cpp
@@ -89,6 +94,7 @@ set(MC_HEADERS
     ../include/core/UpdateChecker.h
     ../include/core/DriveActivityMonitor.h
     ../include/core/StoragePriceService.h
+    ../include/core/DownloadIntegrationSettings.h
 
     # Scanner
     ../include/scanner/FfprobeScanner.h
@@ -114,6 +120,9 @@ set(MC_HEADERS
     ../include/engine/SubtitleSyncMatcher.h
     ../include/engine/HighscoreClient.h
     ../include/engine/HighscoreConfig.h
+    ../include/engine/DownloadClient.h
+    ../include/engine/DownloadClientRegistry.h
+    ../include/engine/NzbGetClient.h
 
     # Classifier
     ../include/classifier/TrackClassifier.h
@@ -151,6 +160,8 @@ set(MC_HEADERS
     ../include/ui/McHighscoreBand.h
     ../include/ui/McHighscoreDialog.h
     ../include/ui/McScanCompleteDialog.h
+    ../include/ui/McDownloadQueueBand.h
+    ../include/ui/McDownloadQueueDialog.h
     ../include/ui/SvgIcon.h
     ../include/ui/FileReveal.h
     ../include/ui/McFlagRowWidget.h

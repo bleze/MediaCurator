@@ -3,6 +3,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -45,6 +46,7 @@ private slots:
 	void onRemoveEditionToken();
 	void onResetEditionTokens();
 	void onEditionTokenEdited(QListWidgetItem* item);
+	void onTestNzbConnection();
 
 private:
 	void accept() override;
@@ -94,6 +96,16 @@ private:
 	QSpinBox*    m_spinPosterWorkers;
 	QSlider*     m_sliderFanartOpacity;
 	QLabel*      m_lblFanartOpacity;
+
+	QGroupBox*   m_grpNzbEnabled;
+	QLineEdit*   m_editNzbHost;
+	QSpinBox*    m_spinNzbPort;
+	QLineEdit*   m_editNzbUsername;
+	QLineEdit*   m_editNzbPassword;
+	QCheckBox*   m_chkNzbAutoQuickScan;
+	QCheckBox*   m_chkNzbAutoQuickAnalyze;
+	QPushButton* m_btnNzbTestConnection;
+	QLabel*      m_lblNzbTestResult;
 };
 
 } // namespace Mc

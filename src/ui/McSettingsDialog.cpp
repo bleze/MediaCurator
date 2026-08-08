@@ -3,8 +3,10 @@
 #include "ui/McLanguageFlags.h"
 #include "ui/McWindowGeometry.h"
 #include "core/AppSettings.h"
+#include "core/DownloadIntegrationSettings.h"
 #include "core/StorageGroupSettings.h"
 #include "core/UserProfile.h"
+#include "engine/DownloadClientRegistry.h"
 #include "engine/PosterManager.h"
 
 #include <QCheckBox>
@@ -16,11 +18,16 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMap>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
@@ -31,6 +38,7 @@
 #include <QSpinBox>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QtMath>
 
@@ -731,7 +739,84 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	ifacePageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 5 — Other (always last — catch-all for settings that don't fit elsewhere)
+	// Tab 6 — Downloads (NZBGet today; future providers get their own group box here)
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* dlPage   = new QWidget;
+	auto* dlPageLo = new QVBoxLayout(dlPage);
+	dlPageLo->setSpacing(8);
+	dlPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(dlPage, tr("Downloads"));
+	tabs->setTabColor(6, QColor(0x55, 0x65, 0x55));
+
+	m_grpNzbEnabled = new QGroupBox(tr("NZBGet"), dlPage);
+	m_grpNzbEnabled->setCheckable(true);
+	auto* nzbLayout = new QVBoxLayout(m_grpNzbEnabled);
+
+	const NzbGetConfig nzbConfig = DownloadIntegrationSettings::nzbgetConfig();
+	m_grpNzbEnabled->setChecked(nzbConfig.enabled);
+
+	auto* nzbHostRow   = new QHBoxLayout;
+	auto* nzbHostLabel = new QLabel(tr("Host:"), m_grpNzbEnabled);
+	m_editNzbHost      = new QLineEdit(m_grpNzbEnabled);
+	m_editNzbHost->setPlaceholderText(tr("e.g. 192.168.1.10"));
+	m_editNzbHost->setText(nzbConfig.host);
+	auto* nzbPortLabel = new QLabel(tr("Port:"), m_grpNzbEnabled);
+	m_spinNzbPort      = new QSpinBox(m_grpNzbEnabled);
+	m_spinNzbPort->setRange(1, 65535);
+	m_spinNzbPort->setValue(nzbConfig.port);
+	nzbHostRow->addWidget(nzbHostLabel);
+	nzbHostRow->addWidget(m_editNzbHost, 1);
+	nzbHostRow->addWidget(nzbPortLabel);
+	nzbHostRow->addWidget(m_spinNzbPort);
+	nzbLayout->addLayout(nzbHostRow);
+
+	auto* nzbUserRow   = new QHBoxLayout;
+	auto* nzbUserLabel = new QLabel(tr("Username:"), m_grpNzbEnabled);
+	m_editNzbUsername  = new QLineEdit(m_grpNzbEnabled);
+	m_editNzbUsername->setText(nzbConfig.username);
+	nzbUserRow->addWidget(nzbUserLabel);
+	nzbUserRow->addWidget(m_editNzbUsername, 1);
+	nzbLayout->addLayout(nzbUserRow);
+
+	auto* nzbPassRow   = new QHBoxLayout;
+	auto* nzbPassLabel = new QLabel(tr("Password:"), m_grpNzbEnabled);
+	m_editNzbPassword  = new QLineEdit(m_grpNzbEnabled);
+	m_editNzbPassword->setEchoMode(QLineEdit::Password);
+	m_editNzbPassword->setText(nzbConfig.password);
+	nzbPassRow->addWidget(nzbPassLabel);
+	nzbPassRow->addWidget(m_editNzbPassword, 1);
+	nzbLayout->addLayout(nzbPassRow);
+
+	auto* nzbTestRow = new QHBoxLayout;
+	m_btnNzbTestConnection = new QPushButton(tr("Test Connection"), m_grpNzbEnabled);
+	connect(m_btnNzbTestConnection, &QPushButton::clicked, this, &McSettingsDialog::onTestNzbConnection);
+	m_lblNzbTestResult = new QLabel(m_grpNzbEnabled);
+	nzbTestRow->addWidget(m_btnNzbTestConnection);
+	nzbTestRow->addWidget(m_lblNzbTestResult, 1);
+	nzbLayout->addLayout(nzbTestRow);
+
+	m_chkNzbAutoQuickScan = new QCheckBox(
+		tr("Automatically Quick Scan when a download completes"), m_grpNzbEnabled);
+	m_chkNzbAutoQuickScan->setChecked(nzbConfig.autoQuickScan);
+	nzbLayout->addWidget(m_chkNzbAutoQuickScan);
+
+	m_chkNzbAutoQuickAnalyze = new QCheckBox(
+		tr("Automatically Quick Analyze after scanning"), m_grpNzbEnabled);
+	m_chkNzbAutoQuickAnalyze->setChecked(nzbConfig.autoQuickAnalyze);
+	nzbLayout->addWidget(m_chkNzbAutoQuickAnalyze);
+
+	auto* nzbHint = new QLabel(
+		tr("NZBGet only reports a download as complete once its own post-processing "
+		   "(unpack, par-repair, and any sort/rename scripts) has finished, so the file is "
+		   "already in place by the time a Quick Scan is triggered."), m_grpNzbEnabled);
+	nzbHint->setWordWrap(true);
+	nzbLayout->addWidget(nzbHint);
+
+	dlPageLo->addWidget(m_grpNzbEnabled);
+	dlPageLo->addStretch();
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 7 — Other (always last — catch-all for settings that don't fit elsewhere)
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* genPage   = new QWidget;
 	auto* genPageLo = new QVBoxLayout(genPage);
@@ -746,7 +831,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	genScroll->setWidgetResizable(true);
 	genScroll->setFrameShape(QFrame::NoFrame);
 	tabs->addTab(genScroll, tr("Other"));
-	tabs->setTabColor(6, QColor(0x55, 0x55, 0x65));
+	tabs->setTabColor(7, QColor(0x55, 0x55, 0x65));
 
 	// Understood Languages
 	auto* langGroup  = new QGroupBox(tr("Understood Languages"), genPage);
@@ -1127,7 +1212,65 @@ void McSettingsDialog::accept()
 	PosterManager::instance().setParallelWorkers(m_spinPosterWorkers->value());
 	AppSettings::instance().setValue("library/fanartOpacity", m_sliderFanartOpacity->value());
 
+	NzbGetConfig nzbConfig;
+	nzbConfig.enabled          = m_grpNzbEnabled->isChecked();
+	nzbConfig.host             = m_editNzbHost->text().trimmed();
+	nzbConfig.port             = m_spinNzbPort->value();
+	nzbConfig.username         = m_editNzbUsername->text().trimmed();
+	nzbConfig.password         = m_editNzbPassword->text();
+	nzbConfig.autoQuickScan    = m_chkNzbAutoQuickScan->isChecked();
+	nzbConfig.autoQuickAnalyze = m_chkNzbAutoQuickAnalyze->isChecked();
+	DownloadIntegrationSettings::setNzbgetConfig(nzbConfig);
+	DownloadClientRegistry::instance().reconfigureAll();
+
 	QDialog::accept();
+}
+
+void McSettingsDialog::onTestNzbConnection()
+{
+	const QString host = m_editNzbHost->text().trimmed();
+	if (host.isEmpty()) {
+		m_lblNzbTestResult->setText(tr("Enter a host first."));
+		return;
+	}
+
+	QUrl url;
+	url.setScheme(QStringLiteral("http"));
+	url.setHost(host);
+	url.setPort(m_spinNzbPort->value());
+	url.setPath(QStringLiteral("/jsonrpc"));
+
+	QNetworkRequest req(url);
+	req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+	const QString username = m_editNzbUsername->text().trimmed();
+	if (!username.isEmpty()) {
+		const QByteArray creds = (username + QLatin1Char(':') + m_editNzbPassword->text()).toUtf8();
+		req.setRawHeader("Authorization", "Basic " + creds.toBase64());
+	}
+
+	m_lblNzbTestResult->setText(tr("Testing…"));
+	m_btnNzbTestConnection->setEnabled(false);
+
+	// Tests the credentials currently typed in the dialog, not whatever is
+	// already saved — a standalone QNetworkAccessManager here (rather than
+	// going through NzbGetClient, which always reads persisted settings) is
+	// what lets this work before Save is clicked.
+	auto* nam = new QNetworkAccessManager(this);
+	QNetworkReply* reply = nam->post(req, QByteArray("{\"method\":\"status\",\"params\":[],\"id\":1}"));
+	connect(reply, &QNetworkReply::finished, this, [this, reply, nam] {
+		reply->deleteLater();
+		nam->deleteLater();
+		m_btnNzbTestConnection->setEnabled(true);
+
+		if (reply->error() != QNetworkReply::NoError) {
+			m_lblNzbTestResult->setText(tr("Failed: %1").arg(reply->errorString()));
+			return;
+		}
+		const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
+		m_lblNzbTestResult->setText(obj.contains(QStringLiteral("result"))
+		    ? tr("Connected successfully.")
+		    : tr("Unexpected response from server."));
+	});
 }
 
 } // namespace Mc

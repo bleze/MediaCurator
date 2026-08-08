@@ -1,0 +1,91 @@
+#include "core/DownloadIntegrationSettings.h"
+#include "core/AppSettings.h"
+
+#include <QByteArray>
+#include <QJsonObject>
+
+namespace Mc {
+
+namespace {
+const QLatin1String kDownloadsKey("downloads");
+const QLatin1String kNzbGetKey("nzbget");
+
+// NOT real security — this only keeps the password from showing up as plain
+// text to a casual glance at settings.json (screenshots, screen-sharing a
+// support session, etc.). The key lives right here in this open-source repo,
+// so anyone motivated can trivially reverse it; real protection would mean OS
+// keychain integration (Credential Manager / Keychain / Secret Service), which
+// this cross-platform app has no infrastructure for. Same spirit as
+// AppSettings::reclaimedBytes()'s HMAC — a deterrent, not a guarantee.
+constexpr char kObfuscationKey[] = "MediaCurator-nzbget-v1";
+
+QString obfuscate(const QString& plain)
+{
+	if (plain.isEmpty())
+		return {};
+	const QByteArray input = plain.toUtf8();
+	const int        keyLen = static_cast<int>(sizeof(kObfuscationKey) - 1);
+	QByteArray out;
+	out.reserve(input.size());
+	for (int i = 0; i < input.size(); ++i)
+		out.append(static_cast<char>(input[i] ^ kObfuscationKey[i % keyLen]));
+	return QString::fromLatin1(out.toBase64());
+}
+
+QString deobfuscate(const QString& encoded)
+{
+	if (encoded.isEmpty())
+		return {};
+	const QByteArray input  = QByteArray::fromBase64(encoded.toLatin1());
+	const int        keyLen = static_cast<int>(sizeof(kObfuscationKey) - 1);
+	QByteArray out;
+	out.reserve(input.size());
+	for (int i = 0; i < input.size(); ++i)
+		out.append(static_cast<char>(input[i] ^ kObfuscationKey[i % keyLen]));
+	return QString::fromUtf8(out);
+}
+
+QJsonObject downloadsObject()
+{
+	const QJsonObject app = AppSettings::instance().rawRoot().value(QStringLiteral("app")).toObject();
+	return app.value(kDownloadsKey).toObject();
+}
+
+void saveDownloadsObject(const QJsonObject& obj)
+{
+	AppSettings::instance().setValue(QString(kDownloadsKey), obj);
+}
+}
+
+NzbGetConfig DownloadIntegrationSettings::nzbgetConfig()
+{
+	const QJsonObject obj = downloadsObject().value(kNzbGetKey).toObject();
+
+	NzbGetConfig config;
+	config.enabled          = obj.value(QStringLiteral("enabled")).toBool(false);
+	config.host             = obj.value(QStringLiteral("host")).toString();
+	config.port             = obj.value(QStringLiteral("port")).toInt(6789);
+	config.username         = obj.value(QStringLiteral("username")).toString();
+	config.password         = deobfuscate(obj.value(QStringLiteral("password")).toString());
+	config.autoQuickScan    = obj.value(QStringLiteral("autoQuickScan")).toBool(true);
+	config.autoQuickAnalyze = obj.value(QStringLiteral("autoQuickAnalyze")).toBool(true);
+	return config;
+}
+
+void DownloadIntegrationSettings::setNzbgetConfig(const NzbGetConfig& config)
+{
+	QJsonObject nzbget;
+	nzbget.insert(QStringLiteral("enabled"), config.enabled);
+	nzbget.insert(QStringLiteral("host"), config.host);
+	nzbget.insert(QStringLiteral("port"), config.port);
+	nzbget.insert(QStringLiteral("username"), config.username);
+	nzbget.insert(QStringLiteral("password"), obfuscate(config.password));
+	nzbget.insert(QStringLiteral("autoQuickScan"), config.autoQuickScan);
+	nzbget.insert(QStringLiteral("autoQuickAnalyze"), config.autoQuickAnalyze);
+
+	QJsonObject downloads = downloadsObject();
+	downloads.insert(kNzbGetKey, nzbget);
+	saveDownloadsObject(downloads);
+}
+
+} // namespace Mc
