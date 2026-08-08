@@ -1,5 +1,7 @@
 #include "ui/McHighscoreDialog.h"
 
+#include <algorithm>
+
 #include <QAbstractItemView>
 #include <QDialogButtonBox>
 #include <QFont>
@@ -58,6 +60,11 @@ McHighscoreDialog::McHighscoreDialog(const QList<HighscoreEntry>& entries,
 	m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
 	m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 	m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+	m_table->horizontalHeader()->setSectionsClickable(true);
+	m_table->horizontalHeader()->setSortIndicatorShown(true);
+	m_table->horizontalHeader()->setSortIndicator(m_sortColumn, m_sortOrder);
+	connect(m_table->horizontalHeader(), &QHeaderView::sectionClicked,
+	        this, &McHighscoreDialog::handleHeaderClicked);
 	m_table->verticalHeader()->setVisible(false);
 	m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	m_table->setSelectionMode(QAbstractItemView::NoSelection);
@@ -73,20 +80,20 @@ McHighscoreDialog::McHighscoreDialog(const QList<HighscoreEntry>& entries,
 
 	updateJoinButtonVisibility();
 	m_entries = entries;
-	rebuildTable(m_entries);
+	refreshTable();
 }
 
 void McHighscoreDialog::setEntries(const QList<HighscoreEntry>& entries)
 {
 	m_entries = entries;
-	rebuildTable(m_entries);
+	refreshTable();
 }
 
 void McHighscoreDialog::setLocalPlayerName(const QString& name)
 {
 	m_localPlayerName = name;
 	updateJoinButtonVisibility();
-	rebuildTable(m_entries);
+	refreshTable();
 }
 
 void McHighscoreDialog::updateJoinButtonVisibility()
@@ -94,14 +101,60 @@ void McHighscoreDialog::updateJoinButtonVisibility()
 	m_joinButton->setVisible(m_localPlayerName.isEmpty());
 }
 
-void McHighscoreDialog::rebuildTable(const QList<HighscoreEntry>& entries)
+void McHighscoreDialog::handleHeaderClicked(int column)
 {
-	const QList<HighscoreEntry> shown = entries.mid(0, kMaxRows);
-	m_table->setRowCount(shown.size());
+	if (column == m_sortColumn) {
+		m_sortOrder = m_sortOrder == Qt::AscendingOrder ? Qt::DescendingOrder : Qt::AscendingOrder;
+	} else {
+		m_sortColumn = column;
+		// Reclaimed/Last Active read naturally biggest-first; Rank/Name read naturally A-first.
+		m_sortOrder = (column == 2 || column == 3) ? Qt::DescendingOrder : Qt::AscendingOrder;
+	}
+	m_table->horizontalHeader()->setSortIndicatorShown(true);
+	m_table->horizontalHeader()->setSortIndicator(m_sortColumn, m_sortOrder);
+	refreshTable();
+}
 
-	for (int row = 0; row < shown.size(); ++row) {
-		const HighscoreEntry& e = shown[row];
-		const QString rankText = row == 0 ? QStringLiteral("🏆 1") : QString::number(row + 1);
+void McHighscoreDialog::refreshTable()
+{
+	rebuildTable(sortedRankedEntries());
+}
+
+QList<QPair<int, HighscoreEntry>> McHighscoreDialog::sortedRankedEntries() const
+{
+	const QList<HighscoreEntry> shown = m_entries.mid(0, kMaxRows);
+
+	QList<QPair<int, HighscoreEntry>> ranked;
+	ranked.reserve(shown.size());
+	for (int i = 0; i < shown.size(); ++i)
+		ranked.append({ i + 1, shown[i] });   // rank always reflects natural (score) order
+
+	const int column = m_sortColumn;
+	auto lessThan = [column](const QPair<int, HighscoreEntry>& a, const QPair<int, HighscoreEntry>& b) {
+		switch (column) {
+		case 0:  return a.first < b.first;
+		case 1:  return a.second.name.compare(b.second.name, Qt::CaseInsensitive) < 0;
+		case 2:  return a.second.score < b.second.score;
+		case 3:  return a.second.lastActive < b.second.lastActive;
+		default: return false;
+		}
+	};
+	const bool ascending = m_sortOrder == Qt::AscendingOrder;
+	std::stable_sort(ranked.begin(), ranked.end(),
+	    [ascending, &lessThan](const QPair<int, HighscoreEntry>& a, const QPair<int, HighscoreEntry>& b) {
+		    return ascending ? lessThan(a, b) : lessThan(b, a);
+	    });
+	return ranked;
+}
+
+void McHighscoreDialog::rebuildTable(const QList<QPair<int, HighscoreEntry>>& rankedEntries)
+{
+	m_table->setRowCount(rankedEntries.size());
+
+	for (int row = 0; row < rankedEntries.size(); ++row) {
+		const int rank              = rankedEntries[row].first;
+		const HighscoreEntry& e     = rankedEntries[row].second;
+		const QString rankText = rank == 1 ? QStringLiteral("🏆 1") : QString::number(rank);
 		auto* rankItem       = new QTableWidgetItem(rankText);
 		auto* nameItem       = new QTableWidgetItem(e.name);
 		auto* scoreItem      = new QTableWidgetItem(formatReclaimed(e.score));

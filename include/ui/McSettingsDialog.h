@@ -87,7 +87,9 @@ private:
 	QLineEdit*   m_editEditionToken;
 	QCheckBox*   m_chkAutoTrack;
 	QCheckBox*   m_chkAggregateManualDeletes;
+#ifdef Q_OS_WIN
 	QCheckBox*   m_chkAlwaysUseExplorer;
+#endif
 	QSpinBox*    m_spinScanGroups;
 	QSpinBox*    m_spinPosterWorkers;
 	QSlider*     m_sliderFanartOpacity;

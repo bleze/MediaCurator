@@ -662,6 +662,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	ifacePageLo->addWidget(jobGroup);
 
+#ifdef Q_OS_WIN
 	// File Manager
 	auto* fileMgrGroup  = new QGroupBox(tr("File Manager"), ifacePage);
 	auto* fileMgrLayout = new QVBoxLayout(fileMgrGroup);
@@ -678,6 +679,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	fileMgrLayout->addWidget(m_chkAlwaysUseExplorer);
 
 	ifacePageLo->addWidget(fileMgrGroup);
+#endif
 
 	// Stats
 	auto* statsGroup  = new QGroupBox(tr("Stats"), ifacePage);
@@ -1117,8 +1119,10 @@ void McSettingsDialog::accept()
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());
 	AppSettings::instance().setValue("settings/includeManualDeletesInTotals",
 	                                  m_chkAggregateManualDeletes->isChecked());
+#ifdef Q_OS_WIN
 	AppSettings::instance().setValue("settings/alwaysUseExplorerForReveal",
 	                                  m_chkAlwaysUseExplorer->isChecked());
+#endif
 	StorageGroupSettings::setUiMaxGroup(m_spinScanGroups->value());
 	PosterManager::instance().setParallelWorkers(m_spinPosterWorkers->value());
 	AppSettings::instance().setValue("library/fanartOpacity", m_sliderFanartOpacity->value());

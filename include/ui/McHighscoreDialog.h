@@ -1,6 +1,7 @@
 #pragma once
 #include <QDialog>
 #include <QList>
+#include <QPair>
 #include <QString>
 
 #include "engine/HighscoreClient.h"
@@ -32,13 +33,18 @@ signals:
 	void joinRequested();
 
 private:
-	void rebuildTable(const QList<HighscoreEntry>& entries);
+	void refreshTable();   // re-sorts m_entries per current header sort and rebuilds the table
+	void rebuildTable(const QList<QPair<int, HighscoreEntry>>& rankedEntries);
 	void updateJoinButtonVisibility();
+	void handleHeaderClicked(int column);
+	QList<QPair<int, HighscoreEntry>> sortedRankedEntries() const;   // rank reflects natural (score) order, independent of display sort
 
 	QTableWidget* m_table      = nullptr;
 	QPushButton*  m_joinButton = nullptr;
 	QString       m_localPlayerName;
 	QList<HighscoreEntry> m_entries;
+	int           m_sortColumn = 0;   // defaults to Rank ascending (natural server order)
+	Qt::SortOrder m_sortOrder  = Qt::AscendingOrder;
 };
 
 } // namespace Mc
