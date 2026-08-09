@@ -55,6 +55,7 @@ public:
 		TmdbIdRole            = Qt::UserRole + 29,  // int — TMDB movie/tv numeric id, 0 if unknown
 		EditionRole           = Qt::UserRole + 30,  // QString from files.edition; empty = undetected — see EditionDetector
 		IgnoredRole           = Qt::UserRole + 31,  // bool — hidden from normal filters; see setIgnoredBatch()
+		HasSceneNfoRole       = Qt::UserRole + 32,  // bool — from files.has_scene_nfo, see FileRecord::hasSceneNfo
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);

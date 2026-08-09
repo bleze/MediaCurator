@@ -92,6 +92,9 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QPixmap>
+#include <QPlainTextEdit>
+#include <QTextBrowser>
+#include <QTextDocument>
 #include <QListView>
 #include <QMenu>
 #include <QMenuBar>
@@ -786,6 +789,58 @@ void McMainWindow::setupUi()
 		const QString kind = idx.data(McFileListModel::FileRole).value<FileRecord>().mediaType
 		                   == QLatin1String(MediaTypes::Tv) ? QStringLiteral("tv") : QStringLiteral("movie");
 		QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.themoviedb.org/%1/%2").arg(kind).arg(id)));
+	});
+	connect(fileDelegate, &McFileCardDelegate::nfoViewRequested,
+	        this, [this](const QModelIndex& idx) {
+		// Cached at scan time (DatabaseManager::sceneNfoText) rather than read
+		// live here — this library lives on a NAS, and a live read could wake
+		// a spun-down drive and block the UI thread while it did.
+		const FileRecord file = idx.data(McFileListModel::FileRole).value<FileRecord>();
+		const QString path = file.path;
+		const QString art  = DatabaseManager::instance().sceneNfoText(file.id);
+		if (art.isEmpty()) return;
+
+		auto* dlg = new QDialog(this);
+		dlg->setAttribute(Qt::WA_DeleteOnClose);
+		dlg->setWindowTitle(tr("Scene NFO — %1").arg(QFileInfo(path).completeBaseName()));
+
+		auto* layout = new QVBoxLayout(dlg);
+		auto* edit = new QTextBrowser(dlg);
+		edit->setOpenExternalLinks(true);
+		edit->setLineWrapMode(QTextEdit::NoWrap);
+		QFont mono("Courier New", 9);
+		mono.setStyleHint(QFont::Monospace);
+		edit->setFont(mono);
+		// <pre> preserves whitespace/alignment for the art; bbcodeToHtml already
+		// HTML-escaped everything else, so this is safe to feed straight in.
+		edit->setHtml(QStringLiteral("<pre>%1</pre>").arg(NfoParser::bbcodeToHtml(art)));
+		layout->addWidget(edit);
+
+		auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+		connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+		layout->addWidget(buttons);
+
+		// Size to the actual content (so a short NFO gets a small, centered
+		// window instead of always filling the screen) — capped at the screen
+		// size minus a 50px margin on each edge, past which the QTextBrowser's
+		// own scrollbars take over rather than growing the window off-screen.
+		const QRect avail = screen()->availableGeometry();
+		const QSize maxSize = avail.size() - QSize(100, 100);
+		QTextDocument* doc = edit->document();
+		doc->setTextWidth(-1);   // unconstrained — measure the art's natural width
+		const int idealW = qRound(doc->idealWidth());
+		doc->setTextWidth(idealW);   // now measure the height that width needs
+		const int idealH = qRound(doc->size().height());
+		// Padding for the QTextBrowser's own frame/margins plus the button row
+		// and layout spacing below it — enough that content just barely fitting
+		// doesn't still trigger a scrollbar.
+		const QSize dlgSize(qBound(400, idealW + 48, maxSize.width()),
+		                     qBound(200, idealH + 90, maxSize.height()));
+		dlg->resize(dlgSize);
+		const QPoint winCenter = window()->frameGeometry().center();
+		dlg->move(winCenter - QPoint(dlgSize.width() / 2, dlgSize.height() / 2));
+
+		dlg->show();
 	});
 	connect(fileDelegate, &McFileCardDelegate::streamToggleRequested,
 	        this, [this](const QModelIndex& idx, int streamIndex) {
@@ -2905,7 +2960,13 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 				m_closeOnJobFinishPending = true;
 				connect(m_jobQueue, &JobQueue::jobFinished, this, [this]() {
 					m_closeOnJobFinishPending = false;
-					QTimer::singleShot(0, this, &McMainWindow::close);
+					// QTimer::singleShot(0, ...) rides a coarse Windows SetTimer,
+					// which Windows can throttle for a long time once the window
+					// has been hidden to the tray (no taskbar presence — looks
+					// fully backgrounded). QueuedConnection instead posts a plain
+					// Qt event, which isn't subject to that throttling, so the
+					// deferred close still fires promptly while minimized.
+					QMetaObject::invokeMethod(this, &McMainWindow::close, Qt::QueuedConnection);
 				}, Qt::SingleShotConnection);
 			}
 			logRestartDebug(QStringLiteral("closeEvent: job dialog -> deferring close until job finishes (shutdownOnClose=%1)")

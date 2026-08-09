@@ -496,6 +496,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.posterVersion    = index.data(McFileListModel::PosterVersionRole).toInt();
 		d.imdbId           = index.data(McFileListModel::ImdbRole).toString();
 		d.tmdbId           = index.data(McFileListModel::TmdbRole).toInt();
+		d.hasSceneNfo      = file.hasSceneNfo;
 		d.rating           = index.data(McFileListModel::RatingRole).toDouble();
 		d.displayTitle      = index.data(McFileListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McFileListModel::DisplayYearRole).toInt();
@@ -526,6 +527,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.posterVersion    = index.data(McJobListModel::PosterVersionRole).toInt();
 		d.imdbId           = index.data(McJobListModel::ImdbIdRole).toString();
 		d.tmdbId           = index.data(McJobListModel::TmdbIdRole).toInt();
+		d.hasSceneNfo      = index.data(McJobListModel::HasSceneNfoRole).toBool();
 		d.rating           = index.data(McJobListModel::RatingRole).toDouble();
 		d.status           = index.data(McJobListModel::StatusRole).toString();
 		d.savedBytes       = index.data(McJobListModel::SavedRole).toLongLong();
@@ -780,6 +782,15 @@ QRect McCardDelegate::tmdbButtonRect(const QRect& contentRect, bool hasImdb)
 	return QRect(contentRect.right() - kRatingReserveW - kImdbBtnW - xOffset, y, kImdbBtnW, kImdbBtnW);
 }
 
+QRect McCardDelegate::nfoButtonRect(const QRect& contentRect, bool hasImdb, bool hasTmdb)
+{
+	const int y = contentRect.top() + (kFolderH - kImdbBtnW) / 2;
+	int xOffset = 0;
+	if (hasImdb) xOffset += kImdbBtnW + kBadgeGap;
+	if (hasTmdb) xOffset += kImdbBtnW + kBadgeGap;
+	return QRect(contentRect.right() - kRatingReserveW - kImdbBtnW - xOffset, y, kImdbBtnW, kImdbBtnW);
+}
+
 int McCardDelegate::rightButtonsReserve(bool hasImdb, bool hasTmdb)
 {
 	const int count = (hasImdb ? 1 : 0) + (hasTmdb ? 1 : 0);
@@ -866,6 +877,35 @@ void McCardDelegate::drawImdbTmdbButtons(QPainter* painter, const QRect& content
 		painter->drawPixmap(btnRect, logo);
 		painter->restore();
 	}
+}
+
+void McCardDelegate::drawNfoButton(QPainter* painter, const QRect& content,
+                                    bool hasImdb, bool hasTmdb, const QFont& baseFont) const
+{
+	const QRect btnRect = nfoButtonRect(content, hasImdb, hasTmdb);
+
+	// "NFO" doesn't naturally fit a kImdbBtnW-wide square at the app's normal
+	// text size (unlike the IMDb/TMDB logos, which just scale to the box) — so
+	// shrink from the base size down to a legibility floor until it does,
+	// rather than fixing one point size that'd be wrong at some DPI/zoom.
+	static const QString kText = QStringLiteral("NFO");
+	QFont font = baseFont;
+	font.setBold(true);
+	font.setPointSizeF(qMin(baseFont.pointSizeF(), 9.0));
+	const int maxTextW = btnRect.width() - 4;
+	while (font.pointSizeF() > 5.5 && QFontMetrics(font).horizontalAdvance(kText) > maxTextW)
+		font.setPointSizeF(font.pointSizeF() - 0.5);
+
+	painter->save();
+	painter->setOpacity(btnRect.contains(m_lastMousePos) ? 1.0 : 0.75);
+	painter->setRenderHint(QPainter::Antialiasing);
+	painter->setPen(Qt::NoPen);
+	painter->setBrush(badgeColor(QStringLiteral("edition")));
+	painter->drawRoundedRect(btnRect, 4, 4);
+	painter->setFont(font);
+	painter->setPen(Qt::white);
+	painter->drawText(btnRect.adjusted(0, -1, 0, -1), Qt::AlignCenter, kText);
+	painter->restore();
 }
 
 // ── Badge drawing ──────────────────────────────────────────────────────────────
@@ -1124,7 +1164,7 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 
 bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect,
                                           bool hasImdb, bool hasTmdb,
-                                          const QModelIndex& index) const
+                                          const QModelIndex& index, bool hasNfo) const
 {
 	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
 	if (index.isValid() && index.data(McFileListModel::IsGroupCardRole).toBool()) {
@@ -1141,6 +1181,7 @@ bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect
 	if (playButtonRect(content).contains(pos)) return true;
 	if (hasImdb && imdbButtonRect(content).contains(pos)) return true;
 	if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) return true;
+	if (hasNfo && nfoButtonRect(content, hasImdb, hasTmdb).contains(pos)) return true;
 	return false;
 }
 
@@ -1260,8 +1301,11 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 			const bool hasTmdb = m_mode == Mode::Library
 				? cur.data(McFileListModel::TmdbRole).toInt() > 0
 				: cur.data(McJobListModel::TmdbIdRole).toInt() > 0;
+			const bool hasNfo = m_mode == Mode::Library
+				? cur.data(McFileListModel::FileRole).value<FileRecord>().hasSceneNfo
+				: cur.data(McJobListModel::HasSceneNfoRole).toBool();
 
-			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb, hasTmdb, cur);
+			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb, hasTmdb, cur, hasNfo);
 			if (!overInteractive && m_mode == Mode::JobQueue
 			    && (cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
@@ -1356,6 +1400,16 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 		return true;
 	}
 
+	// No mega-card equivalent (see drawNfoButton) — this only ever fires for a
+	// single-file row, in either Library or Job Queue mode.
+	const bool hasNfo = m_mode == Mode::Library
+		? index.data(McFileListModel::FileRole).value<FileRecord>().hasSceneNfo
+		: index.data(McJobListModel::HasSceneNfoRole).toBool();
+	if (hasNfo && nfoButtonRect(content, hasImdb, hasTmdb).contains(pos)) {
+		emit nfoViewRequested(index);
+		return true;
+	}
+
 	if (m_mode == Mode::JobQueue
 	    && (index.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
@@ -1390,6 +1444,13 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	// TMDB button tooltip
 	if (d.tmdbId > 0 && tmdbButtonRect(content, !d.imdbId.isEmpty()).contains(event->pos())) {
 		QToolTip::showText(event->globalPos(), tr("Open TMDB page — %1").arg(d.tmdbId), view);
+		return true;
+	}
+
+	// NFO viewer button tooltip
+	if (d.hasSceneNfo
+	    && nfoButtonRect(content, !d.imdbId.isEmpty(), d.tmdbId > 0).contains(event->pos())) {
+		QToolTip::showText(event->globalPos(), tr("View scene NFO"), view);
 		return true;
 	}
 
@@ -2007,6 +2068,10 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			if (hasImdb) buttonsLeft = qMin(buttonsLeft, imdbButtonRect(content).left());
 			if (hasTmdb) buttonsLeft = qMin(buttonsLeft, tmdbButtonRect(content, hasImdb).left());
 			rightEdge = qMin(rightEdge, buttonsLeft - 8);
+		}
+		if (d.hasSceneNfo) {
+			drawNfoButton(painter, content, hasImdb, hasTmdb, option.font);
+			rightEdge = qMin(rightEdge, nfoButtonRect(content, hasImdb, hasTmdb).left() - 8);
 		}
 
 		// Media category chip (Movie / TV / Doc / Misc) — skip for unknown.

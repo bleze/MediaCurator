@@ -462,8 +462,32 @@ void ScanWorker::run()
 				// EditionBackfillWorker's job (driven by the edition_checked flag, so
 				// it covers the whole library exactly once regardless of whether/when
 				// each file gets rescanned) — not repeated here on every skip.
-				if (refreshSidecarStreamsIfChanged(db, existing->id, path, m_detectSubtitleLanguage))
-					emit fileProcessed(*existing, db.streamsForFile(existing->id));
+				const bool streamsChanged = refreshSidecarStreamsIfChanged(db, existing->id, path, m_detectSubtitleLanguage);
+				// The video itself is untouched, but an .nfo can be dropped into the
+				// folder well after the fact — checked here too (not just below in the
+				// changed-file branch) so it's picked up on the very next scan instead
+				// of requiring the file to be removed and re-added. nullopt (the .nfo
+				// exists but couldn't be read this pass — locked, or a network hiccup
+				// on a NAS-hosted library) leaves the existing DB value untouched
+				// rather than risking a flaky read clearing a badge that was correct a
+				// moment ago. A confirmed false (.nfo genuinely gone, or no longer
+				// qualifies) clears the cached text along with the flag — updateSceneNfo
+				// ignores the text argument whenever hasArt is false.
+				//
+				// Written on every confirmed result, not just when the flag changes —
+				// the flag can already be correct (true→true) while the text column is
+				// still empty (e.g. the very first scan after this cache was added), and
+				// gating on "changed" would leave it empty forever since the flag never
+				// flips again to re-trigger the write.
+				const auto scan            = NfoParser::scanSceneNfo(path);
+				const bool sceneNfo        = scan.hasArt.value_or(existing->hasSceneNfo);
+				const bool sceneNfoChanged = scan.hasArt.has_value() && sceneNfo != existing->hasSceneNfo;
+				if (scan.hasArt.has_value()) db.updateSceneNfo(existing->id, sceneNfo, scan.text);
+				if (streamsChanged || sceneNfoChanged) {
+					FileRecord refreshed = *existing;
+					refreshed.hasSceneNfo = sceneNfo;
+					emit fileProcessed(refreshed, db.streamsForFile(existing->id));
+				}
 				// Enqueue even for unchanged files so PosterManager can backfill
 				// any missing display_title or rating without re-running ffprobe.
 				emit posterEnqueueRequested(existing->id);
@@ -543,10 +567,26 @@ void ScanWorker::run()
 			emit imdbIdFound(*fileId, imdbId);
 		}
 
+		// Re-checked every scan, unlike edition above — an NFO can be dropped into
+		// the folder well after the file itself was first scanned, and there's no
+		// user override here to protect against overwriting. nullopt (couldn't
+		// read the .nfo this pass — see scanSceneNfo) falls back to whatever
+		// was already on record rather than clobbering a confirmed true with a
+		// transient failure; for a brand-new file there's nothing to fall back
+		// to, so it just starts out false and gets picked up next scan. The DB
+		// write itself is also skipped on nullopt — scan.text is empty in that
+		// case, and writing it through would silently blank out a previously-
+		// cached good copy even though sceneNfo's fallback kept the flag correct.
+		const auto scan = NfoParser::scanSceneNfo(path);
+		const bool sceneNfo = scan.hasArt.value_or(existing ? existing->hasSceneNfo : false);
+		if (scan.hasArt.has_value() || !existing)
+			db.updateSceneNfo(*fileId, sceneNfo, scan.text);
+
 		// Emit the data we already have in memory — no DB round-trip needed on the UI side.
 		FileRecord fileWithId = result.file;
-		fileWithId.id      = *fileId;
-		fileWithId.edition  = editionValue;
+		fileWithId.id          = *fileId;
+		fileWithId.edition     = editionValue;
+		fileWithId.hasSceneNfo = sceneNfo;
 		emit fileProcessed(fileWithId, allStreams);
 
 		// Kick off poster lookup in parallel with the next FFprobe call.

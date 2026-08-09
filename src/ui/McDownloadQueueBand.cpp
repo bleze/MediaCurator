@@ -55,17 +55,22 @@ McDownloadQueueBand::McDownloadQueueBand(QWidget* parent)
 
 void McDownloadQueueBand::setItems(const QList<DownloadQueueItem>& items)
 {
-	qint64 totalMb       = 0;
-	qint64 remainingMb   = 0;
+	qint64 totalMb             = 0;
+	qint64 remainingMb         = 0;
+	qint64 downloadingTotalMb     = 0;
+	qint64 downloadingRemainingMb = 0;
 	int    downloadingCount = 0;
 	int    pausedCount      = 0;
 	for (const DownloadQueueItem& item : items) {
 		totalMb     += item.totalMb;
 		remainingMb += item.remainingMb;
-		if (isPaused(item.status))
+		if (isPaused(item.status)) {
 			++pausedCount;
-		else if (isActivelyDownloading(item.status))
+		} else if (isActivelyDownloading(item.status)) {
 			++downloadingCount;
+			downloadingTotalMb     += item.totalMb;
+			downloadingRemainingMb += item.remainingMb;
+		}
 	}
 	const int otherCount = items.size() - downloadingCount - pausedCount;   // queued, post-processing, etc.
 
@@ -73,8 +78,11 @@ void McDownloadQueueBand::setItems(const QList<DownloadQueueItem>& items)
 	// while something is actually being fetched.
 	m_progress->setVisible(downloadingCount > 0);
 	if (downloadingCount > 0) {
-		const int percent = totalMb > 0
-		    ? qBound(0, static_cast<int>((totalMb - remainingMb) * 100 / totalMb), 100)
+		// Scoped to actively-downloading items only, not totalMb/remainingMb
+		// (all items) — a paused job sitting at 0% would otherwise drag the
+		// whole bar down even though it isn't contributing to it at all.
+		const int percent = downloadingTotalMb > 0
+		    ? qBound(0, static_cast<int>((downloadingTotalMb - downloadingRemainingMb) * 100 / downloadingTotalMb), 100)
 		    : 0;
 		m_progress->setValue(percent);
 	}

@@ -547,6 +547,24 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE poster_cache ADD COLUMN nfo_written INTEGER NOT NULL DEFAULT 0");
 	}
 
+	// Migration: whether the file's co-named .nfo carries scene-release ASCII
+	// art (as opposed to a Kodi XML NFO or a bare IMDb link) — see NfoParser::
+	// hasSceneAsciiArt(). Powers the card's NFO viewer button.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN has_scene_nfo INTEGER NOT NULL DEFAULT 0");
+	}
+
+	// Cached decoded text of the scene NFO flagged above — see
+	// DatabaseManager::updateSceneNfo/sceneNfoText. Read live from disk on
+	// every viewer-button click until this migration, which was a real
+	// problem for a NAS-hosted library: a click could wake a spun-down drive
+	// and block the UI thread while it did.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN scene_nfo_text TEXT NOT NULL DEFAULT ''");
+	}
+
 	return true;
 }
 
@@ -677,6 +695,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 	r.ignored          = q.value("ignored").toInt() != 0;
 	r.subtitleAttemptedMs = q.value("subtitle_attempted_ms").toLongLong();
+	r.hasSceneNfo      = q.value("has_scene_nfo").toInt() != 0;
 	return r;
 }
 
@@ -708,6 +727,7 @@ QHash<qint64, FileRecord> DatabaseManager::filesByIds(const QList<qint64>& ids) 
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
+		r.hasSceneNfo      = q.value("has_scene_nfo").toInt() != 0;
 		result[r.id] = std::move(r);
 	};
 
@@ -757,6 +777,7 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 	r.displayYear      = q.value("display_year").toInt();
 	r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 	r.ignored          = q.value("ignored").toInt() != 0;
+	r.hasSceneNfo      = q.value("has_scene_nfo").toInt() != 0;
 	return r;
 }
 
@@ -784,6 +805,7 @@ QList<FileRecord> DatabaseManager::allFiles() const
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
+		r.hasSceneNfo      = q.value("has_scene_nfo").toInt() != 0;
 		result.append(r);
 	}
 	return result;
@@ -815,6 +837,7 @@ QList<FileRecord> DatabaseManager::filesWithoutAnyJob() const
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
+		r.hasSceneNfo      = q.value("has_scene_nfo").toInt() != 0;
 		result.append(r);
 	}
 	return result;
@@ -868,6 +891,7 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit, int sort
 		r.displayYear      = q.value("display_year").toInt();
 		r.mediaType        = MediaTypes::normalize(q.value("media_type").toString());
 		r.ignored          = q.value("ignored").toInt() != 0;
+		r.hasSceneNfo      = q.value("has_scene_nfo").toInt() != 0;
 		result.append(r);
 	}
 	return result;
@@ -1790,6 +1814,25 @@ QList<FileRecord> DatabaseManager::filesNeedingEditionCheck() const
 	return result;
 }
 
+bool DatabaseManager::updateSceneNfo(qint64 fileId, bool hasArt, const QString& text)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET has_scene_nfo=?, scene_nfo_text=? WHERE id=?");
+	q.addBindValue(hasArt ? 1 : 0);
+	q.addBindValue(hasArt ? text : QString());
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
+QString DatabaseManager::sceneNfoText(qint64 fileId) const
+{
+	QSqlQuery q(connection());
+	q.prepare("SELECT scene_nfo_text FROM files WHERE id=?");
+	q.addBindValue(fileId);
+	if (!q.exec() || !q.next()) return {};
+	return q.value(0).toString();
+}
+
 bool DatabaseManager::updateEdition(qint64 fileId, const QString& edition)
 {
 	// Always marks edition_checked too — this is the one place both a genuine scan
@@ -2012,6 +2055,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.mediaType          = MediaTypes::normalize(q.value("media_type").toString());
 		r.edition            = q.value("edition").toString();
 		r.ignored            = q.value("ignored").toBool();
+		r.hasSceneNfo        = q.value("has_scene_nfo").toBool();
 		result.append(r);
 	}
 }
@@ -2042,7 +2086,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
-		"       COALESCE(j.ignored, 0) AS ignored"
+		"       COALESCE(j.ignored, 0) AS ignored,"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -2079,7 +2124,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
-		"       COALESCE(j.ignored, 0) AS ignored"
+		"       COALESCE(j.ignored, 0) AS ignored,"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	// The panel's "running" filter tab means "actively running OR queued to run
@@ -2133,7 +2179,8 @@ std::optional<JobDisplayRecord> DatabaseManager::jobDisplayRecordById(qint64 job
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
-		"       COALESCE(j.ignored, 0) AS ignored"
+		"       COALESCE(j.ignored, 0) AS ignored,"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.id = ?"));
@@ -2167,7 +2214,8 @@ QList<JobDisplayRecord> DatabaseManager::liveJobsForPanel() const
 		"       COALESCE(f.display_year, 0) AS display_year,"
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
-		"       COALESCE(j.ignored, 0) AS ignored"
+		"       COALESCE(j.ignored, 0) AS ignored,"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.status IN ('running', 'queued')"

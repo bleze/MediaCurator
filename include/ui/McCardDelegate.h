@@ -144,6 +144,8 @@ signals:
 	void playRequested(const QModelIndex& index);
 	void imdbPageRequested(const QModelIndex& index);
 	void tmdbPageRequested(const QModelIndex& index);
+	// Single-file cards only — see FileRecord::hasSceneNfo.
+	void nfoViewRequested(const QModelIndex& index);
 	void streamToggleRequested(const QModelIndex& index, int streamIndex);
 	void streamFlagChangeRequested(const QModelIndex& index, int streamIndex,
 	                               const QString& flag, bool value);
@@ -177,6 +179,7 @@ private:
 		int                 posterVersion  = 0;
 		QString             imdbId;
 		int                 tmdbId         = 0;     // TMDB movie/tv numeric id; 0 = unknown
+		bool                hasSceneNfo    = false; // scene-release NFO art available (Library only)
 		double              rating         = 0.0;   // TMDB vote_average; 0 = unknown
 		QString             displayTitle;           // TMDB/user override (Library only)
 		int                 displayYear    = 0;    // release year from TMDB, 0 = unknown (Library only)
@@ -259,6 +262,13 @@ private:
 	// Shared by the normal single-file layout and the mega card (drawn once, using
 	// the representative file's ids) — same rects as imdbButtonRect()/tmdbButtonRect().
 	void drawImdbTmdbButtons(QPainter* painter, const QRect& content, bool hasImdb, bool hasTmdb) const;
+	// Single-file card only (no mega-card equivalent — a grouped edition set has no
+	// one NFO to show). Sits one slot further left than IMDb/TMDB. Same square
+	// footprint as those two (kImdbBtnW), filled with the edition-badge color and
+	// "NFO" centered — baseFont's family is kept but its point size is shrunk
+	// (down to a floor) until the text actually fits the square.
+	void drawNfoButton(QPainter* painter, const QRect& content, bool hasImdb, bool hasTmdb,
+	                   const QFont& baseFont) const;
 	// Dry-run wrap count for one codec-type group at the given width — mirrors
 	// drawBadgeRow()'s own wrap condition exactly, so counts never drift from what
 	// actually gets drawn.
@@ -269,6 +279,9 @@ private:
 	// hasImdb: whether the IMDb button is also present — shifts the TMDB button
 	// one slot left so the two never overlap. IMDb always anchors the rightmost slot.
 	static QRect   tmdbButtonRect(const QRect& contentRect, bool hasImdb);
+	// One slot further left than TMDB/IMDb, shifting past whichever of them is present.
+	// Same fixed kImdbBtnW square as those two — no font needed for geometry.
+	static QRect   nfoButtonRect(const QRect& contentRect, bool hasImdb, bool hasTmdb);
 	// Total width the badge rows must yield to the right for whichever of the
 	// IMDb/TMDB buttons are present (0, 1, or 2), including the gap before the badges.
 	static int     rightButtonsReserve(bool hasImdb, bool hasTmdb);
@@ -289,7 +302,7 @@ private:
 
 	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect,
 	                        bool hasImdb = false, bool hasTmdb = false,
-	                        const QModelIndex& index = {}) const;
+	                        const QModelIndex& index = {}, bool hasNfo = false) const;
 
 	// Left inset of the content area from the card's left edge — kPosterW + kPosterGap
 	// when TMDB is configured, otherwise just enough for a checkbox column (job queue)

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <QSet>
 #include <QString>
+#include <optional>
 
 namespace Mc {
 
@@ -24,6 +25,58 @@ public:
 
 	// Read the first IMDb ID found in the NFO for this video (empty if none)
 	static QString readImdbId(const QString& videoPath);
+
+	// Result of scanning the co-named .nfo for scene-release content — see
+	// scanSceneNfo(). hasArt mirrors hasSceneAsciiArt()'s old nullopt
+	// semantics; text is the decoded content (empty whenever hasArt isn't
+	// confirmed true).
+	struct SceneNfoScan {
+		std::optional<bool> hasArt;
+		QString              text;
+	};
+
+	// Single read of the co-named .nfo, answering both "is this a real
+	// scene-release NFO worth showing a viewer for" and, if so, its decoded
+	// text — one file open instead of two, since ScanWorker previously called
+	// the equivalent of this twice (once for the flag, once for the content)
+	// on every scan. "Real scene-release NFO" means: as opposed to a Kodi
+	// <movie> XML NFO (metadata, not release notes) or a short NFO that's
+	// effectively just a bare IMDb link with nothing else in it. Covers both
+	// classic CP437 box-drawing/ANSI art and the plain low-ASCII figlet-style
+	// art some modern release groups use instead. hasArt is confirmed false
+	// (not nullopt) if no .nfo exists there at all.
+	//
+	// hasArt is nullopt (rather than false) when the .nfo demonstrably exists
+	// but couldn't be opened right now — locked by another process, or (this
+	// library lives on a NAS share) a transient network hiccup. Callers that
+	// persist this to the DB must treat nullopt as "leave the existing value
+	// alone", not as a confirmed false — otherwise one flaky read during a
+	// routine rescan permanently clears a badge that was correct a moment
+	// earlier, which is indistinguishable from the feature just randomly
+	// breaking. Only a real open+read gets to downgrade true to false.
+	//
+	// text is decoded from CP437 — the encoding almost all scene-release NFOs
+	// use for any bytes above 0x7F (box-drawing/block-shading art), so that
+	// renders correctly instead of as replacement-character garbage under
+	// UTF-8; plain low-ASCII content passes through unchanged either way.
+	// Note: a handful of NFOs in the wild are internally corrupted
+	// (mixed/broken encoding from whatever tool wrote them) and will still
+	// render as garbage no matter the decode — that's the source file, not
+	// this function.
+	static SceneNfoScan scanSceneNfo(const QString& videoPath);
+
+	// Converts the modest subset of forum BBCode markup that scene/web-release
+	// NFO templates commonly wrap their "GENERAL INFO" headers etc. in — [b] [i]
+	// [u] [color=...] [size=N] — into HTML, so McMainWindow's viewer can render
+	// them instead of showing the literal bracket tags as text. [font=...] tags
+	// are stripped (we force our own monospace font regardless, for art
+	// alignment); [url]/[img] become plain <a> links rather than embedded
+	// images — this stays a local file viewer, it never fetches anything over
+	// the network on its own. Everything else is HTML-escaped first, so this
+	// is always safe to feed straight into QTextBrowser::setHtml(); malformed
+	// or unrecognized tags are simply left as literal escaped text. Caller is
+	// expected to wrap the result in <pre> to preserve art alignment/whitespace.
+	static QString bbcodeToHtml(const QString& text);
 
 	// Write (or update) the NFO file next to videoPath. Three cases:
 	//   - Kodi-style <movie> XML already exists: only the <uniqueid type="imdb">,

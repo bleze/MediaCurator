@@ -82,6 +82,7 @@ struct FileRecord {
 	qint64      subtitleAttemptedMs = 0; // last time an OpenSubtitles lookup was attempted (0 = never)
 	QString     edition; // e.g. "Theatrical", "Director's Cut", "3D"; blank = undetected. Heuristically
 	                      // filled once at first scan or user override; never re-touched by rescans.
+	bool        hasSceneNfo = false; // co-named .nfo has scene-release ASCII art — see NfoParser::hasSceneAsciiArt
 };
 
 // Mirrors the 'streams' table row
@@ -205,6 +206,7 @@ struct JobDisplayRecord {
 	QString mediaType = QStringLiteral("unknown"); // MediaTypes::* from files.media_type
 	QString edition;           // from files.edition; empty = undetected — see EditionDetector
 	bool    ignored = false;   // hidden from the job panel's normal filters — see setJobIgnored()
+	bool    hasSceneNfo = false; // from files.has_scene_nfo — see FileRecord::hasSceneNfo
 };
 
 enum class JobSortMode {
@@ -341,6 +343,23 @@ public:
 	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
 	bool updateMediaType(qint64 fileId, const QString& mediaType);
 	bool updateEdition(qint64 fileId, const QString& edition);
+	// Persists the scene-NFO-art flag and its decoded text, both detected by
+	// ScanWorker in one pass (via NfoParser::scanSceneNfo). The text is cached
+	// here — not re-read from disk on every viewer-button click — since these
+	// files often live on a NAS: a live read at click time would wake a
+	// spun-down drive and block the UI thread while it did. text is ignored
+	// when hasArt is false, and should be passed empty in that case so a
+	// stale cached copy doesn't linger once the NFO stops qualifying (removed
+	// entirely, or replaced by something that no longer looks like a scene
+	// NFO). Unlike edition there's no user override to protect, so this is
+	// simply re-written every scan pass rather than gated by a "checked"
+	// column — an NFO added later is picked up on the next scan.
+	bool updateSceneNfo(qint64 fileId, bool hasArt, const QString& text = {});
+	// On-demand fetch for the viewer dialog — deliberately not part of
+	// FileRecord/allFilesPaged etc., since that would load this (potentially
+	// several-KB) text into every card on every list load whether or not it's
+	// ever viewed. Empty if the file has no cached scene NFO text.
+	QString sceneNfoText(qint64 fileId) const;
 	// Files scanned before edition detection existed (edition_checked=0). Only
 	// id/filename/containerTitle are populated — that's all EditionDetector needs.
 	QList<FileRecord> filesNeedingEditionCheck() const;

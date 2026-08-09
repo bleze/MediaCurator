@@ -13,6 +13,7 @@
 #include "ui/McMultiCheckDropdown.h"
 #include "ui/McTrackContextMenu.h"
 #include "ui/McWindowGeometry.h"
+#include "scanner/NfoParser.h"
 #include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
 #include "ui/FileReveal.h"
@@ -59,6 +60,8 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPlainTextEdit>
+#include <QTextBrowser>
+#include <QTextDocument>
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
@@ -657,6 +660,52 @@ void McJobPanel::setupUi()
 		                   == QLatin1String(MediaTypes::Tv) ? QStringLiteral("tv") : QStringLiteral("movie");
 		QDesktopServices::openUrl(
 		    QUrl(QStringLiteral("https://www.themoviedb.org/%1/%2").arg(kind).arg(id)));
+	});
+	connect(jobDelegate, &McJobCardDelegate::nfoViewRequested,
+	        this, [this](const QModelIndex& idx) {
+		// Cached at scan time (DatabaseManager::sceneNfoText) rather than read
+		// live here — this library lives on a NAS, and a live read could wake
+		// a spun-down drive and block the UI thread while it did.
+		const QString path   = idx.data(McJobListModel::FilePathRole).toString();
+		const qint64  fileId = idx.data(McJobListModel::FileIdRole).toLongLong();
+		const QString art    = DatabaseManager::instance().sceneNfoText(fileId);
+		if (art.isEmpty()) return;
+
+		auto* dlg = new QDialog(this);
+		dlg->setAttribute(Qt::WA_DeleteOnClose);
+		dlg->setWindowTitle(tr("Scene NFO — %1").arg(QFileInfo(path).completeBaseName()));
+
+		auto* layout = new QVBoxLayout(dlg);
+		auto* edit = new QTextBrowser(dlg);
+		edit->setOpenExternalLinks(true);
+		edit->setLineWrapMode(QTextEdit::NoWrap);
+		QFont mono("Courier New", 9);
+		mono.setStyleHint(QFont::Monospace);
+		edit->setFont(mono);
+		edit->setHtml(QStringLiteral("<pre>%1</pre>").arg(NfoParser::bbcodeToHtml(art)));
+		layout->addWidget(edit);
+
+		auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+		connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+		layout->addWidget(buttons);
+
+		// Size to the actual content, capped at the screen size minus a 50px
+		// margin on each edge — see McMainWindow's identical nfoViewRequested
+		// handler for the full rationale.
+		const QRect avail = screen()->availableGeometry();
+		const QSize maxSize = avail.size() - QSize(100, 100);
+		QTextDocument* doc = edit->document();
+		doc->setTextWidth(-1);
+		const int idealW = qRound(doc->idealWidth());
+		doc->setTextWidth(idealW);
+		const int idealH = qRound(doc->size().height());
+		const QSize dlgSize(qBound(400, idealW + 48, maxSize.width()),
+		                     qBound(200, idealH + 90, maxSize.height()));
+		dlg->resize(dlgSize);
+		const QPoint winCenter = window()->frameGeometry().center();
+		dlg->move(winCenter - QPoint(dlgSize.width() / 2, dlgSize.height() / 2));
+
+		dlg->show();
 	});
 
 	// Stale size cache: the cache is keyed by row number. After a model reset the

@@ -261,6 +261,8 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	       tr("Storage group — shown when library spans more than one"));
 	addRow(g, { plainBadgeLabel(this, tr("Director's Cut")), plainBadgeLabel(this, tr("Theatrical")) },
 	       tr("Edition/cut, detected from filename or container tag"));
+	addRow(g, { plainBadgeLabel(this, QStringLiteral("NFO")) },
+	       tr("Scene release NFO available — click to view its release notes/art"));
 	const QColor videoBadgeColor = McCardDelegate::badgeColor(QStringLiteral("video"));
 	addRow(g, { plainBadgeLabel(this, QStringLiteral("3D (HSBS)"), videoBadgeColor) },
 	       tr("3D format, detected the same way as edition"));
