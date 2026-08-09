@@ -601,9 +601,13 @@ QString McCardDelegate::codecLabel(const StreamRecord& s)
 	if (n == "truehd") {
 		const QString p = s.codecProfile.toLower();
 		const QString t = s.title.toLower();
-		return (p.contains("atmos") || t.contains("atmos")) ? "Atmos" : "TrueHD";
+		return (p.contains("atmos") || t.contains("atmos")) ? "TrueHD Atmos" : "TrueHD";
 	}
-	if (n == "eac3")                    return "DD+";
+	if (n == "eac3") {
+		const QString p = s.codecProfile.toLower();
+		const QString t = s.title.toLower();
+		return (p.contains("atmos") || t.contains("atmos")) ? "DD+ Atmos" : "DD+";
+	}
 	if (n == "ac3")                     return "DD";
 	if (n == "aac")                     return "AAC";
 	if (n == "mp3")                     return "MP3";

@@ -160,7 +160,7 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 
 	// ── Audio ─────────────────────────────────────────────────────────────────
 	auto* audioBox = makeGroup(tr("Audio"), g);
-	addRow(g, { badgeLabel(this, QStringLiteral("Atmos"), QStringLiteral("audio")) },
+	addRow(g, { badgeLabel(this, QStringLiteral("TrueHD Atmos"), QStringLiteral("audio")) },
 	       tr("%1 — object-based, on a TrueHD core, lossless")
 	           .arg(grok(QStringLiteral("Dolby_Atmos"), tr("Dolby Atmos"))));
 	addRow(g, { badgeLabel(this, QStringLiteral("TrueHD"), QStringLiteral("audio")) },
@@ -180,6 +180,9 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	addRow(g, { badgeLabel(this, QStringLiteral("DD+"), QStringLiteral("audio")) },
 	       tr("%1 — lossy, streaming services")
 	           .arg(grok(QStringLiteral("Dolby_Digital_Plus"), tr("Dolby Digital Plus (E-AC-3)"))));
+	addRow(g, { badgeLabel(this, QStringLiteral("DD+ Atmos"), QStringLiteral("audio")) },
+	       tr("%1 — object-based, on a DD+ core, lossy")
+	           .arg(grok(QStringLiteral("Dolby_Atmos"), tr("Dolby Atmos"))));
 	addRow(g, { badgeLabel(this, QStringLiteral("DD"), QStringLiteral("audio")) },
 	       tr("%1 — lossy, DVD and broadcast")
 	           .arg(grok(QStringLiteral("Dolby_Digital"), tr("Dolby Digital (AC-3)"))));

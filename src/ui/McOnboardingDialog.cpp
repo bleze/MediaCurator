@@ -235,7 +235,7 @@ McOnboardingDialog::McOnboardingDialog(QWidget* parent)
 		   "and forced subtitles. The movie's original-language audio track is always kept, "
 		   "no matter what you choose."),
 		{ sampleBadge(m_stack, QStringLiteral("H.265  3840" "\xC3\x97" "2160  DolbyVision"), QStringLiteral("video")),
-		  sampleBadge(m_stack, QStringLiteral("Atmos  7.1"), QStringLiteral("audio"), QStringLiteral("eng")),
+		  sampleBadge(m_stack, QStringLiteral("TrueHD Atmos  7.1"), QStringLiteral("audio"), QStringLiteral("eng")),
 		  sampleBadge(m_stack, QStringLiteral("SRT"), QStringLiteral("subtitle"), QStringLiteral("eng")) }));
 
 	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/playlist_add_check.svg"), 56),
