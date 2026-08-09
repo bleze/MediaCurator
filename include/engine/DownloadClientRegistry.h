@@ -7,8 +7,8 @@
 namespace Mc {
 
 /**
- * DownloadClientRegistry — owns every configured DownloadClient (NZBGet
- * today; future providers register here too) and presents one merged view
+ * DownloadClientRegistry — owns every configured DownloadClient (NZBGet,
+ * SABnzbd; future providers register here too) and presents one merged view
  * so callers (McMainWindow, the queue band/dialog) never touch a concrete
  * provider directly. Adding a new provider is registering it in the
  * constructor — no other call site changes.

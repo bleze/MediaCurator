@@ -9,6 +9,7 @@ namespace Mc {
 namespace {
 const QLatin1String kDownloadsKey("downloads");
 const QLatin1String kNzbGetKey("nzbget");
+const QLatin1String kSabnzbdKey("sabnzbd");
 
 // NOT real security — this only keeps the password from showing up as plain
 // text to a casual glance at settings.json (screenshots, screen-sharing a
@@ -62,13 +63,11 @@ NzbGetConfig DownloadIntegrationSettings::nzbgetConfig()
 	const QJsonObject obj = downloadsObject().value(kNzbGetKey).toObject();
 
 	NzbGetConfig config;
-	config.enabled          = obj.value(QStringLiteral("enabled")).toBool(false);
-	config.host             = obj.value(QStringLiteral("host")).toString();
-	config.port             = obj.value(QStringLiteral("port")).toInt(6789);
-	config.username         = obj.value(QStringLiteral("username")).toString();
-	config.password         = deobfuscate(obj.value(QStringLiteral("password")).toString());
-	config.autoQuickScan    = obj.value(QStringLiteral("autoQuickScan")).toBool(true);
-	config.autoQuickAnalyze = obj.value(QStringLiteral("autoQuickAnalyze")).toBool(true);
+	config.enabled  = obj.value(QStringLiteral("enabled")).toBool(false);
+	config.host     = obj.value(QStringLiteral("host")).toString();
+	config.port     = obj.value(QStringLiteral("port")).toInt(6789);
+	config.username = obj.value(QStringLiteral("username")).toString();
+	config.password = deobfuscate(obj.value(QStringLiteral("password")).toString());
 	return config;
 }
 
@@ -80,11 +79,66 @@ void DownloadIntegrationSettings::setNzbgetConfig(const NzbGetConfig& config)
 	nzbget.insert(QStringLiteral("port"), config.port);
 	nzbget.insert(QStringLiteral("username"), config.username);
 	nzbget.insert(QStringLiteral("password"), obfuscate(config.password));
-	nzbget.insert(QStringLiteral("autoQuickScan"), config.autoQuickScan);
-	nzbget.insert(QStringLiteral("autoQuickAnalyze"), config.autoQuickAnalyze);
 
 	QJsonObject downloads = downloadsObject();
 	downloads.insert(kNzbGetKey, nzbget);
+	saveDownloadsObject(downloads);
+}
+
+SabnzbdConfig DownloadIntegrationSettings::sabnzbdConfig()
+{
+	const QJsonObject obj = downloadsObject().value(kSabnzbdKey).toObject();
+
+	SabnzbdConfig config;
+	config.enabled = obj.value(QStringLiteral("enabled")).toBool(false);
+	config.host    = obj.value(QStringLiteral("host")).toString();
+	config.port    = obj.value(QStringLiteral("port")).toInt(8080);
+	config.apiKey  = deobfuscate(obj.value(QStringLiteral("apiKey")).toString());
+	return config;
+}
+
+void DownloadIntegrationSettings::setSabnzbdConfig(const SabnzbdConfig& config)
+{
+	QJsonObject sabnzbd;
+	sabnzbd.insert(QStringLiteral("enabled"), config.enabled);
+	sabnzbd.insert(QStringLiteral("host"), config.host);
+	sabnzbd.insert(QStringLiteral("port"), config.port);
+	sabnzbd.insert(QStringLiteral("apiKey"), obfuscate(config.apiKey));
+
+	QJsonObject downloads = downloadsObject();
+	downloads.insert(kSabnzbdKey, sabnzbd);
+	saveDownloadsObject(downloads);
+}
+
+bool DownloadIntegrationSettings::autoQuickScanOnComplete()
+{
+	const QJsonObject downloads = downloadsObject();
+	if (downloads.contains(QStringLiteral("autoQuickScan")))
+		return downloads.value(QStringLiteral("autoQuickScan")).toBool(true);
+	// Migrate pre-SABnzbd installs where this lived under the nzbget key.
+	return downloads.value(kNzbGetKey).toObject().value(QStringLiteral("autoQuickScan")).toBool(true);
+}
+
+void DownloadIntegrationSettings::setAutoQuickScanOnComplete(bool enabled)
+{
+	QJsonObject downloads = downloadsObject();
+	downloads.insert(QStringLiteral("autoQuickScan"), enabled);
+	saveDownloadsObject(downloads);
+}
+
+bool DownloadIntegrationSettings::autoQuickAnalyzeOnComplete()
+{
+	const QJsonObject downloads = downloadsObject();
+	if (downloads.contains(QStringLiteral("autoQuickAnalyze")))
+		return downloads.value(QStringLiteral("autoQuickAnalyze")).toBool(true);
+	// Migrate pre-SABnzbd installs where this lived under the nzbget key.
+	return downloads.value(kNzbGetKey).toObject().value(QStringLiteral("autoQuickAnalyze")).toBool(true);
+}
+
+void DownloadIntegrationSettings::setAutoQuickAnalyzeOnComplete(bool enabled)
+{
+	QJsonObject downloads = downloadsObject();
+	downloads.insert(QStringLiteral("autoQuickAnalyze"), enabled);
 	saveDownloadsObject(downloads);
 }
 

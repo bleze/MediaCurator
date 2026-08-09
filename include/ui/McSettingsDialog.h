@@ -47,6 +47,7 @@ private slots:
 	void onResetEditionTokens();
 	void onEditionTokenEdited(QListWidgetItem* item);
 	void onTestNzbConnection();
+	void onTestSabConnection();
 
 private:
 	void accept() override;
@@ -102,10 +103,20 @@ private:
 	QSpinBox*    m_spinNzbPort;
 	QLineEdit*   m_editNzbUsername;
 	QLineEdit*   m_editNzbPassword;
-	QCheckBox*   m_chkNzbAutoQuickScan;
-	QCheckBox*   m_chkNzbAutoQuickAnalyze;
 	QPushButton* m_btnNzbTestConnection;
 	QLabel*      m_lblNzbTestResult;
+
+	QGroupBox*   m_grpSabEnabled;
+	QLineEdit*   m_editSabHost;
+	QSpinBox*    m_spinSabPort;
+	QLineEdit*   m_editSabApiKey;
+	QPushButton* m_btnSabTestConnection;
+	QLabel*      m_lblSabTestResult;
+
+	// Shared across every download-client provider — see
+	// DownloadIntegrationSettings' class comment for why.
+	QCheckBox*   m_chkAutoQuickScan;
+	QCheckBox*   m_chkAutoQuickAnalyze;
 };
 
 } // namespace Mc

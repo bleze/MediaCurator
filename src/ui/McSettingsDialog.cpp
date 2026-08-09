@@ -39,6 +39,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QVBoxLayout>
 #include <QtMath>
 
@@ -739,7 +740,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	ifacePageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 6 — Downloads (NZBGet today; future providers get their own group box here)
+	// Tab 6 — Downloads (NZBGet, SABnzbd; future providers get their own group box here)
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* dlPage   = new QWidget;
 	auto* dlPageLo = new QVBoxLayout(dlPage);
@@ -795,24 +796,78 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	nzbTestRow->addWidget(m_lblNzbTestResult, 1);
 	nzbLayout->addLayout(nzbTestRow);
 
-	m_chkNzbAutoQuickScan = new QCheckBox(
-		tr("Automatically Quick Scan when a download completes"), m_grpNzbEnabled);
-	m_chkNzbAutoQuickScan->setChecked(nzbConfig.autoQuickScan);
-	nzbLayout->addWidget(m_chkNzbAutoQuickScan);
-
-	m_chkNzbAutoQuickAnalyze = new QCheckBox(
-		tr("Automatically Quick Analyze after scanning"), m_grpNzbEnabled);
-	m_chkNzbAutoQuickAnalyze->setChecked(nzbConfig.autoQuickAnalyze);
-	nzbLayout->addWidget(m_chkNzbAutoQuickAnalyze);
-
-	auto* nzbHint = new QLabel(
-		tr("NZBGet only reports a download as complete once its own post-processing "
-		   "(unpack, par-repair, and any sort/rename scripts) has finished, so the file is "
-		   "already in place by the time a Quick Scan is triggered."), m_grpNzbEnabled);
-	nzbHint->setWordWrap(true);
-	nzbLayout->addWidget(nzbHint);
-
 	dlPageLo->addWidget(m_grpNzbEnabled);
+
+	m_grpSabEnabled = new QGroupBox(tr("SABnzbd"), dlPage);
+	m_grpSabEnabled->setCheckable(true);
+	auto* sabLayout = new QVBoxLayout(m_grpSabEnabled);
+
+	const SabnzbdConfig sabConfig = DownloadIntegrationSettings::sabnzbdConfig();
+	m_grpSabEnabled->setChecked(sabConfig.enabled);
+
+	auto* sabHostRow   = new QHBoxLayout;
+	auto* sabHostLabel = new QLabel(tr("Host:"), m_grpSabEnabled);
+	m_editSabHost      = new QLineEdit(m_grpSabEnabled);
+	m_editSabHost->setPlaceholderText(tr("e.g. 192.168.1.10"));
+	m_editSabHost->setText(sabConfig.host);
+	auto* sabPortLabel = new QLabel(tr("Port:"), m_grpSabEnabled);
+	m_spinSabPort      = new QSpinBox(m_grpSabEnabled);
+	m_spinSabPort->setRange(1, 65535);
+	m_spinSabPort->setValue(sabConfig.port);
+	sabHostRow->addWidget(sabHostLabel);
+	sabHostRow->addWidget(m_editSabHost, 1);
+	sabHostRow->addWidget(sabPortLabel);
+	sabHostRow->addWidget(m_spinSabPort);
+	sabLayout->addLayout(sabHostRow);
+
+	auto* sabKeyRow   = new QHBoxLayout;
+	auto* sabKeyLabel = new QLabel(tr("API Key:"), m_grpSabEnabled);
+	m_editSabApiKey   = new QLineEdit(m_grpSabEnabled);
+	m_editSabApiKey->setEchoMode(QLineEdit::Password);
+	m_editSabApiKey->setText(sabConfig.apiKey);
+	sabKeyRow->addWidget(sabKeyLabel);
+	sabKeyRow->addWidget(m_editSabApiKey, 1);
+	sabLayout->addLayout(sabKeyRow);
+
+	auto* sabKeyHint = new QLabel(
+		tr("Found in SABnzbd under Config → General → API Key."), m_grpSabEnabled);
+	sabKeyHint->setWordWrap(true);
+	sabLayout->addWidget(sabKeyHint);
+
+	auto* sabTestRow = new QHBoxLayout;
+	m_btnSabTestConnection = new QPushButton(tr("Test Connection"), m_grpSabEnabled);
+	connect(m_btnSabTestConnection, &QPushButton::clicked, this, &McSettingsDialog::onTestSabConnection);
+	m_lblSabTestResult = new QLabel(m_grpSabEnabled);
+	sabTestRow->addWidget(m_btnSabTestConnection);
+	sabTestRow->addWidget(m_lblSabTestResult, 1);
+	sabLayout->addLayout(sabTestRow);
+
+	dlPageLo->addWidget(m_grpSabEnabled);
+
+	// Shared behavior — applies no matter which provider above reports the
+	// completion, so it isn't duplicated inside each provider's group box.
+	auto* dlBehaviorGroup  = new QGroupBox(tr("On Download Complete"), dlPage);
+	auto* dlBehaviorLayout = new QVBoxLayout(dlBehaviorGroup);
+
+	m_chkAutoQuickScan = new QCheckBox(
+		tr("Automatically Quick Scan when a download completes"), dlBehaviorGroup);
+	m_chkAutoQuickScan->setChecked(DownloadIntegrationSettings::autoQuickScanOnComplete());
+	dlBehaviorLayout->addWidget(m_chkAutoQuickScan);
+
+	m_chkAutoQuickAnalyze = new QCheckBox(
+		tr("Automatically Quick Analyze after scanning"), dlBehaviorGroup);
+	m_chkAutoQuickAnalyze->setChecked(DownloadIntegrationSettings::autoQuickAnalyzeOnComplete());
+	dlBehaviorLayout->addWidget(m_chkAutoQuickAnalyze);
+
+	auto* dlBehaviorHint = new QLabel(
+		tr("Applies to any enabled provider above. Each only reports a download as complete "
+		   "once its own post-processing (unpack, par-repair, any sort/rename scripts) has "
+		   "finished, so the file is already in place by the time a Quick Scan is triggered."),
+		dlBehaviorGroup);
+	dlBehaviorHint->setWordWrap(true);
+	dlBehaviorLayout->addWidget(dlBehaviorHint);
+
+	dlPageLo->addWidget(dlBehaviorGroup);
 	dlPageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
@@ -1213,14 +1268,23 @@ void McSettingsDialog::accept()
 	AppSettings::instance().setValue("library/fanartOpacity", m_sliderFanartOpacity->value());
 
 	NzbGetConfig nzbConfig;
-	nzbConfig.enabled          = m_grpNzbEnabled->isChecked();
-	nzbConfig.host             = m_editNzbHost->text().trimmed();
-	nzbConfig.port             = m_spinNzbPort->value();
-	nzbConfig.username         = m_editNzbUsername->text().trimmed();
-	nzbConfig.password         = m_editNzbPassword->text();
-	nzbConfig.autoQuickScan    = m_chkNzbAutoQuickScan->isChecked();
-	nzbConfig.autoQuickAnalyze = m_chkNzbAutoQuickAnalyze->isChecked();
+	nzbConfig.enabled  = m_grpNzbEnabled->isChecked();
+	nzbConfig.host     = m_editNzbHost->text().trimmed();
+	nzbConfig.port     = m_spinNzbPort->value();
+	nzbConfig.username = m_editNzbUsername->text().trimmed();
+	nzbConfig.password = m_editNzbPassword->text();
 	DownloadIntegrationSettings::setNzbgetConfig(nzbConfig);
+
+	SabnzbdConfig sabConfig;
+	sabConfig.enabled = m_grpSabEnabled->isChecked();
+	sabConfig.host    = m_editSabHost->text().trimmed();
+	sabConfig.port    = m_spinSabPort->value();
+	sabConfig.apiKey  = m_editSabApiKey->text().trimmed();
+	DownloadIntegrationSettings::setSabnzbdConfig(sabConfig);
+
+	DownloadIntegrationSettings::setAutoQuickScanOnComplete(m_chkAutoQuickScan->isChecked());
+	DownloadIntegrationSettings::setAutoQuickAnalyzeOnComplete(m_chkAutoQuickAnalyze->isChecked());
+
 	DownloadClientRegistry::instance().reconfigureAll();
 
 	QDialog::accept();
@@ -1268,6 +1332,51 @@ void McSettingsDialog::onTestNzbConnection()
 		}
 		const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
 		m_lblNzbTestResult->setText(obj.contains(QStringLiteral("result"))
+		    ? tr("Connected successfully.")
+		    : tr("Unexpected response from server."));
+	});
+}
+
+void McSettingsDialog::onTestSabConnection()
+{
+	const QString host = m_editSabHost->text().trimmed();
+	if (host.isEmpty()) {
+		m_lblSabTestResult->setText(tr("Enter a host first."));
+		return;
+	}
+
+	QUrl url;
+	url.setScheme(QStringLiteral("http"));
+	url.setHost(host);
+	url.setPort(m_spinSabPort->value());
+	url.setPath(QStringLiteral("/api"));
+
+	QUrlQuery query;
+	query.addQueryItem(QStringLiteral("mode"), QStringLiteral("version"));
+	query.addQueryItem(QStringLiteral("output"), QStringLiteral("json"));
+	query.addQueryItem(QStringLiteral("apikey"), m_editSabApiKey->text().trimmed());
+	url.setQuery(query);
+
+	m_lblSabTestResult->setText(tr("Testing…"));
+	m_btnSabTestConnection->setEnabled(false);
+
+	// Tests the credentials currently typed in the dialog, not whatever is
+	// already saved — a standalone QNetworkAccessManager here (rather than
+	// going through SabnzbdClient, which always reads persisted settings) is
+	// what lets this work before Save is clicked.
+	auto* nam = new QNetworkAccessManager(this);
+	QNetworkReply* reply = nam->get(QNetworkRequest(url));
+	connect(reply, &QNetworkReply::finished, this, [this, reply, nam] {
+		reply->deleteLater();
+		nam->deleteLater();
+		m_btnSabTestConnection->setEnabled(true);
+
+		if (reply->error() != QNetworkReply::NoError) {
+			m_lblSabTestResult->setText(tr("Failed: %1").arg(reply->errorString()));
+			return;
+		}
+		const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
+		m_lblSabTestResult->setText(obj.contains(QStringLiteral("version"))
 		    ? tr("Connected successfully.")
 		    : tr("Unexpected response from server."));
 	});

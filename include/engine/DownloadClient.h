@@ -16,7 +16,7 @@ struct DownloadQueueItem {
 
 /**
  * DownloadClient — base for a background-download-client integration
- * (NZBGet today; SABnzbd/qBittorrent/etc. are future siblings). Each
+ * (NZBGet, SABnzbd today; qBittorrent/etc. are future siblings). Each
  * instance owns its own polling (timer + network client); McMainWindow only
  * ever talks to DownloadClientRegistry, never a concrete subclass directly.
  *

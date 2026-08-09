@@ -4371,8 +4371,9 @@ void McMainWindow::updateDownloadQueueVisibility()
 
 void McMainWindow::onDownloadsCompleted(QStringList /*names*/, QString /*providerId*/)
 {
-	const NzbGetConfig nzbConfig = DownloadIntegrationSettings::nzbgetConfig();
-	if (!nzbConfig.autoQuickScan)
+	// Shared across every provider — see DownloadIntegrationSettings' class
+	// comment for why this isn't looked up per-providerId.
+	if (!DownloadIntegrationSettings::autoQuickScanOnComplete())
 		return;
 	if (isScanning())
 		return;   // skip silently — no modal, unlike the manual Quick Scan path
@@ -4381,7 +4382,7 @@ void McMainWindow::onDownloadsCompleted(QStringList /*names*/, QString /*provide
 	if (roots.isEmpty())
 		return;   // nothing configured to scan yet
 
-	m_pendingAutoAnalyze = nzbConfig.autoQuickAnalyze;
+	m_pendingAutoAnalyze = DownloadIntegrationSettings::autoQuickAnalyzeOnComplete();
 	startScanRoots(roots, /*quickScan=*/true, /*silent=*/true);
 }
 

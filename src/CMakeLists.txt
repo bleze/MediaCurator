@@ -71,6 +71,7 @@ set(MC_SOURCES
     engine/HighscoreClient.cpp
     engine/DownloadClientRegistry.cpp
     engine/NzbGetClient.cpp
+    engine/SabnzbdClient.cpp
 
     # Classifier
     classifier/RegexClassifier.cpp
@@ -123,6 +124,7 @@ set(MC_HEADERS
     ../include/engine/DownloadClient.h
     ../include/engine/DownloadClientRegistry.h
     ../include/engine/NzbGetClient.h
+    ../include/engine/SabnzbdClient.h
 
     # Classifier
     ../include/classifier/TrackClassifier.h

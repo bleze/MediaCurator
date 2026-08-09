@@ -1,5 +1,6 @@
 #include "engine/DownloadClientRegistry.h"
 #include "engine/NzbGetClient.h"
+#include "engine/SabnzbdClient.h"
 
 #include <utility>
 
@@ -16,6 +17,9 @@ DownloadClientRegistry::DownloadClientRegistry(QObject* parent)
 {
 	auto* nzbget = new NzbGetClient(this);
 	m_clients << nzbget;
+
+	auto* sabnzbd = new SabnzbdClient(this);
+	m_clients << sabnzbd;
 
 	for (DownloadClient* client : std::as_const(m_clients)) {
 		connect(client, &DownloadClient::queueUpdated, this, [this, client](QList<DownloadQueueItem> items) {
