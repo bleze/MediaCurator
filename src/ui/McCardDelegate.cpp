@@ -940,12 +940,14 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 
 	const int textRectW = r.right() - kBadgePad - sdhW - textLeft + 1;
 	const QColor normalColor = removed ? QColor(0xff, 0xff, 0xff, 90) : Qt::white;
+	static const QChar kStarChar(0x2605); // ★ — glyph sits low in its em box; nudge up 1px
 
-	if (goldChars.isEmpty()) {
+	if (goldChars.isEmpty() && !text.contains(kStarChar)) {
 		p->setPen(normalColor);
 		p->drawText(QRect(textLeft, r.top(), textRectW, h), Qt::AlignVCenter | Qt::AlignLeft, text);
 	} else {
-		// Draw text in segments, coloring pending-add flag chars gold
+		// Draw text in segments: color pending-add flag chars gold, and nudge the
+		// default-flag star up 1px to correct its low optical position.
 		const QFontMetrics fm(font);
 		int xOff     = 0;
 		int segStart = 0;
@@ -961,7 +963,15 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 		};
 
 		for (int i = 0; i < text.size(); ++i) {
-			if (goldChars.contains(text[i])) {
+			if (text[i] == kStarChar) {
+				flushSegment(i);
+				const QString ch = text.mid(i, 1);
+				p->setPen(goldChars.contains(text[i]) ? kFlagAddedColor : normalColor);
+				p->drawText(QRect(textLeft + xOff, r.top() - 1, textRectW - xOff, h),
+				            Qt::AlignVCenter | Qt::AlignLeft, ch);
+				xOff += fm.horizontalAdvance(ch);
+				segStart = i + 1;
+			} else if (goldChars.contains(text[i])) {
 				flushSegment(i);
 				const QString ch = text.mid(i, 1);
 				p->setPen(kFlagAddedColor);
