@@ -80,6 +80,7 @@ private:
 	QPushButton* m_btnBrowseStagingDir;
 	QLineEdit*   m_editTmdbKey;
 	QCheckBox*   m_chkWriteNfo;
+	QCheckBox*   m_chkDownloadSceneNfo;
 	QSpinBox*    m_spinRetryCooldown;   // shared: TMDB poster/NFO lookups + OpenSubtitles re-search
 	QLineEdit*   m_editOsApiKey;
 	QLineEdit*   m_editOsUsername;

@@ -129,6 +129,14 @@ void UserProfile::setWriteNfoFiles(bool v)
 	}
 }
 
+void UserProfile::setDownloadSceneNfoEnabled(bool v)
+{
+	if (m_downloadSceneNfoEnabled != v) {
+		m_downloadSceneNfoEnabled = v;
+		emit profileChanged();
+	}
+}
+
 void UserProfile::setUseLocalStaging(bool v)
 {
 	if (m_useLocalStaging != v) {
@@ -353,6 +361,7 @@ QJsonObject UserProfile::toJson() const
 	o["disabled_subtitle_formats"]       = QJsonArray::fromStringList(m_disabledSubtitleFormats);
 	o["write_job_log"]                   = m_writeJobLog;
 	o["write_nfo_files"]                 = m_writeNfoFiles;
+	o["download_scene_nfo_enabled"]      = m_downloadSceneNfoEnabled;
 	o["use_local_staging"]               = m_useLocalStaging;
 	o["local_staging_dir"]               = m_localStagingDir;
 	o["tmdb_api_key"]                    = m_tmdbApiKey;
@@ -397,6 +406,7 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_removeMjpegCoverArt        = json["remove_mjpeg_cover_art"].toBool(true);
 	m_writeJobLog                = json["write_job_log"].toBool(false);
 	m_writeNfoFiles              = json["write_nfo_files"].toBool(false);
+	m_downloadSceneNfoEnabled    = json["download_scene_nfo_enabled"].toBool(false);
 	m_useLocalStaging            = json["use_local_staging"].toBool(false);
 	m_localStagingDir            = json["local_staging_dir"].toString();
 	m_tmdbApiKey                 = json["tmdb_api_key"].toString();

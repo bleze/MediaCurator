@@ -65,6 +65,15 @@ public:
 	// this function.
 	static SceneNfoScan scanSceneNfo(const QString& videoPath);
 
+	// Decodes raw NFO bytes with the same CP437/mixed-encoding detection
+	// scanSceneNfo() uses for on-disk files — shared so content fetched from
+	// elsewhere (e.g. a downloaded scene-release NFO) renders identically to a
+	// locally-scanned one. No "is this really a scene NFO" gate, unlike
+	// scanSceneNfo() — callers that already know the source is a genuine
+	// scene-release NFO (rather than an arbitrary file that happens to sit next
+	// to the video) can skip straight to decoding.
+	static QString decodeSceneNfoBytes(const QByteArray& raw);
+
 	// Converts the modest subset of forum BBCode markup that scene/web-release
 	// NFO templates commonly wrap their "GENERAL INFO" headers etc. in — [b] [i]
 	// [u] [color=...] [size=N] — into HTML, so McMainWindow's viewer can render
@@ -97,6 +106,14 @@ public:
 	// QFileSystemWatcher callback can skip it via checkAndClearOwnWrite().
 	static bool writeMovieNfo(const QString& videoPath, const QString& imdbId,
 	                          const NfoMovieMeta& meta = {});
+
+	// Unconditionally (re)writes the co-named .nfo with rawContent, replacing
+	// whatever is there. Unlike writeMovieNfo(), never patches-in-place — only
+	// for callers acting on the user's own explicit "replace this file" request
+	// (e.g. a confirmed scene-NFO download), where truncating is exactly what's
+	// wanted rather than a bug to guard against. Also registers nfoPath in the
+	// own-write suppression set, same as writeMovieNfo().
+	static bool writeSceneNfoFile(const QString& videoPath, const QByteArray& rawContent);
 
 	// Extract a search-friendly title from a video filename.
 	// "The.Dark.Knight.2008.BluRay.1080p.mkv" → "The Dark Knight 2008"

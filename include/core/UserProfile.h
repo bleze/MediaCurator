@@ -80,6 +80,13 @@ public:
 	bool writeNfoFiles() const { return m_writeNfoFiles; }
 	void setWriteNfoFiles(bool v);
 
+	// Enables the per-file "Download Scene NFO…" context menu action (srrDB
+	// lookup). Off by default — srrDB is a community-run service, not an
+	// official API, so hitting it should be an explicit opt-in like the
+	// OpenSubtitles integration rather than always available.
+	bool downloadSceneNfoEnabled() const { return m_downloadSceneNfoEnabled; }
+	void setDownloadSceneNfoEnabled(bool v);
+
 	// Mux to a local folder first, then copy the finished file back to its real
 	// destination — avoids reading and writing the same NAS share at once.
 	bool useLocalStaging() const { return m_useLocalStaging; }
@@ -192,6 +199,7 @@ private:
 	bool        m_removeMjpegCoverArt       = true;
 	bool        m_writeJobLog               = false;
 	bool        m_writeNfoFiles             = false;
+	bool        m_downloadSceneNfoEnabled  = false;
 	bool        m_useLocalStaging          = false;
 	QString     m_localStagingDir;
 	QString     m_tmdbApiKey;

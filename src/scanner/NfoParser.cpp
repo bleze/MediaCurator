@@ -264,10 +264,15 @@ NfoParser::SceneNfoScan NfoParser::scanSceneNfo(const QString& videoPath)
 	const QByteArray raw = f.readAll();
 	if (!looksLikeSceneNfo(raw)) return { false, {} };
 
+	return { true, decodeSceneNfoBytes(raw) };
+}
+
+QString NfoParser::decodeSceneNfoBytes(const QByteArray& raw)
+{
 	const QString text = looksLikeCorruptedMixedEncoding(raw)
 	    ? decodeCorruptedMixedEncoding(raw)
 	    : decodeCp437(raw);
-	return { true, stripTrailingWhitespacePerLine(text) };
+	return stripTrailingWhitespacePerLine(text);
 }
 
 QString NfoParser::bbcodeToHtml(const QString& text)
@@ -537,6 +542,34 @@ bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId,
 	file.write(xml.toUtf8());
 #ifdef Q_OS_WIN
 	preservePathTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+#endif
+	return true;
+}
+
+bool NfoParser::writeSceneNfoFile(const QString& videoPath, const QByteArray& rawContent)
+{
+	DriveActivityMonitor::touchPath(videoPath);
+	const QString nfoPath = nfoPathFor(videoPath);
+	ownWrites().insert(nfoPath);
+
+	const QFileInfo dirFi(QFileInfo(nfoPath).absolutePath());
+	const QDateTime dirOrigCreated  = dirFi.birthTime();
+	const QDateTime dirOrigModified = dirFi.lastModified();
+	const QString   dirPath         = dirFi.absoluteFilePath();
+
+	const QFileInfo nfoFi(nfoPath);
+	const bool      nfoExisted      = nfoFi.exists();
+	const QDateTime nfoOrigCreated  = nfoFi.birthTime();
+	const QDateTime nfoOrigModified = nfoFi.lastModified();
+
+	QFile file(nfoPath);
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+		return false;
+	file.write(rawContent);
+	file.close();
+#ifdef Q_OS_WIN
+	preservePathTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+	if (nfoExisted) preservePathTimestamps(nfoPath, nfoOrigCreated, nfoOrigModified);
 #endif
 	return true;
 }

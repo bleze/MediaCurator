@@ -43,6 +43,7 @@ set(MC_SOURCES
     ui/McGoalProgressBar.cpp
     ui/ImdbSearchDialog.cpp
     ui/McSubtitleDownloadDialog.cpp
+    ui/McSceneNfoDownloadDialog.cpp
     ui/McCalibrationDialog.cpp
     ui/McHighscoreBand.cpp
     ui/McHighscoreDialog.cpp
@@ -67,6 +68,7 @@ set(MC_SOURCES
     engine/PosterManager.cpp
     engine/SubtitleManager.cpp
     engine/OpenSubtitlesClient.cpp
+    engine/SrrdbClient.cpp
     engine/SubtitleSyncMatcher.cpp
     engine/HighscoreClient.cpp
     engine/DownloadClientRegistry.cpp
@@ -118,6 +120,7 @@ set(MC_HEADERS
     ../include/engine/PosterManager.h
     ../include/engine/SubtitleManager.h
     ../include/engine/OpenSubtitlesClient.h
+    ../include/engine/SrrdbClient.h
     ../include/engine/SubtitleSyncMatcher.h
     ../include/engine/HighscoreClient.h
     ../include/engine/HighscoreConfig.h
@@ -158,6 +161,7 @@ set(MC_HEADERS
     ../include/ui/McSettingsDialog.h
     ../include/ui/ImdbSearchDialog.h
     ../include/ui/McSubtitleDownloadDialog.h
+    ../include/ui/McSceneNfoDownloadDialog.h
     ../include/ui/McCalibrationDialog.h
     ../include/ui/McHighscoreBand.h
     ../include/ui/McHighscoreDialog.h

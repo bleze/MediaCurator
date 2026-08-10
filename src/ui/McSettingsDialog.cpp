@@ -272,14 +272,80 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	videoPageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 1 — Audio
+	// Tab 1 — Languages
+	// ═══════════════════════════════════════════════════════════════════════════
+	auto* langPage   = new QWidget;
+	auto* langPageLo = new QVBoxLayout(langPage);
+	langPageLo->setSpacing(8);
+	langPageLo->setContentsMargins(8, 8, 8, 8);
+	tabs->addTab(langPage, tr("Languages"));
+	tabs->setTabColor(1, QColor(0x2a, 0x9a, 0x6a));
+
+	auto* langGroup  = new QGroupBox(tr("Understood Languages"), langPage);
+	auto* langLayout = new QVBoxLayout(langGroup);
+	langLayout->setContentsMargins(4, 4, 4, 4);
+	langLayout->setSpacing(4);
+
+	auto* langHint = new QLabel(
+		tr("Drag or use buttons to reorder. Topmost is used as the preferred TMDB "
+		   "display-title language for card titles and .nfo files. Only applies when "
+		   "a file is scanned or (re-)matched — reordering doesn't retitle already-matched files."),
+		langGroup);
+	langHint->setWordWrap(true);
+	langLayout->addWidget(langHint);
+
+	m_langList = new QListWidget(langGroup);
+	m_langList->setDragDropMode(QAbstractItemView::InternalMove);
+	m_langList->setDefaultDropAction(Qt::MoveAction);
+	m_langList->setSelectionMode(QAbstractItemView::SingleSelection);
+	// Now that this has a dedicated tab (unlike its old cramped spot sharing
+	// "Other" with four other groups), it can claim the full available height
+	// the same way Audio/Subtitles' format-order lists do.
+	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	for (const QString& code : profile->understoodLanguages()) {
+		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
+		                                 displayName(code), m_langList);
+		item->setData(Qt::UserRole, code);
+	}
+	langLayout->addWidget(m_langList, 1);
+
+	auto* langBtnRow = new QHBoxLayout;
+	m_btnLangUp      = new QPushButton(tr("▲  Up"),   langGroup);
+	m_btnLangDown    = new QPushButton(tr("▼  Down"), langGroup);
+	langBtnRow->addWidget(m_btnLangUp);
+	langBtnRow->addWidget(m_btnLangDown);
+	langBtnRow->addStretch();
+	connect(m_btnLangUp,   &QPushButton::clicked, this, &McSettingsDialog::onLanguageUp);
+	connect(m_btnLangDown, &QPushButton::clicked, this, &McSettingsDialog::onLanguageDown);
+	langLayout->addLayout(langBtnRow);
+
+	auto* addRow = new QHBoxLayout;
+	m_langCombo  = new QComboBox(langGroup);
+	for (const auto& [code, name] : kKnownLanguages)
+		m_langCombo->addItem(langFlagIcon(code, devicePixelRatioF()),
+		                     QStringLiteral("%1 — %2").arg(code, name), code);
+	m_langCombo->setEditable(true);
+	m_langCombo->setInsertPolicy(QComboBox::NoInsert);
+	m_langCombo->lineEdit()->setPlaceholderText(tr("ISO 639-2 code (e.g. eng, dan)"));
+	auto* addBtn    = new QPushButton(tr("Add"),    langGroup);
+	auto* removeBtn = new QPushButton(tr("Remove"), langGroup);
+	addRow->addWidget(m_langCombo, 1);
+	addRow->addWidget(addBtn);
+	addRow->addWidget(removeBtn);
+	langLayout->addLayout(addRow);
+	connect(addBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddLanguage);
+	connect(removeBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveLanguage);
+	langPageLo->addWidget(langGroup, 1);
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Tab 2 — Audio
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* audioPage   = new QWidget;
 	auto* audioPageLo = new QHBoxLayout(audioPage);
 	audioPageLo->setSpacing(8);
 	audioPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(audioPage, tr("Audio"));
-	tabs->setTabColor(1, QColor(0x10, 0x6a, 0xc0));
+	tabs->setTabColor(2, QColor(0x10, 0x6a, 0xc0));
 
 	auto* audioLeft  = new QVBoxLayout;
 	auto* audioRight = new QVBoxLayout;
@@ -352,14 +418,14 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	audioRight->addWidget(fmtGroup, 1);
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 2 — Subtitles
+	// Tab 3 — Subtitles
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* subPage   = new QWidget;
 	auto* subPageLo = new QHBoxLayout(subPage);
 	subPageLo->setSpacing(8);
 	subPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(subPage, tr("Subtitles"));
-	tabs->setTabColor(2, QColor(0x1a, 0x86, 0x4a));
+	tabs->setTabColor(3, QColor(0x1a, 0x86, 0x4a));
 
 	auto* subLeft  = new QVBoxLayout;
 	auto* subRight = new QVBoxLayout;
@@ -523,14 +589,14 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	subLeft->addWidget(subFmtGroup, 1);
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 3 — Editions
+	// Tab 4 — Editions
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* editionsPage   = new QWidget;
 	auto* editionsPageLo = new QVBoxLayout(editionsPage);
 	editionsPageLo->setSpacing(8);
 	editionsPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(editionsPage, tr("Editions"));
-	tabs->setTabColor(3, McCardDelegate::badgeColor(QStringLiteral("edition")));
+	tabs->setTabColor(4, McCardDelegate::badgeColor(QStringLiteral("edition")));
 
 	auto* editionsHint = new QLabel(
 		tr("This list is used two ways: it scores OpenSubtitles candidates by whether their "
@@ -574,14 +640,14 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	connect(m_editionTokenList, &QListWidget::itemChanged, this, &McSettingsDialog::onEditionTokenEdited);
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 4 — Performance
+	// Tab 5 — Performance
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* perfPage   = new QWidget;
 	auto* perfPageLo = new QVBoxLayout(perfPage);
 	perfPageLo->setSpacing(8);
 	perfPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(perfPage, tr("Performance"));
-	tabs->setTabColor(4, QColor(0xc0, 0x20, 0x20));
+	tabs->setTabColor(5, QColor(0xc0, 0x20, 0x20));
 
 	auto* perfGroup  = new QGroupBox(tr("Performance"), perfPage);
 	auto* perfLayout = new QVBoxLayout(perfGroup);
@@ -646,14 +712,14 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	perfPageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 4 — Interface
+	// Tab 6 — Interface
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* ifacePage   = new QWidget;
 	auto* ifacePageLo = new QVBoxLayout(ifacePage);
 	ifacePageLo->setSpacing(8);
 	ifacePageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(ifacePage, tr("Interface"));
-	tabs->setTabColor(5, QColor(0x7a, 0x4a, 0xb0));
+	tabs->setTabColor(6, QColor(0x7a, 0x4a, 0xb0));
 
 	// Job Queue
 	auto* jobGroup  = new QGroupBox(tr("Job Queue"), ifacePage);
@@ -740,14 +806,14 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	ifacePageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 6 — Downloads (NZBGet, SABnzbd; future providers get their own group box here)
+	// Tab 7 — Downloads (NZBGet, SABnzbd; future providers get their own group box here)
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* dlPage   = new QWidget;
 	auto* dlPageLo = new QVBoxLayout(dlPage);
 	dlPageLo->setSpacing(8);
 	dlPageLo->setContentsMargins(8, 8, 8, 8);
 	tabs->addTab(dlPage, tr("Downloads"));
-	tabs->setTabColor(6, QColor(0x55, 0x65, 0x55));
+	tabs->setTabColor(7, QColor(0x55, 0x65, 0x55));
 
 	m_grpNzbEnabled = new QGroupBox(tr("NZBGet"), dlPage);
 	m_grpNzbEnabled->setCheckable(true);
@@ -871,7 +937,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	dlPageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// Tab 7 — Other (always last — catch-all for settings that don't fit elsewhere)
+	// Tab 8 — Other (always last — catch-all for settings that don't fit elsewhere)
 	// ═══════════════════════════════════════════════════════════════════════════
 	auto* genPage   = new QWidget;
 	auto* genPageLo = new QVBoxLayout(genPage);
@@ -886,66 +952,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	genScroll->setWidgetResizable(true);
 	genScroll->setFrameShape(QFrame::NoFrame);
 	tabs->addTab(genScroll, tr("Other"));
-	tabs->setTabColor(7, QColor(0x55, 0x55, 0x65));
-
-	// Understood Languages
-	auto* langGroup  = new QGroupBox(tr("Understood Languages"), genPage);
-	auto* langLayout = new QVBoxLayout(langGroup);
-	langLayout->setContentsMargins(4, 4, 4, 4);
-	langLayout->setSpacing(4);
-
-	auto* langHint = new QLabel(
-		tr("Drag or use buttons to reorder. Topmost is used as the preferred TMDB "
-		   "display-title language for card titles and .nfo files. Only applies when "
-		   "a file is scanned or (re-)matched — reordering doesn't retitle already-matched files."),
-		langGroup);
-	langHint->setWordWrap(true);
-	langLayout->addWidget(langHint);
-
-	m_langList = new QListWidget(langGroup);
-	m_langList->setDragDropMode(QAbstractItemView::InternalMove);
-	m_langList->setDefaultDropAction(Qt::MoveAction);
-	m_langList->setSelectionMode(QAbstractItemView::SingleSelection);
-	// Fixed-ish, not Expanding: "Other" packs five groups into one tab (unlike
-	// Audio/Subtitles, which each devote most of their tab to one such list), so
-	// letting this one claim leftover vertical space blew up the whole tab's —
-	// and therefore the dialog's — minimum height.
-	m_langList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-	m_langList->setMaximumHeight(110);
-	for (const QString& code : profile->understoodLanguages()) {
-		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
-		                                 displayName(code), m_langList);
-		item->setData(Qt::UserRole, code);
-	}
-	langLayout->addWidget(m_langList, 1);
-
-	auto* langBtnRow = new QHBoxLayout;
-	m_btnLangUp      = new QPushButton(tr("▲  Up"),   langGroup);
-	m_btnLangDown    = new QPushButton(tr("▼  Down"), langGroup);
-	langBtnRow->addWidget(m_btnLangUp);
-	langBtnRow->addWidget(m_btnLangDown);
-	langBtnRow->addStretch();
-	connect(m_btnLangUp,   &QPushButton::clicked, this, &McSettingsDialog::onLanguageUp);
-	connect(m_btnLangDown, &QPushButton::clicked, this, &McSettingsDialog::onLanguageDown);
-	langLayout->addLayout(langBtnRow);
-
-	auto* addRow = new QHBoxLayout;
-	m_langCombo  = new QComboBox(langGroup);
-	for (const auto& [code, name] : kKnownLanguages)
-		m_langCombo->addItem(langFlagIcon(code, devicePixelRatioF()),
-		                     QStringLiteral("%1 — %2").arg(code, name), code);
-	m_langCombo->setEditable(true);
-	m_langCombo->setInsertPolicy(QComboBox::NoInsert);
-	m_langCombo->lineEdit()->setPlaceholderText(tr("ISO 639-2 code (e.g. eng, dan)"));
-	auto* addBtn    = new QPushButton(tr("Add"),    langGroup);
-	auto* removeBtn = new QPushButton(tr("Remove"), langGroup);
-	addRow->addWidget(m_langCombo, 1);
-	addRow->addWidget(addBtn);
-	addRow->addWidget(removeBtn);
-	langLayout->addLayout(addRow);
-	connect(addBtn,    &QPushButton::clicked, this, &McSettingsDialog::onAddLanguage);
-	connect(removeBtn, &QPushButton::clicked, this, &McSettingsDialog::onRemoveLanguage);
-	genPageLo->addWidget(langGroup);
+	tabs->setTabColor(8, QColor(0x55, 0x55, 0x65));
 
 	// The Movie Database (TMDB)
 	auto* enrichGroup  = new QGroupBox(tr("The Movie Database (TMDB)"), genPage);
@@ -982,6 +989,27 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	tmdbHint->setOpenExternalLinks(true);
 	enrichLayout->addWidget(tmdbHint);
 	genPageLo->addWidget(enrichGroup);
+
+	// Scene NFO (srrDB)
+	auto* sceneNfoGroup  = new QGroupBox(tr("Scene NFO"), genPage);
+	auto* sceneNfoLayout = new QVBoxLayout(sceneNfoGroup);
+
+	m_chkDownloadSceneNfo = new QCheckBox(
+		tr("Enable \"Download Scene NFO…\" (via srrDB)"), sceneNfoGroup);
+	m_chkDownloadSceneNfo->setChecked(profile->downloadSceneNfoEnabled());
+	m_chkDownloadSceneNfo->setToolTip(tr(
+		"Adds a right-click action per file that looks up the original scene-release "
+		".nfo on srrDB.com (a community-run scene-release archive, not an official API) "
+		"and saves it — useful when a local scene NFO is wrong/stale or corrupted beyond "
+		"recovery. Always explicit and per-file, never automatic during a scan.\n\n"
+		"The result is always recorded in the database so the NFO viewer picks it up. "
+		"Whether it's also written to disk as a real .nfo file depends on \"Write .nfo "
+		"files\" above: when that's on, MediaCurator is already writing its own Kodi-style "
+		"XML to that same filename, so a downloaded scene NFO stays database-only to avoid "
+		"the two fighting over one file; when it's off, the download is written to disk too. "
+		"Off by default."));
+	sceneNfoLayout->addWidget(m_chkDownloadSceneNfo);
+	genPageLo->addWidget(sceneNfoGroup);
 
 	// Retry cooldown — shared by TMDB poster/NFO lookups and OpenSubtitles re-search,
 	// so it gets its own group rather than living under either one specifically.
@@ -1242,6 +1270,7 @@ void McSettingsDialog::accept()
 	m_profile->setLocalStagingDir(QDir::fromNativeSeparators(m_editStagingDir->text().trimmed()));
 	m_profile->setTmdbApiKey(m_editTmdbKey->text().trimmed());
 	m_profile->setWriteNfoFiles(m_chkWriteNfo->isChecked());
+	m_profile->setDownloadSceneNfoEnabled(m_chkDownloadSceneNfo->isChecked());
 	m_profile->setOpenSubtitlesApiKey(m_editOsApiKey->text().trimmed());
 	m_profile->setOpenSubtitlesUsername(m_editOsUsername->text().trimmed());
 	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());

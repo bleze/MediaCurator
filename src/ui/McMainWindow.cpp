@@ -36,6 +36,7 @@
 #include "engine/JobQueue.h"
 #include "engine/OpenSubtitlesClient.h"
 #include "ui/McSubtitleDownloadDialog.h"
+#include "ui/McSceneNfoDownloadDialog.h"
 #include "ui/McCalibrationDialog.h"
 #include "engine/PosterManager.h"
 #include "engine/SubtitleManager.h"
@@ -1100,71 +1101,101 @@ void McMainWindow::setupUi()
 
 				menu.addSeparator();
 
-				auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"), tr("&Download Subtitles…"));
-				connect(dlSubsAction, &QAction::triggered, this, [this, rowFile] {
-					if (m_profile->openSubtitlesApiKey().isEmpty()) {
-						QMessageBox::information(this, tr("Download Subtitles"),
-							tr("No OpenSubtitles API key configured.\n"
-							   "Go to Settings → OpenSubtitles to add your key."));
-						return;
-					}
-					QString imdbId;
-					if (const auto pr = DatabaseManager::instance().posterForFile(rowFile.id))
-						imdbId = pr->imdbId;
-					if (imdbId.isEmpty())
-						imdbId = NfoParser::readImdbId(rowFile.path);
-					if (imdbId.isEmpty()) {
-						QMessageBox::information(this, tr("Download Subtitles"),
-							tr("No IMDb ID found for \"%1\".\n"
-							   "Use \"Edit Movie Metadata\" to identify the movie first.").arg(rowFile.filename));
-						return;
-					}
-					const auto streams   = DatabaseManager::instance().streamsForFile(rowFile.id);
-					const auto remaining = streamsRemainingForFile(rowFile.id, streams, m_listModel);
-					const QStringList missingIso6392 =
-						Mc::missingSubtitleLanguages(remaining, m_profile->understoodLanguages());
-					if (missingIso6392.isEmpty()) {
-						QMessageBox::information(this, tr("Download Subtitles"),
-							tr("All subtitle languages are already covered for \"%1\".").arg(rowFile.filename));
-						return;
-					}
-					const qint64  fileId   = rowFile.id;
-					const QString filePath = rowFile.path;
-					const QString movieTitle = rowFile.displayTitle.isEmpty()
-					    ? QFileInfo(filePath).completeBaseName()
-					    : (rowFile.displayYear > 0
-					        ? QStringLiteral("%1 (%2)").arg(rowFile.displayTitle).arg(rowFile.displayYear)
-					        : rowFile.displayTitle);
-					auto* dlg = new Mc::McSubtitleDownloadDialog(
-						m_profile->openSubtitlesApiKey(),
-						m_profile->openSubtitlesUsername(),
-						m_profile->openSubtitlesPassword(),
-						imdbId, missingIso6392, filePath, rowFile.durationSec,
-						m_profile->editionTokens(), m_profile->computeSubtitleMovieHash(),
-						streams, movieTitle, this);
-					dlg->setAttribute(Qt::WA_DeleteOnClose);
-					connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
-						[this, fileId, filePath](int downloaded) {
-							if (downloaded == 0) return;
-							auto& db = DatabaseManager::instance();
-							const auto existing = db.streamsForFile(fileId);
-							QList<StreamRecord> containerStreams;
-							for (const auto& s : existing)
-								if (!s.isExternal) containerStreams << s;
-							const auto sidecars = ScanWorker::scanSidecarSubtitles(
-								filePath, ScanWorker::nextSidecarStreamIndex(containerStreams),
-								m_profile->detectSidecarSubtitleLanguage());
-							auto allStreams = containerStreams;
-							allStreams.append(sidecars);
-							db.insertStreams(fileId, allStreams);
-							m_listModel->reloadFile(fileId);
-							m_listView->viewport()->repaint();
-							m_statusLabel->setText(
-								tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
-									.arg(QFileInfo(filePath).fileName()));
-						});
-					dlg->open();
-				});
+				if (!m_profile->openSubtitlesApiKey().isEmpty()) {
+					auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"), tr("&Download Subtitles…"));
+					connect(dlSubsAction, &QAction::triggered, this, [this, rowFile] {
+						QString imdbId;
+						if (const auto pr = DatabaseManager::instance().posterForFile(rowFile.id))
+							imdbId = pr->imdbId;
+						if (imdbId.isEmpty())
+							imdbId = NfoParser::readImdbId(rowFile.path);
+						if (imdbId.isEmpty()) {
+							QMessageBox::information(this, tr("Download Subtitles"),
+								tr("No IMDb ID found for \"%1\".\n"
+								   "Use \"Edit Movie Metadata\" to identify the movie first.").arg(rowFile.filename));
+							return;
+						}
+						const auto streams   = DatabaseManager::instance().streamsForFile(rowFile.id);
+						const auto remaining = streamsRemainingForFile(rowFile.id, streams, m_listModel);
+						const QStringList missingIso6392 =
+							Mc::missingSubtitleLanguages(remaining, m_profile->understoodLanguages());
+						if (missingIso6392.isEmpty()) {
+							QMessageBox::information(this, tr("Download Subtitles"),
+								tr("All subtitle languages are already covered for \"%1\".").arg(rowFile.filename));
+							return;
+						}
+						const qint64  fileId   = rowFile.id;
+						const QString filePath = rowFile.path;
+						const QString movieTitle = rowFile.displayTitle.isEmpty()
+						    ? QFileInfo(filePath).completeBaseName()
+						    : (rowFile.displayYear > 0
+						        ? QStringLiteral("%1 (%2)").arg(rowFile.displayTitle).arg(rowFile.displayYear)
+						        : rowFile.displayTitle);
+						auto* dlg = new Mc::McSubtitleDownloadDialog(
+							m_profile->openSubtitlesApiKey(),
+							m_profile->openSubtitlesUsername(),
+							m_profile->openSubtitlesPassword(),
+							imdbId, missingIso6392, filePath, rowFile.durationSec,
+							m_profile->editionTokens(), m_profile->computeSubtitleMovieHash(),
+							streams, movieTitle, this);
+						dlg->setAttribute(Qt::WA_DeleteOnClose);
+						connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
+							[this, fileId, filePath](int downloaded) {
+								if (downloaded == 0) return;
+								auto& db = DatabaseManager::instance();
+								const auto existing = db.streamsForFile(fileId);
+								QList<StreamRecord> containerStreams;
+								for (const auto& s : existing)
+									if (!s.isExternal) containerStreams << s;
+								const auto sidecars = ScanWorker::scanSidecarSubtitles(
+									filePath, ScanWorker::nextSidecarStreamIndex(containerStreams),
+									m_profile->detectSidecarSubtitleLanguage());
+								auto allStreams = containerStreams;
+								allStreams.append(sidecars);
+								db.insertStreams(fileId, allStreams);
+								m_listModel->reloadFile(fileId);
+								m_listView->viewport()->repaint();
+								m_statusLabel->setText(
+									tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
+										.arg(QFileInfo(filePath).fileName()));
+							});
+						dlg->open();
+					});
+				}
+
+				if (m_profile->downloadSceneNfoEnabled()) {
+					auto* dlSceneNfoAction = menu.addAction(svgIcon(":/icons/terminal.svg"),
+					                                         tr("Download &Scene NFO…"));
+					connect(dlSceneNfoAction, &QAction::triggered, this, [this, rowFile] {
+						QString imdbId;
+						if (const auto pr = DatabaseManager::instance().posterForFile(rowFile.id))
+							imdbId = pr->imdbId;
+						if (imdbId.isEmpty())
+							imdbId = NfoParser::readImdbId(rowFile.path);
+
+						const qint64  fileId   = rowFile.id;
+						const QString filePath = rowFile.path;
+						const QString movieTitle = rowFile.displayTitle.isEmpty()
+						    ? QFileInfo(filePath).completeBaseName()
+						    : (rowFile.displayYear > 0
+						        ? QStringLiteral("%1 (%2)").arg(rowFile.displayTitle).arg(rowFile.displayYear)
+						        : rowFile.displayTitle);
+						auto* dlg = new Mc::McSceneNfoDownloadDialog(filePath, imdbId, movieTitle, this);
+						dlg->setAttribute(Qt::WA_DeleteOnClose);
+						connect(dlg, &Mc::McSceneNfoDownloadDialog::downloadSucceeded, this,
+							[this, fileId, filePath](const QByteArray& rawContent) {
+								auto& db = DatabaseManager::instance();
+								db.updateSceneNfo(fileId, true, NfoParser::decodeSceneNfoBytes(rawContent));
+								if (!m_profile->writeNfoFiles())
+									NfoParser::writeSceneNfoFile(filePath, rawContent);
+								m_listModel->reloadFile(fileId);
+								m_listView->viewport()->repaint();
+								m_statusLabel->setText(
+									tr("Downloaded scene NFO for %1").arg(QFileInfo(filePath).fileName()));
+							});
+						dlg->open();
+					});
+				}
 
 				menu.addSeparator();
 
@@ -1451,83 +1482,112 @@ void McMainWindow::setupUi()
 				pm.refresh(selectedFileIds.first());
 		});
 
-		auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"),
-		                                     tr("&Download Subtitles…"));
-		dlSubsAction->setEnabled(selCount == 1);
-		connect(dlSubsAction, &QAction::triggered, this, [this, file] {
-			// Check API key
-			if (m_profile->openSubtitlesApiKey().isEmpty()) {
-				QMessageBox::information(this, tr("Download Subtitles"),
-					tr("No OpenSubtitles API key configured.\n"
-					   "Go to Settings → OpenSubtitles to add your key."));
-				return;
-			}
+		if (!m_profile->openSubtitlesApiKey().isEmpty()) {
+			auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"),
+			                                     tr("&Download Subtitles…"));
+			dlSubsAction->setEnabled(selCount == 1);
+			connect(dlSubsAction, &QAction::triggered, this, [this, file] {
+				// Resolve IMDB ID (poster_cache first, then NFO file fallback)
+				QString imdbId;
+				if (const auto pr = DatabaseManager::instance().posterForFile(file.id))
+					imdbId = pr->imdbId;
+				if (imdbId.isEmpty())
+					imdbId = NfoParser::readImdbId(file.path);
+				if (imdbId.isEmpty()) {
+					QMessageBox::information(this, tr("Download Subtitles"),
+						tr("No IMDb ID found for \"%1\".\n"
+						   "Use \"Edit Movie Metadata\" to identify the movie first.").arg(file.filename));
+					return;
+				}
 
-			// Resolve IMDB ID (poster_cache first, then NFO file fallback)
-			QString imdbId;
-			if (const auto pr = DatabaseManager::instance().posterForFile(file.id))
-				imdbId = pr->imdbId;
-			if (imdbId.isEmpty())
-				imdbId = NfoParser::readImdbId(file.path);
-			if (imdbId.isEmpty()) {
-				QMessageBox::information(this, tr("Download Subtitles"),
-					tr("No IMDb ID found for \"%1\".\n"
-					   "Use \"Edit Movie Metadata\" to identify the movie first.").arg(file.filename));
-				return;
-			}
+				// Find which understood languages have no subtitle coverage among the tracks
+				// that will actually remain — a track already toggled off for removal
+				// doesn't count as covering its language.
+				const auto streams  = DatabaseManager::instance().streamsForFile(file.id);
+				const auto remaining = streamsRemainingForFile(file.id, streams, m_listModel);
+				const QStringList missingIso6392 =
+					Mc::missingSubtitleLanguages(remaining, m_profile->understoodLanguages());
 
-			// Find which understood languages have no subtitle coverage among the tracks
-			// that will actually remain — a track already toggled off for removal
-			// doesn't count as covering its language.
-			const auto streams  = DatabaseManager::instance().streamsForFile(file.id);
-			const auto remaining = streamsRemainingForFile(file.id, streams, m_listModel);
-			const QStringList missingIso6392 =
-				Mc::missingSubtitleLanguages(remaining, m_profile->understoodLanguages());
+				if (missingIso6392.isEmpty()) {
+					QMessageBox::information(this, tr("Download Subtitles"),
+						tr("All subtitle languages are already covered for \"%1\".").arg(file.filename));
+					return;
+				}
 
-			if (missingIso6392.isEmpty()) {
-				QMessageBox::information(this, tr("Download Subtitles"),
-					tr("All subtitle languages are already covered for \"%1\".").arg(file.filename));
-				return;
-			}
+				const qint64  fileId   = file.id;
+				const QString filePath = file.path;
+				const QString movieTitle = file.displayTitle.isEmpty()
+				    ? QFileInfo(filePath).completeBaseName()
+				    : (file.displayYear > 0
+				        ? QStringLiteral("%1 (%2)").arg(file.displayTitle).arg(file.displayYear)
+				        : file.displayTitle);
+				auto* dlg = new Mc::McSubtitleDownloadDialog(
+					m_profile->openSubtitlesApiKey(),
+					m_profile->openSubtitlesUsername(),
+					m_profile->openSubtitlesPassword(),
+					imdbId, missingIso6392, filePath, file.durationSec,
+					m_profile->editionTokens(), m_profile->computeSubtitleMovieHash(),
+					streams, movieTitle, this);
+				dlg->setAttribute(Qt::WA_DeleteOnClose);
+				connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
+					[this, fileId, filePath](int downloaded) {
+						if (downloaded == 0) return;
+						// Refresh sidecar streams in DB so the card reflects new files.
+						auto& db = DatabaseManager::instance();
+						const auto existing = db.streamsForFile(fileId);
+						QList<StreamRecord> containerStreams;
+						for (const auto& s : existing)
+							if (!s.isExternal) containerStreams << s;
+						const auto sidecars = ScanWorker::scanSidecarSubtitles(
+							filePath, ScanWorker::nextSidecarStreamIndex(containerStreams),
+							m_profile->detectSidecarSubtitleLanguage());
+						auto allStreams = containerStreams;
+						allStreams.append(sidecars);
+						db.insertStreams(fileId, allStreams);
+						m_listModel->reloadFile(fileId);
+						m_listView->viewport()->repaint();
+						m_statusLabel->setText(
+							tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
+								.arg(QFileInfo(filePath).fileName()));
+					});
+				dlg->open();
+			});
+		}
 
-			const qint64  fileId   = file.id;
-			const QString filePath = file.path;
-			const QString movieTitle = file.displayTitle.isEmpty()
-			    ? QFileInfo(filePath).completeBaseName()
-			    : (file.displayYear > 0
-			        ? QStringLiteral("%1 (%2)").arg(file.displayTitle).arg(file.displayYear)
-			        : file.displayTitle);
-			auto* dlg = new Mc::McSubtitleDownloadDialog(
-				m_profile->openSubtitlesApiKey(),
-				m_profile->openSubtitlesUsername(),
-				m_profile->openSubtitlesPassword(),
-				imdbId, missingIso6392, filePath, file.durationSec,
-				m_profile->editionTokens(), m_profile->computeSubtitleMovieHash(),
-				streams, movieTitle, this);
-			dlg->setAttribute(Qt::WA_DeleteOnClose);
-			connect(dlg, &Mc::McSubtitleDownloadDialog::downloadComplete, this,
-				[this, fileId, filePath](int downloaded) {
-					if (downloaded == 0) return;
-					// Refresh sidecar streams in DB so the card reflects new files.
-					auto& db = DatabaseManager::instance();
-					const auto existing = db.streamsForFile(fileId);
-					QList<StreamRecord> containerStreams;
-					for (const auto& s : existing)
-						if (!s.isExternal) containerStreams << s;
-					const auto sidecars = ScanWorker::scanSidecarSubtitles(
-						filePath, ScanWorker::nextSidecarStreamIndex(containerStreams),
-						m_profile->detectSidecarSubtitleLanguage());
-					auto allStreams = containerStreams;
-					allStreams.append(sidecars);
-					db.insertStreams(fileId, allStreams);
-					m_listModel->reloadFile(fileId);
-					m_listView->viewport()->repaint();
-					m_statusLabel->setText(
-						tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
-							.arg(QFileInfo(filePath).fileName()));
-				});
-			dlg->open();
-		});
+		if (m_profile->downloadSceneNfoEnabled()) {
+			auto* dlSceneNfoAction = menu.addAction(svgIcon(":/icons/terminal.svg"),
+			                                         tr("Download &Scene NFO…"));
+			dlSceneNfoAction->setEnabled(selCount == 1);
+			connect(dlSceneNfoAction, &QAction::triggered, this, [this, file] {
+				QString imdbId;
+				if (const auto pr = DatabaseManager::instance().posterForFile(file.id))
+					imdbId = pr->imdbId;
+				if (imdbId.isEmpty())
+					imdbId = NfoParser::readImdbId(file.path);
+
+				const qint64  fileId   = file.id;
+				const QString filePath = file.path;
+				const QString movieTitle = file.displayTitle.isEmpty()
+				    ? QFileInfo(filePath).completeBaseName()
+				    : (file.displayYear > 0
+				        ? QStringLiteral("%1 (%2)").arg(file.displayTitle).arg(file.displayYear)
+				        : file.displayTitle);
+				auto* dlg = new Mc::McSceneNfoDownloadDialog(filePath, imdbId, movieTitle, this);
+				dlg->setAttribute(Qt::WA_DeleteOnClose);
+				connect(dlg, &Mc::McSceneNfoDownloadDialog::downloadSucceeded, this,
+					[this, fileId, filePath](const QByteArray& rawContent) {
+						auto& db = DatabaseManager::instance();
+						db.updateSceneNfo(fileId, true, NfoParser::decodeSceneNfoBytes(rawContent));
+						if (!m_profile->writeNfoFiles())
+							NfoParser::writeSceneNfoFile(filePath, rawContent);
+						m_listModel->reloadFile(fileId);
+						m_listView->viewport()->repaint();
+						m_statusLabel->setText(
+							tr("Downloaded scene NFO for %1").arg(QFileInfo(filePath).fileName()));
+					});
+				dlg->open();
+			});
+		}
 
 		// Collect selected files so right-clicking on a multi-selection gives a batch action.
 		QList<FileRecord> imdbFiles;
