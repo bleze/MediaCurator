@@ -2,6 +2,7 @@
 #include <QDialog>
 #include <QList>
 #include <QMap>
+#include <QPointer>
 
 class QTableWidget;
 class QLabel;
@@ -70,8 +71,8 @@ private:
 	QList<StreamRecord> m_existingStreams;
 
 	QMap<QString, int>         m_rowByLang6391;
-	QThread*                   m_thread = nullptr;
-	SubtitleDownloadWorker*    m_worker = nullptr;
+	QPointer<QThread>                m_thread;
+	QPointer<SubtitleDownloadWorker> m_worker;
 	int                        m_downloaded = 0;
 	bool                       m_downloading    = false;
 	bool                       m_closeRequested = false;
