@@ -51,6 +51,14 @@ McDownloadQueueBand::McDownloadQueueBand(QWidget* parent)
 	m_progress->setFixedWidth(160);
 	m_progress->setTextVisible(true);
 	layout->addWidget(m_progress);
+
+	// Fix the band's height up front so hiding/showing the progress bar in
+	// setItems() never changes the layout's size hint (QProgressBar is
+	// taller than the label, which otherwise made the whole band grow the
+	// moment a download started).
+	const int barHeight = qMax(m_label->sizeHint().height(), m_progress->sizeHint().height());
+	QMargins margins = layout->contentsMargins();
+	setFixedHeight(barHeight + margins.top() + margins.bottom());
 }
 
 void McDownloadQueueBand::setItems(const QList<DownloadQueueItem>& items)
