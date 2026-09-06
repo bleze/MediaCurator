@@ -15,6 +15,7 @@ class QSpinBox;
 namespace Mc {
 
 class UserProfile;
+class McGroupChipRow;
 
 class McSettingsDialog : public QDialog
 {
@@ -118,8 +119,10 @@ private:
 
 	// Shared across every download-client provider — see
 	// DownloadIntegrationSettings' class comment for why.
-	QCheckBox*   m_chkAutoQuickScan;
-	QCheckBox*   m_chkAutoQuickAnalyze;
+	QCheckBox*     m_chkAutoQuickScan;
+	QCheckBox*     m_chkAutoQuickAnalyze;
+	McGroupChipRow* m_groupChipDownloading;
+	McGroupChipRow* m_groupChipDownloadFinished;
 };
 
 } // namespace Mc

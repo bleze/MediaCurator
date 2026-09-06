@@ -45,6 +45,23 @@ public:
 
 	[[nodiscard]] static bool autoQuickAnalyzeOnComplete();
 	static void setAutoQuickAnalyzeOnComplete(bool enabled);
+
+	// Which storage group (StorageGroupSettings::MinGroup..MaxGroup) the
+	// status-bar drive-activity indicator should light up for. Shared across
+	// every provider, same reasoning as autoQuickScan/autoQuickAnalyze above.
+	// 0 means "not tracked" — the default, since a download client commonly
+	// writes to a cache/temp drive that isn't part of any storage group.
+	//
+	// downloadingStorageGroup is touched while a download is actively in
+	// progress; downloadFinishedStorageGroup is touched once a download's own
+	// post-processing (sort/rename into the library) has completed. They're
+	// independent: a temp drive outside every storage group leaves the first
+	// at 0 while the second still points at wherever the file lands.
+	[[nodiscard]] static int downloadingStorageGroup();
+	static void setDownloadingStorageGroup(int group);
+
+	[[nodiscard]] static int downloadFinishedStorageGroup();
+	static void setDownloadFinishedStorageGroup(int group);
 };
 
 } // namespace Mc

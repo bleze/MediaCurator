@@ -745,6 +745,14 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_statusLabel->setText(
 			tr("Downloaded scene NFO for %1").arg(fileOpt ? fileOpt->filename : QString::number(fileId)));
 	});
+	connect(&snm, &SceneNfoManager::queueActiveChanged, this, [this](bool active) {
+		m_btnCancelSceneNfo->setVisible(active);
+		if (active) {
+			m_btnCancelSceneNfo->setEnabled(true);
+			m_btnCancelSceneNfo->setText(tr("Cancel Scene NFO Downloads"));
+			m_btnCancelSceneNfo->setToolTip(QString());
+		}
+	});
 
 	// ── Update checker ────────────────────────────────────────────────────────
 	connect(&UpdateChecker::instance(), &UpdateChecker::updateAvailable,
@@ -2986,6 +2994,11 @@ void McMainWindow::setupStatusBar()
 		}
 		m_btnCancelScan->setEnabled(false);
 		m_btnCancelScan->setText(tr("Cancelling…"));
+		m_btnCancelScan->setToolTip(
+			tr("Cancellation is only checked between files, so this waits for the file"
+			   " currently being probed to finish. If it stays stuck for a long time, check"
+			   " the status bar for which file that is — an unresponsive network drive is"
+			   " the usual cause."));
 	});
 	statusBar()->addPermanentWidget(m_btnCancelScan);
 
@@ -2995,6 +3008,11 @@ void McMainWindow::setupStatusBar()
 		if (m_analyzeWorker) m_analyzeWorker->cancel();
 		m_btnCancelAnalyze->setEnabled(false);
 		m_btnCancelAnalyze->setText(tr("Cancelling…"));
+		m_btnCancelAnalyze->setToolTip(
+			tr("Cancellation is only checked between files, so this waits for the file"
+			   " currently being analyzed to finish. If it stays stuck for a long time,"
+			   " check the status bar for which file that is — an unresponsive network"
+			   " drive is the usual cause."));
 	});
 	statusBar()->addPermanentWidget(m_btnCancelAnalyze);
 
@@ -3004,8 +3022,24 @@ void McMainWindow::setupStatusBar()
 		SubtitleManager::instance().cancelAll();
 		m_btnCancelSubtitles->setEnabled(false);
 		m_btnCancelSubtitles->setText(tr("Cancelling…"));
+		m_btnCancelSubtitles->setToolTip(
+			tr("Waiting for the in-flight OpenSubtitles request to finish or time out."
+			   " If it stays stuck for a long time, OpenSubtitles or the network is likely"
+			   " unresponsive."));
 	});
 	statusBar()->addPermanentWidget(m_btnCancelSubtitles);
+
+	m_btnCancelSceneNfo = new QPushButton(tr("Cancel Scene NFO Downloads"), this);
+	m_btnCancelSceneNfo->setVisible(false);
+	connect(m_btnCancelSceneNfo, &QPushButton::clicked, this, [this] {
+		SceneNfoManager::instance().cancelAll();
+		m_btnCancelSceneNfo->setEnabled(false);
+		m_btnCancelSceneNfo->setText(tr("Cancelling…"));
+		m_btnCancelSceneNfo->setToolTip(
+			tr("Waiting for the in-flight srrDB request to finish or time out. If it stays"
+			   " stuck for a long time, srrDB or the network is likely unresponsive."));
+	});
+	statusBar()->addPermanentWidget(m_btnCancelSceneNfo);
 
 	m_posterProgressBar = new QProgressBar(this);
 	m_posterProgressBar->setMaximumWidth(200);
@@ -3018,6 +3052,9 @@ void McMainWindow::setupStatusBar()
 		PosterManager::instance().cancelBatch();
 		m_btnCancelPosterRefresh->setEnabled(false);
 		m_btnCancelPosterRefresh->setText(tr("Cancelling…"));
+		m_btnCancelPosterRefresh->setToolTip(
+			tr("Waiting for the in-flight TMDB request to finish. If it stays stuck for a"
+			   " long time, TMDB or the network is likely unresponsive."));
 	});
 	statusBar()->addPermanentWidget(m_btnCancelPosterRefresh);
 
@@ -4165,6 +4202,7 @@ void McMainWindow::onAnalyzeLibrary()
 	m_actQuickAnalyze->setEnabled(false);
 	m_btnCancelAnalyze->setEnabled(true);
 	m_btnCancelAnalyze->setText(tr("Cancel Analyze"));
+	m_btnCancelAnalyze->setToolTip(QString());
 	m_btnCancelAnalyze->setVisible(true);
 
 	m_analyzeThread = new QThread(this);
@@ -4360,6 +4398,7 @@ void McMainWindow::setScanningState(bool scanning, bool quickScan)
 	if (scanning) {
 		m_btnCancelScan->setEnabled(true);
 		m_btnCancelScan->setText(quickScan ? tr("Cancel Quick Scan") : tr("Cancel Scan"));
+		m_btnCancelScan->setToolTip(QString());
 	} else {
 		m_progressBar->setValue(0);
 	}
@@ -4676,6 +4715,15 @@ void McMainWindow::onDownloadQueueChanged()
 	if (m_downloadQueueDialog)
 		m_downloadQueueDialog->setItems(items);
 	updateDownloadQueueVisibility();
+
+	// Best-effort proxy for "the download client's drive is being written to"
+	// — provider status strings (NZBGet/SABnzbd) aren't normalized enough to
+	// reliably detect "actively downloading" vs. queued/paused, so any
+	// non-empty queue counts. 0 (the default) means "not tracked", e.g. a
+	// temp/cache drive outside every storage group.
+	const int downloadingGroup = DownloadIntegrationSettings::downloadingStorageGroup();
+	if (downloadingGroup > 0 && !items.isEmpty())
+		DriveActivityMonitor::touch(downloadingGroup);
 }
 
 void McMainWindow::updateDownloadQueueVisibility()
@@ -4702,6 +4750,15 @@ void McMainWindow::updateDownloadQueueVisibility()
 
 void McMainWindow::onDownloadsCompleted(QStringList /*names*/, QString /*providerId*/)
 {
+	// Independent of autoQuickScan below — this just reflects that the
+	// completed download's own post-processing already sorted the file onto
+	// a real storage drive, which the status-bar indicator should show even
+	// if auto-scanning is off. 0 (the default) means "not tracked", e.g. a
+	// download client whose temp/cache drive isn't part of any storage group.
+	const int finishedGroup = DownloadIntegrationSettings::downloadFinishedStorageGroup();
+	if (finishedGroup > 0)
+		DriveActivityMonitor::touch(finishedGroup);
+
 	// Shared across every provider — see DownloadIntegrationSettings' class
 	// comment for why this isn't looked up per-providerId.
 	if (!DownloadIntegrationSettings::autoQuickScanOnComplete())

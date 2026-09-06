@@ -225,6 +225,7 @@ private:
 	QPushButton*     m_btnCancelScan       = nullptr;
 	QPushButton*     m_btnCancelAnalyze    = nullptr;
 	QPushButton*     m_btnCancelSubtitles  = nullptr;
+	QPushButton*     m_btnCancelSceneNfo   = nullptr;
 	QPushButton*     m_btnCancelPosterRefresh = nullptr;
 	QProgressDialog* m_updateProgressDlg   = nullptr;
 	QSplitter*       m_splitter          = nullptr;

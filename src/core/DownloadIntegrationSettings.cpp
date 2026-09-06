@@ -142,4 +142,28 @@ void DownloadIntegrationSettings::setAutoQuickAnalyzeOnComplete(bool enabled)
 	saveDownloadsObject(downloads);
 }
 
+int DownloadIntegrationSettings::downloadingStorageGroup()
+{
+	return downloadsObject().value(QStringLiteral("downloadingStorageGroup")).toInt(0);
+}
+
+void DownloadIntegrationSettings::setDownloadingStorageGroup(int group)
+{
+	QJsonObject downloads = downloadsObject();
+	downloads.insert(QStringLiteral("downloadingStorageGroup"), group);
+	saveDownloadsObject(downloads);
+}
+
+int DownloadIntegrationSettings::downloadFinishedStorageGroup()
+{
+	return downloadsObject().value(QStringLiteral("downloadFinishedStorageGroup")).toInt(0);
+}
+
+void DownloadIntegrationSettings::setDownloadFinishedStorageGroup(int group)
+{
+	QJsonObject downloads = downloadsObject();
+	downloads.insert(QStringLiteral("downloadFinishedStorageGroup"), group);
+	saveDownloadsObject(downloads);
+}
+
 } // namespace Mc

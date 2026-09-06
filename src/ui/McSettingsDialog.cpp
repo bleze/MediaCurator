@@ -1,5 +1,6 @@
 #include "ui/McSettingsDialog.h"
 #include "ui/McCardDelegate.h"
+#include "ui/McGroupChipRow.h"
 #include "ui/McLanguageFlags.h"
 #include "ui/McWindowGeometry.h"
 #include "core/AppSettings.h"
@@ -955,6 +956,47 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	dlBehaviorLayout->addWidget(dlBehaviorHint);
 
 	dlPageLo->addWidget(dlBehaviorGroup);
+
+	// Status-bar drive-activity indicator — own group since it isn't scoped to
+	// "on complete" the way the checkboxes above are: the Downloading picker
+	// fires while a download is still in progress. Same group-chip picker as
+	// Manage Library Folders, but here a group is optional (a click on the
+	// currently-selected chip clears it back to "not tracked"), since a
+	// download client commonly writes to a cache/temp drive outside every
+	// storage group.
+	auto* dlIndicatorGroup  = new QGroupBox(tr("Drive-Activity Indicator"), dlPage);
+	auto* dlIndicatorLayout = new QVBoxLayout(dlIndicatorGroup);
+
+	auto* dlDownloadingRow  = new QHBoxLayout;
+	auto* dlDownloadingHint = new QLabel(tr("While downloading:"), dlIndicatorGroup);
+	m_groupChipDownloading  = new McGroupChipRow(StorageGroupSettings::uiMaxGroup(),
+	                                             DownloadIntegrationSettings::downloadingStorageGroup(),
+	                                             /*allowNone=*/true, dlIndicatorGroup);
+	m_groupChipDownloading->setToolTip(
+		tr("Drive group to light up while a download is in progress. Leave blank if"
+		   " downloads land on a cache/temp drive outside any storage group. Click a"
+		   " selected chip again to clear it."));
+	dlDownloadingRow->addWidget(dlDownloadingHint);
+	dlDownloadingRow->addWidget(m_groupChipDownloading);
+	dlDownloadingRow->addStretch(1);
+	dlIndicatorLayout->addLayout(dlDownloadingRow);
+
+	auto* dlFinishedRow  = new QHBoxLayout;
+	auto* dlFinishedHint = new QLabel(tr("Once finished:"), dlIndicatorGroup);
+	m_groupChipDownloadFinished = new McGroupChipRow(
+	    StorageGroupSettings::uiMaxGroup(),
+	    DownloadIntegrationSettings::downloadFinishedStorageGroup(),
+	    /*allowNone=*/true, dlIndicatorGroup);
+	m_groupChipDownloadFinished->setToolTip(
+		tr("Drive group to light up once a completed download has been sorted into"
+		   " place. Leave blank to not track this. Click a selected chip again to"
+		   " clear it."));
+	dlFinishedRow->addWidget(dlFinishedHint);
+	dlFinishedRow->addWidget(m_groupChipDownloadFinished);
+	dlFinishedRow->addStretch(1);
+	dlIndicatorLayout->addLayout(dlFinishedRow);
+
+	dlPageLo->addWidget(dlIndicatorGroup);
 	dlPageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
@@ -1350,6 +1392,8 @@ void McSettingsDialog::accept()
 
 	DownloadIntegrationSettings::setAutoQuickScanOnComplete(m_chkAutoQuickScan->isChecked());
 	DownloadIntegrationSettings::setAutoQuickAnalyzeOnComplete(m_chkAutoQuickAnalyze->isChecked());
+	DownloadIntegrationSettings::setDownloadingStorageGroup(m_groupChipDownloading->selected());
+	DownloadIntegrationSettings::setDownloadFinishedStorageGroup(m_groupChipDownloadFinished->selected());
 
 	DownloadClientRegistry::instance().reconfigureAll();
 

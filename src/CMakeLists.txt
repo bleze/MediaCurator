@@ -36,6 +36,7 @@ set(MC_SOURCES
     ui/McJobPanel.cpp
     ui/McJobListModel.cpp
     ui/McManageFoldersDialog.cpp
+    ui/McGroupChipRow.cpp
     ui/McPreviewDialog.cpp
     ui/McJobReviewDialog.cpp
     ui/McBulkSummaryDialog.cpp
@@ -159,6 +160,7 @@ set(MC_HEADERS
     ../include/ui/McJobPanel.h
     ../include/ui/McJobListModel.h
     ../include/ui/McManageFoldersDialog.h
+    ../include/ui/McGroupChipRow.h
     ../include/ui/McPreviewDialog.h
     ../include/ui/McJobReviewDialog.h
     ../include/ui/McBulkSummaryDialog.h
