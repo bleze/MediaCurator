@@ -62,6 +62,7 @@ QString ExternalTools::findTool(const QString& name) const
 	for (const QString& candidate : {
 			base + name + ext,
 			base + "mkvtoolnix/" + name + ext,
+			base + "dovi_tool/" + name + ext,
 		}) {
 		if (QFile::exists(candidate)) return candidate;
 	}
@@ -73,6 +74,7 @@ QString ExternalTools::ffmpegPath()      const { if (m_ffmpegPath.isEmpty())    
 QString ExternalTools::mkvmergePath()    const { if (m_mkvmergePath.isEmpty())    m_mkvmergePath    = findTool("mkvmerge");    return m_mkvmergePath; }
 QString ExternalTools::mkvextractPath()  const { if (m_mkvextractPath.isEmpty())  m_mkvextractPath  = findTool("mkvextract");  return m_mkvextractPath; }
 QString ExternalTools::mkvpropeditPath() const { if (m_mkvpropeditPath.isEmpty()) m_mkvpropeditPath = findTool("mkvpropedit"); return m_mkvpropeditPath; }
+QString ExternalTools::doviToolPath()    const { if (m_doviToolPath.isEmpty())    m_doviToolPath    = findTool("dovi_tool");   return m_doviToolPath; }
 
 bool ExternalTools::validateAll() { return true; }
 
@@ -96,6 +98,16 @@ QString ExternalTools::mkvmergeVersion() const
 			QRegularExpression(QStringLiteral(R"(mkvmerge v(\S+))")));
 	}
 	return m_mkvmergeVersion;
+}
+
+QString ExternalTools::doviToolVersion() const
+{
+	if (!m_doviToolVersionQueried) {
+		m_doviToolVersionQueried = true;
+		m_doviToolVersion = queryToolVersion(doviToolPath(), {"--version"},
+			QRegularExpression(QStringLiteral(R"(dovi_tool (\S+))")));
+	}
+	return m_doviToolVersion;
 }
 
 void ExternalTools::applyBackgroundPriority(QProcess* process)

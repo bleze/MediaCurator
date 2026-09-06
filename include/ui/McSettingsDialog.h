@@ -81,6 +81,8 @@ private:
 	QLineEdit*   m_editTmdbKey;
 	QCheckBox*   m_chkWriteNfo;
 	QCheckBox*   m_chkDownloadSceneNfo;
+	QCheckBox*   m_chkAutoDownloadSceneNfo;
+	QCheckBox*   m_chkDeepDolbyVisionScan;
 	QSpinBox*    m_spinRetryCooldown;   // shared: TMDB poster/NFO lookups + OpenSubtitles re-search
 	QLineEdit*   m_editOsApiKey;
 	QLineEdit*   m_editOsUsername;

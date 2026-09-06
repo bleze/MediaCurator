@@ -28,6 +28,7 @@
 #include "ui/McTitleBar.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
+#include "engine/DeepDvScanWorker.h"
 #include "engine/TrackFlagService.h"
 #include "engine/DownloadClientRegistry.h"
 #include "engine/HighscoreClient.h"
@@ -36,6 +37,7 @@
 #include "engine/JobQueue.h"
 #include "engine/OpenSubtitlesClient.h"
 #include "ui/McSubtitleDownloadDialog.h"
+#include "engine/SrrdbClient.h"
 #include "ui/McSceneNfoDownloadDialog.h"
 #include "ui/McCalibrationDialog.h"
 #include "engine/PosterManager.h"
@@ -46,6 +48,7 @@
 #include "scanner/OriginalLanguageDetector.h"
 #include "scanner/ScanWorker.h"
 #include "scanner/EditionBackfillWorker.h"
+#include "scanner/DvProfileBackfillWorker.h"
 #include "core/DatabaseManager.h"
 #include "core/DownloadIntegrationSettings.h"
 #include "core/ExternalTools.h"
@@ -412,6 +415,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			d->setTmdbConfigured(tmdbConfigured);
 		m_jobPanel->setTmdbConfigured(tmdbConfigured);
+		m_jobPanel->setDownloadSceneNfoEnabled(m_profile->downloadSceneNfoEnabled());
 		SubtitleManager::instance().setCredentials(m_profile->openSubtitlesApiKey(),
 		                                            m_profile->openSubtitlesUsername(),
 		                                            m_profile->openSubtitlesPassword());
@@ -421,6 +425,10 @@ McMainWindow::McMainWindow(QWidget* parent)
 		SubtitleManager::instance().setEditionTokens(m_profile->editionTokens());
 		SubtitleManager::instance().setComputeMovieHash(m_profile->computeSubtitleMovieHash());
 		SubtitleManager::instance().setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
+		SceneNfoManager::instance().setEnabled(
+			m_profile->downloadSceneNfoEnabled() && m_profile->autoDownloadSceneNfo());
+		SceneNfoManager::instance().setWriteNfoFiles(m_profile->writeNfoFiles());
+		SceneNfoManager::instance().setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
 	});
 
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
@@ -724,6 +732,20 @@ McMainWindow::McMainWindow(QWidget* parent)
 		}
 	});
 
+	// ── Scene NFO manager ─────────────────────────────────────────────────────
+	auto& snm = SceneNfoManager::instance();
+	snm.start(m_profile->downloadSceneNfoEnabled() && m_profile->autoDownloadSceneNfo());
+	snm.setWriteNfoFiles(m_profile->writeNfoFiles());
+	snm.setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
+	connect(&snm, &SceneNfoManager::sceneNfoReady, this, [this](qint64 fileId) {
+		m_listModel->reloadFile(fileId);
+		m_jobPanel->refresh();
+		m_listView->viewport()->repaint();
+		const auto fileOpt = DatabaseManager::instance().fileById(fileId);
+		m_statusLabel->setText(
+			tr("Downloaded scene NFO for %1").arg(fileOpt ? fileOpt->filename : QString::number(fileId)));
+	});
+
 	// ── Update checker ────────────────────────────────────────────────────────
 	connect(&UpdateChecker::instance(), &UpdateChecker::updateAvailable,
 	        this, &McMainWindow::onUpdateAvailable);
@@ -743,6 +765,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	// Delayed so it never competes with the initial library load for DB/CPU time —
 	// see the earlier startup-slowness bug caused by an unrelated per-file rebuild.
 	QTimer::singleShot(5000, this, &McMainWindow::startEditionBackfill);
+	QTimer::singleShot(5000, this, &McMainWindow::startDvProfileBackfill);
 }
 
 McMainWindow::~McMainWindow()
@@ -1033,6 +1056,25 @@ void McMainWindow::setupUi()
 					[this, file, streamCopy](const QString& code) {
 						setSubtitleLanguage(file, streamCopy, code);
 					});
+
+				if (streamCopy.codecType == QLatin1String("video")
+				    && streamCopy.hdrFormat == QLatin1String("DolbyVision")
+				    && streamCopy.dvElPresent
+				    && m_profile->deepDolbyVisionScanEnabled()) {
+					int videoOrdinal = 0;
+					for (const StreamRecord& s : streams) {
+						if (s.codecType == QLatin1String("video") && s.streamIndex < streamCopy.streamIndex)
+							++videoOrdinal;
+					}
+					menu.addSeparator();
+					auto* deepScanAction = menu.addAction(tr("Deep Scan for FEL/MEL…"));
+					connect(deepScanAction, &QAction::triggered, this,
+						[this, fileId = file.id, filePath = file.path,
+						 streamIndex = streamCopy.streamIndex, videoOrdinal] {
+							startDeepDolbyVisionScan(fileId, filePath, streamIndex, videoOrdinal);
+						});
+				}
+
 				menu.exec(m_listView->viewport()->mapToGlobal(pos));
 				return;
 			}
@@ -1828,6 +1870,10 @@ void McMainWindow::setupUi()
 	        m_listModel, &McFileListModel::setStorageGroupFilter);
 	connect(m_filterPanel, &McFilterPanel::editionFilterChanged,
 	        m_listModel, &McFileListModel::setEditionFilter);
+	connect(m_filterPanel, &McFilterPanel::hdrDvFilterChanged,
+	        m_listModel, &McFileListModel::setHdrDvFilter);
+	connect(m_filterPanel, &McFilterPanel::audioFormatFilterChanged,
+	        m_listModel, &McFileListModel::setAudioFormatFilter);
 	connect(m_filterPanel, &McFilterPanel::redundantOnlyFilterChanged,
 	        m_listModel, &McFileListModel::setRedundantOnlyFilter);
 	connect(m_listModel, &McFileListModel::redundantGroupCountChanged,
@@ -1900,6 +1946,7 @@ void McMainWindow::setupUi()
 	m_jobPanel = new McJobPanel(this);
 	m_jobPanel->setJobQueue(m_jobQueue);
 	m_jobPanel->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
+	m_jobPanel->setDownloadSceneNfoEnabled(m_profile->downloadSceneNfoEnabled());
 	m_jobPanel->setMultiGroupBadgeEnabled(StorageGroupSettings::multipleGroupsInUse());
 	m_jobPanel->setFanartOpacity(
 	    AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
@@ -2151,6 +2198,39 @@ void McMainWindow::setupUi()
 				m_statusLabel->setText(
 					tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
 						.arg(QFileInfo(filePath).fileName()));
+			});
+		dlg->open();
+	});
+
+	connect(m_jobPanel, &McJobPanel::downloadSceneNfoRequested,
+	        this, [this](qint64 fileId) {
+		const auto fileOpt = DatabaseManager::instance().fileById(fileId);
+		if (!fileOpt) return;
+		const FileRecord& file = *fileOpt;
+
+		QString imdbId;
+		if (const auto pr = DatabaseManager::instance().posterForFile(file.id))
+			imdbId = pr->imdbId;
+		if (imdbId.isEmpty())
+			imdbId = NfoParser::readImdbId(file.path);
+
+		const QString filePath = file.path;
+		const QString movieTitle = file.displayTitle.isEmpty()
+		    ? QFileInfo(filePath).completeBaseName()
+		    : (file.displayYear > 0
+		        ? QStringLiteral("%1 (%2)").arg(file.displayTitle).arg(file.displayYear)
+		        : file.displayTitle);
+		auto* dlg = new Mc::McSceneNfoDownloadDialog(filePath, imdbId, movieTitle, this);
+		dlg->setAttribute(Qt::WA_DeleteOnClose);
+		connect(dlg, &Mc::McSceneNfoDownloadDialog::downloadSucceeded, this,
+			[this, fileId, filePath](const QByteArray& rawContent) {
+				auto& db = DatabaseManager::instance();
+				db.updateSceneNfo(fileId, true, NfoParser::decodeSceneNfoBytes(rawContent));
+				if (!m_profile->writeNfoFiles())
+					NfoParser::writeSceneNfoFile(filePath, rawContent);
+				m_jobPanel->refresh();
+				m_statusLabel->setText(
+					tr("Downloaded scene NFO for %1").arg(QFileInfo(filePath).fileName()));
 			});
 		dlg->open();
 	});
@@ -3088,6 +3168,20 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		delete m_editionBackfillThread; m_editionBackfillThread = nullptr;
 	}
 
+	// Same idea for the Dolby Vision profile backfill pass — interrupting it is
+	// always safe, since progress is committed to the DB per file as it goes (see
+	// DvProfileBackfillWorker) and it just resumes from dv_checked=0 next launch.
+	if (m_dvBackfillThread && m_dvBackfillThread->isRunning()) {
+		if (m_dvBackfillWorker) m_dvBackfillWorker->cancel();
+		m_dvBackfillThread->quit();
+		if (!m_dvBackfillThread->wait(3000)) {
+			m_dvBackfillThread->terminate();
+			m_dvBackfillThread->wait(500);
+		}
+		delete m_dvBackfillWorker; m_dvBackfillWorker = nullptr;
+		delete m_dvBackfillThread; m_dvBackfillThread = nullptr;
+	}
+
 	stopAllScanWorkers(/*waitForThreads=*/true);
 	logRestartDebug(QStringLiteral("closeEvent: scan workers stopped, stopping PosterManager"));
 
@@ -3100,6 +3194,11 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		QElapsedTimer t; t.start();
 		SubtitleManager::instance().stop();
 		logRestartDebug(QStringLiteral("closeEvent: SubtitleManager stopped after %1 ms").arg(t.elapsed()));
+	}
+	{
+		QElapsedTimer t; t.start();
+		SceneNfoManager::instance().stop();
+		logRestartDebug(QStringLiteral("closeEvent: SceneNfoManager stopped after %1 ms").arg(t.elapsed()));
 	}
 
 	if (m_jobPanel->isVisible()) {
@@ -3347,11 +3446,16 @@ void McMainWindow::createScanWorkerForGroup(int groupId, const QString& folderPa
 	        [](qint64 id) { PosterManager::instance().enqueue(id); }, Qt::QueuedConnection);
 	connect(worker, &ScanWorker::subtitleEnqueueRequested, this,
 	        [](qint64 id) { SubtitleManager::instance().enqueue(id); }, Qt::QueuedConnection);
+	connect(worker, &ScanWorker::sceneNfoEnqueueRequested, this,
+	        [](qint64 id) { SceneNfoManager::instance().enqueue(id); }, Qt::QueuedConnection);
 	connect(worker, &ScanWorker::posterEnqueueBatchRequested, this,
 	        [](const Mc::FileIdList& ids) { PosterManager::instance().enqueueBatch(ids); },
 	        Qt::QueuedConnection);
 	connect(worker, &ScanWorker::subtitleEnqueueBatchRequested, this,
 	        [](const Mc::FileIdList& ids) { SubtitleManager::instance().enqueueBatch(ids); },
+	        Qt::QueuedConnection);
+	connect(worker, &ScanWorker::sceneNfoEnqueueBatchRequested, this,
+	        [](const Mc::FileIdList& ids) { SceneNfoManager::instance().enqueueBatch(ids); },
 	        Qt::QueuedConnection);
 
 	setScanningState(true, quickScan);
@@ -3712,6 +3816,51 @@ void McMainWindow::startEditionBackfill()
 	m_editionBackfillThread->start();
 }
 
+void McMainWindow::startDvProfileBackfill()
+{
+	if (m_dvBackfillThread) return;   // already running (shouldn't happen, but be safe)
+
+	m_dvBackfillThread = new QThread;   // no parent — lifetime controlled explicitly, same as m_loadThread
+	m_dvBackfillWorker = new DvProfileBackfillWorker(ExternalTools::instance().ffprobePath());
+	m_dvBackfillWorker->setDetectSidecarSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
+	m_dvBackfillWorker->moveToThread(m_dvBackfillThread);
+
+	connect(m_dvBackfillThread, &QThread::started, m_dvBackfillWorker, &DvProfileBackfillWorker::run);
+	connect(m_dvBackfillWorker, &DvProfileBackfillWorker::finished,
+	        m_dvBackfillThread, &QThread::quit);
+	connect(m_dvBackfillWorker, &DvProfileBackfillWorker::finished,
+	        m_dvBackfillWorker, &QObject::deleteLater);
+	connect(m_dvBackfillThread, &QThread::finished,
+	        m_dvBackfillThread, &QObject::deleteLater);
+	connect(m_dvBackfillWorker, &QObject::destroyed, this, [this] { m_dvBackfillWorker = nullptr; });
+	connect(m_dvBackfillThread, &QObject::destroyed, this, [this] { m_dvBackfillThread = nullptr; });
+
+	// Refresh just this one card (throttled automatically if the library happens to
+	// be in "Group by Movie" — see McFileListModel::scheduleGroupRebuild()).
+	connect(m_dvBackfillWorker, &DvProfileBackfillWorker::fileDolbyVisionFound, this,
+	        [this](qint64 fileId) { m_listModel->reloadFile(fileId); });
+
+	// This can run for a long time over a NAS-hosted library with nothing else
+	// to show for it — unlike EditionBackfillWorker (pure filename regex, done
+	// near-instantly), so it gets actual status-bar visibility. Throttled to
+	// every 25 files (plus always the first/last) to avoid spamming the shared
+	// status label, which other background activity also writes to.
+	connect(m_dvBackfillWorker, &DvProfileBackfillWorker::progress, this,
+	        [this](int current, int total) {
+		if (current == 1 || current == total || current % 25 == 0)
+			m_statusLabel->setText(
+				tr("Checking Dolby Vision info: %1/%2 files…").arg(current).arg(total));
+	});
+	connect(m_dvBackfillWorker, &DvProfileBackfillWorker::finished, this,
+	        [this](int processed) {
+		if (processed > 0)
+			m_statusLabel->setText(
+				tr("Dolby Vision backfill complete (%1 file(s) checked)").arg(processed));
+	});
+
+	m_dvBackfillThread->start();
+}
+
 bool McMainWindow::analyzeSingleFile(qint64 fileId)
 {
 	auto& db = DatabaseManager::instance();
@@ -3923,6 +4072,67 @@ void McMainWindow::setSubtitleLanguage(const FileRecord& file, const StreamRecor
 			m_statusLabel->setText(tr("Set subtitle language to %1 for %2")
 				.arg(McLanguageFlags::displayName(langCode), filename));
 		});
+}
+
+void McMainWindow::startDeepDolbyVisionScan(qint64 fileId, const QString& filePath,
+                                             int streamIndex, int videoOrdinal)
+{
+	if (m_deepDvScanThread) {
+		m_statusLabel->setText(tr("A Dolby Vision deep scan is already running"));
+		return;
+	}
+
+	auto& tools = ExternalTools::instance();
+	m_deepDvScanThread = new QThread(this);
+	m_deepDvScanWorker = new DeepDvScanWorker(fileId, filePath, streamIndex, videoOrdinal,
+	                                          tools.mkvmergePath(), tools.mkvextractPath(),
+	                                          tools.doviToolPath());
+	m_deepDvScanWorker->moveToThread(m_deepDvScanThread);
+
+	m_deepDvScanDialog = new QProgressDialog(
+		tr("Extracting and analyzing %1…").arg(QFileInfo(filePath).fileName()),
+		tr("Cancel"), 0, 0, this);
+	m_deepDvScanDialog->setWindowModality(Qt::WindowModal);
+	m_deepDvScanDialog->setMinimumDuration(0);
+	connect(m_deepDvScanDialog, &QProgressDialog::canceled, this, [this] {
+		if (m_deepDvScanWorker) m_deepDvScanWorker->cancel();
+	});
+
+	connect(m_deepDvScanThread, &QThread::started, m_deepDvScanWorker, &DeepDvScanWorker::run);
+	connect(m_deepDvScanWorker, &DeepDvScanWorker::finished, m_deepDvScanThread, &QThread::quit);
+	// Same worker/thread teardown ordering as AnalyzeWorker/SimulateWorker: delete
+	// from QThread::finished (main thread), not a direct self-deleteLater connection
+	// on the worker (which would run on the worker thread, before the queued
+	// DeepDvScanWorker::finished handler below has had a chance to run).
+	connect(m_deepDvScanThread, &QThread::finished, this, [this] {
+		if (m_deepDvScanWorker) {
+			m_deepDvScanWorker->deleteLater();
+			m_deepDvScanWorker = nullptr;
+		}
+		m_deepDvScanThread->deleteLater();
+		m_deepDvScanThread = nullptr;
+	});
+
+	connect(m_deepDvScanWorker, &DeepDvScanWorker::finished, this,
+		[this](qint64 fid, int sIdx, const QString& elType, const QString& errorMessage) {
+			if (m_deepDvScanDialog) {
+				m_deepDvScanDialog->close();
+				m_deepDvScanDialog->deleteLater();
+				m_deepDvScanDialog = nullptr;
+			}
+			if (elType.isEmpty()) {
+				m_statusLabel->setText(errorMessage.isEmpty()
+					? tr("Deep scan failed")
+					: tr("Deep scan failed: %1").arg(errorMessage));
+				return;
+			}
+			DatabaseManager::instance().updateDolbyVisionElType(
+				fid, sIdx, elType, QDateTime::currentSecsSinceEpoch());
+			m_listModel->reloadFile(fid);
+			m_statusLabel->setText(tr("Deep scan complete: %1").arg(elType));
+		});
+
+	m_deepDvScanThread->start();
 }
 
 void McMainWindow::onAnalyzeLibrary()
@@ -4740,6 +4950,7 @@ void McMainWindow::onAbout()
 	// so this always reflects whatever's actually in tools/<platform>/.
 	const QString ffprobeVer  = ExternalTools::instance().ffprobeVersion();
 	const QString mkvmergeVer = ExternalTools::instance().mkvmergeVersion();
+	const QString doviToolVer = ExternalTools::instance().doviToolVersion();
 
 	makeRow(tr("Author:"),  tr("Jacob Pedersen — Bleze Software"));
 	makeRow(tr("License:"), tr("Apache 2.0 — open source, free to use and modify"));
@@ -4749,6 +4960,9 @@ void McMainWindow::onAbout()
 		QString("ffprobe %1 (LGPL)  ·  mkvmerge %2 (GPL, MKVToolNix)")
 			.arg(ffprobeVer.isEmpty()  ? tr("(not found)") : ffprobeVer,
 			     mkvmergeVer.isEmpty() ? tr("(not found)") : mkvmergeVer));
+	makeRow(tr("Deep scan tool:"),
+		QString("dovi_tool %1 (MIT)")
+			.arg(doviToolVer.isEmpty() ? tr("(not found)") : doviToolVer));
 
 	auto* githubLabel = makeRow(tr("GitHub:"),
 		QStringLiteral("<a href=\"https://github.com/bleze/MediaCurator\">"

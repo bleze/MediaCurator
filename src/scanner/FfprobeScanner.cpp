@@ -284,6 +284,15 @@ StreamRecord FfprobeScanner::parseStreamObject(const QJsonObject& obj)
 					.arg(f("blue_x"), f("blue_y"))
 					.arg(f("white_point_x"), f("white_point_y"))
 					.arg(f("max_luminance"), f("min_luminance"));
+			} else if (sdType.contains("DOVI", Qt::CaseInsensitive) ||
+			           sdType.contains("Dolby Vision", Qt::CaseInsensitive)) {
+				// "DOVI configuration record" — profile/compatibility only; this does
+				// NOT tell us FEL vs MEL, just that an enhancement layer exists at all.
+				if (sd.contains("dv_profile"))
+					s.dvProfile = sd.value("dv_profile").toInt(-1);
+				if (sd.contains("dv_bl_signal_compatibility_id"))
+					s.dvBlCompatId = sd.value("dv_bl_signal_compatibility_id").toInt(-1);
+				s.dvElPresent = sd.value("el_present_flag").toInt(0) != 0;
 			}
 		}
 	}

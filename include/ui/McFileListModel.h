@@ -7,6 +7,7 @@
 #include <QList>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 namespace Mc {
@@ -44,13 +45,15 @@ struct FileEntry {
 
 	// Precomputed quick filter flags (set once at entry creation / update)
 	bool has4K    = false;
-	bool hasDV    = false;
-	bool hasHDR   = false;
-	bool hasAtmos = false;
-	bool hasTrueHD = false;
-	bool hasDtsHD = false;
-	bool hasDtsX  = false;
 	bool hasEdition3D = false;  // file.edition == "3D" — see EditionDetector
+	// Every DolbyVisionInfo::filterLabels() entry any video stream matches -
+	// see the HDR/DV filter dropdown. Usually empty or one entry, but a Dolby
+	// Vision stream matches several at once (e.g. "Dolby Vision (any)" and
+	// "Dolby Vision - Profile 7, FEL" together).
+	QStringList hdrDvLabels;
+	// Same idea as hdrDvLabels, but for AudioFormatInfo::filterLabels() across
+	// every audio stream — replaces hasAtmos/hasTrueHD/hasDtsHD/hasDtsX.
+	QStringList audioFormatLabels;
 
 	// Pre-grouped streams (populated once) to avoid repeated type-grouping in delegate sizeHint/paint
 	QList<StreamRecord> videoStreams;
@@ -101,12 +104,8 @@ public:
 	enum QuickFilter : quint32 {
 		QF_None         = 0,
 		QF_4K           = 1 << 0,
-		QF_DV           = 1 << 1,
-		QF_HDR          = 1 << 2,
-		QF_Atmos        = 1 << 3,
-		QF_TrueHD       = 1 << 4,
-		QF_DtsHD        = 1 << 5,
-		QF_DtsX         = 1 << 6,
+		// 1<<1 and 1<<2 formerly QF_DV/QF_HDR — see McFilterPanel::QuickFilter.
+		// 1<<3 .. 1<<6 formerly QF_Atmos/QF_TrueHD/QF_DtsHD/QF_DtsX — see McFilterPanel::QuickFilter.
 		QF_Movie        = 1 << 7,
 		QF_Tv           = 1 << 8,
 		QF_Documentary  = 1 << 9,
@@ -171,6 +170,8 @@ public slots:
 	void setQuickFilters(quint32 flags);
 	void setStorageGroupFilter(quint32 groupMask);   // bit (1<<group) per StorageGroupSettings group; 0 = show all
 	void setEditionFilter(const QSet<QString>& editions);   // empty = show all
+	void setHdrDvFilter(const QSet<QString>& labels);   // empty = show all; see DolbyVisionInfo::filterLabels()
+	void setAudioFormatFilter(const QSet<QString>& labels);   // empty = show all; see AudioFormatInfo::filterLabels()
 	void setSortOrder(int order);
 	void setRedundantOnlyFilter(bool on);   // GroupedByEdition only — hide non-redundant groups
 	void setRatingFilter(double minRating, double maxRating);
@@ -232,6 +233,8 @@ private:
 	quint32                   m_quickFilters       = QF_None;
 	quint32                   m_storageGroupMask   = 0;   // 0 = no storage-group filtering
 	QSet<QString>             m_editionFilter;             // empty = no edition filtering
+	QSet<QString>             m_hdrDvFilter;               // empty = no HDR/DV filtering
+	QSet<QString>             m_audioFormatFilter;         // empty = no audio-format filtering
 	int                       m_sortOrder          = SortByName;
 	double                    m_ratingMin          = 0.0;
 	double                    m_ratingMax          = 10.0;

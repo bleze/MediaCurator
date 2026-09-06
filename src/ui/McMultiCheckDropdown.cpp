@@ -129,7 +129,17 @@ void McMultiCheckDropdown::togglePopup()
 	const int rowH   = m_list->sizeHintForRow(0) > 0 ? m_list->sizeHintForRow(0) : 22;
 	const int rows   = qMin(m_list->count(), 12); // scroll rather than grow unbounded
 	const int height = qMax(rowH, rowH * rows) + 4;
-	m_popup->setFixedSize(qMax(width(), 160), height);
+	// Wide enough for the longest item's text, not just the button's own width —
+	// a short button label ("HDR ▾") shouldn't force a horizontal scrollbar on a
+	// popup listing much longer option text (e.g. Dolby Vision profile/EL-type
+	// entries). +44 covers the checkbox glyph, item margins, and a vertical
+	// scrollbar when there are more than 12 items.
+	const QFontMetrics fm(m_list->font());
+	int contentWidth = 0;
+	for (int i = 0; i < m_list->count(); ++i)
+		contentWidth = qMax(contentWidth, fm.horizontalAdvance(m_list->item(i)->text()));
+	const int popupWidth = qMax(qMax(width(), 160), contentWidth + 44);
+	m_popup->setFixedSize(popupWidth, height);
 	m_popup->move(mapToGlobal(QPoint(0, this->height())));
 	m_popup->show();
 }

@@ -1,6 +1,8 @@
 #include "ui/McJobListModel.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McCardDelegate.h"
+#include "core/DolbyVisionInfo.h"
+#include "core/AudioFormatInfo.h"
 #include "engine/ActionEngine.h"
 #include "engine/TrackDecision.h"
 #include "engine/TrackFlagService.h"
@@ -426,6 +428,20 @@ void McJobListModel::setStorageGroupFilter(quint32 groupMask)
 	applyFilter();
 }
 
+void McJobListModel::setHdrDvFilter(const QSet<QString>& labels)
+{
+	if (m_hdrDvFilter == labels) return;
+	m_hdrDvFilter = labels;
+	applyFilter();
+}
+
+void McJobListModel::setAudioFormatFilter(const QSet<QString>& labels)
+{
+	if (m_audioFormatFilter == labels) return;
+	m_audioFormatFilter = labels;
+	applyFilter();
+}
+
 void McJobListModel::setEditionFilter(const QSet<QString>& editions)
 {
 	if (m_editionFilter == editions) return;
@@ -680,50 +696,36 @@ void McJobListModel::applyFilter(bool forceFullReset)
 						{ ok = true; break; }
 				if (!ok) continue;
 			}
-			if (m_quickFilters & QF::QF_DV) {
+			if (!m_hdrDvFilter.isEmpty()) {
 				bool ok = false;
 				for (const StreamRecord& s : e.allStreams) {
 					if (s.codecType != QLatin1String("video")) continue;
-					if (s.hdrFormat == QLatin1String("DolbyVision")
-					 || s.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive)
-					 || s.codecProfile.startsWith(QLatin1String("dvav"), Qt::CaseInsensitive))
-						{ ok = true; break; }
-				}
-				if (!ok) continue;
-			}
-			if (m_quickFilters & QF::QF_HDR) {
-				bool ok = false;
-				for (const StreamRecord& s : e.allStreams) {
-					if (s.codecType != QLatin1String("video")) continue;
-					if (!s.hdrFormat.isEmpty() && s.hdrFormat != QLatin1String("DolbyVision"))
-						{ ok = true; break; }
+					for (const QString& label :
+					     DolbyVisionInfo::matchingFilterLabels(s.hdrFormat, s.dvProfile, s.dvElType)) {
+						if (m_hdrDvFilter.contains(label)) { ok = true; break; }
+					}
+					// Fallback: same codec-profile heuristic the old QF_DV pill used.
+					if (!ok && s.hdrFormat != QLatin1String("DolbyVision")
+					 && (s.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive)
+					  || s.codecProfile.startsWith(QLatin1String("dvav"), Qt::CaseInsensitive))
+					 && m_hdrDvFilter.contains(QStringLiteral("Dolby Vision (any)")))
+						ok = true;
+					if (ok) break;
 				}
 				if (!ok) continue;
 			}
 			// "3D" or "3D (HSBS)"/"3D (VSBS)"/etc — see EditionDetector's packing-format qualifier.
 			if ((m_quickFilters & QF::QF_3D) && !e.job.edition.startsWith(QLatin1String("3D")))
 				continue;
-			if (m_quickFilters & (QF::QF_Atmos | QF::QF_TrueHD | QF::QF_DtsHD | QF::QF_DtsX)) {
+			if (!m_audioFormatFilter.isEmpty()) {
 				bool ok = false;
 				for (const StreamRecord& s : e.allStreams) {
 					if (s.codecType != QLatin1String("audio")) continue;
-					const QString cn = s.codecName.toLower();
-					const QString cp = s.codecProfile.toLower();
-					const QString ct = s.title.toLower();
-					if ((m_quickFilters & QF::QF_Atmos) &&
-					    ((cn == QLatin1String("truehd") || cn == QLatin1String("eac3")) &&
-					     (cp.contains(QLatin1String("atmos")) || ct.contains(QLatin1String("atmos")))))
-						{ ok = true; break; }
-					if ((m_quickFilters & QF::QF_TrueHD) && cn == QLatin1String("truehd"))
-						{ ok = true; break; }
-					if ((m_quickFilters & QF::QF_DtsHD) && cn == QLatin1String("dts") &&
-					    (cp.contains(QLatin1String("ma")) || cp.contains(QLatin1String("hra")) ||
-					     ct.contains(QLatin1String("dts-hd")) || ct.contains(QLatin1String("dts:x"))))
-						{ ok = true; break; }
-					if ((m_quickFilters & QF::QF_DtsX) && cn == QLatin1String("dts") &&
-					    (cp.contains(QLatin1String("dts:x")) || cp.contains(QLatin1String("dts-x")) ||
-					     ct.contains(QLatin1String("dts:x")) || ct.contains(QLatin1String("dts-x"))))
-						{ ok = true; break; }
+					for (const QString& label :
+					     AudioFormatInfo::matchingFilterLabels(s.codecName, s.codecProfile, s.title)) {
+						if (m_audioFormatFilter.contains(label)) { ok = true; break; }
+					}
+					if (ok) break;
 				}
 				if (!ok) continue;
 			}

@@ -8,6 +8,31 @@ namespace Mc {
 
 QString EditionDetector::detect(const FileRecord& file, const QStringList& editionTokens)
 {
+	// Each entry may list several spellings of the same cut separated by '|' (e.g.
+	// "Director's Cut|Directors Cut|DC") — any spelling matching resolves to the
+	// first one listed, so variant spellings are recognized as the same edition
+	// instead of producing two different labels (see UserProfile::editionTokens()).
+	// Built up front so both the Kodi tag branch and the keyword-guessing branch
+	// below can normalize through the same canonical spellings.
+	QList<QStringList> groups;
+	groups.reserve(editionTokens.size());
+	for (const QString& entry : editionTokens) {
+		QStringList variants = entry.split(QLatin1Char('|'), Qt::SkipEmptyParts);
+		for (QString& v : variants) v = v.trimmed();
+		variants.removeAll(QString());
+		if (!variants.isEmpty()) groups.append(variants);
+	}
+	// Groups are checked longest-variant-first, so a more specific multi-word group
+	// is tried before a shorter one that might otherwise match a substring of it.
+	std::sort(groups.begin(), groups.end(), [](const QStringList& a, const QStringList& b) {
+		const auto longestVariant = [](const QStringList& g) {
+			int m = 0;
+			for (const QString& v : g) m = qMax(m, v.size());
+			return m;
+		};
+		return longestVariant(a) > longestVariant(b);
+	});
+
 	// Kodi-style "{edition-Director's Cut}" token — an explicit, unambiguous signal
 	// when present, so it's checked before any keyword guessing.
 	static const QRegularExpression kodiTag(
@@ -16,7 +41,21 @@ QString EditionDetector::detect(const FileRecord& file, const QStringList& editi
 	if (kodiMatch.hasMatch()) {
 		QString label = kodiMatch.captured(1);
 		label.replace('.', ' ').replace('_', ' ');
-		return label.simplified();
+		label = label.simplified();
+
+		// The tag's text is free-form (whatever the tagger typed), so it's matched
+		// as a whole string against each known variant — not just substring-matched
+		// via the \b-wrapped regexes below — and normalized to the canonical
+		// spelling when it matches one of them. A tag that names an edition outside
+		// the known list (e.g. a studio-specific "Ultimate Cut") is kept verbatim
+		// rather than dropped, since it's still a real, explicit signal.
+		for (const QStringList& group : groups) {
+			for (const QString& variant : group) {
+				if (label.compare(variant, Qt::CaseInsensitive) == 0)
+					return group.first();
+			}
+		}
+		return label;
 	}
 
 	QString stemmed = QFileInfo(file.filename).completeBaseName();
@@ -71,29 +110,6 @@ QString EditionDetector::detect(const FileRecord& file, const QStringList& editi
 			return QStringLiteral("3D (AVC)");
 		return QStringLiteral("3D");
 	}
-
-	// Each entry may list several spellings of the same cut separated by '|' (e.g.
-	// "Director's Cut|Directors Cut|DC") — any spelling matching resolves to the
-	// first one listed, so variant spellings are recognized as the same edition
-	// instead of producing two different labels (see UserProfile::editionTokens()).
-	// Groups are checked longest-variant-first, so a more specific multi-word group
-	// is tried before a shorter one that might otherwise match a substring of it.
-	QList<QStringList> groups;
-	groups.reserve(editionTokens.size());
-	for (const QString& entry : editionTokens) {
-		QStringList variants = entry.split(QLatin1Char('|'), Qt::SkipEmptyParts);
-		for (QString& v : variants) v = v.trimmed();
-		variants.removeAll(QString());
-		if (!variants.isEmpty()) groups.append(variants);
-	}
-	std::sort(groups.begin(), groups.end(), [](const QStringList& a, const QStringList& b) {
-		const auto longestVariant = [](const QStringList& g) {
-			int m = 0;
-			for (const QString& v : g) m = qMax(m, v.size());
-			return m;
-		};
-		return longestVariant(a) > longestVariant(b);
-	});
 
 	// Collect every distinct group that matches rather than stopping at the first —
 	// some releases genuinely combine two cuts in one file via seamless branching

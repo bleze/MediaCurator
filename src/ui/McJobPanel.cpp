@@ -22,6 +22,8 @@
 #include "engine/PosterManager.h"
 #include "engine/SubtitleManager.h"
 #include "core/DatabaseManager.h"
+#include "core/DolbyVisionInfo.h"
+#include "core/AudioFormatInfo.h"
 #include "core/ExternalTools.h"
 
 #include <algorithm>
@@ -433,10 +435,6 @@ void McJobPanel::setupUi()
 		filterLayout->addWidget(m_mediaCategoryContainer);
 	}
 
-	filterLayout->addWidget(vSep(filterBar));
-	addPill("4K",     videoColor, "4K files only (width >= 3840)", QF::QF_4K);
-	addPill("3D",     videoColor, "Files detected as a 3D release", QF::QF_3D);
-
 	// ── Edition checklist — same widget/reasoning as the library filter bar's.
 	filterLayout->addWidget(vSep(filterBar));
 	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), filterBar,
@@ -448,13 +446,27 @@ void McJobPanel::setupUi()
 	refreshEditions();
 
 	filterLayout->addWidget(vSep(filterBar));
-	addPill("DV",     hdrColor,   "Dolby Vision only",                       QF::QF_DV);
-	addPill("HDR",    hdrColor,   "HDR10 / HLG / HDR10+ only",              QF::QF_HDR);
+	addPill("4K",     videoColor, "4K files only (width >= 3840)", QF::QF_4K);
+	addPill("3D",     videoColor, "Files detected as a 3D release", QF::QF_3D);
+
+	// ── HDR/DV checklist — same widget/reasoning as the library filter bar's.
 	filterLayout->addWidget(vSep(filterBar));
-	addPill("Atmos",  audioColor, "Dolby Atmos only",                        QF::QF_Atmos);
-	addPill("TrueHD", audioColor, "Dolby TrueHD only",                      QF::QF_TrueHD);
-	addPill("DTS-HD", audioColor, "DTS-HD MA or HRA only",                  QF::QF_DtsHD);
-	addPill("DTS:X",  audioColor, "DTS:X only",                              QF::QF_DtsX);
+	m_hdrDvDropdown = new McMultiCheckDropdown(tr("HDR"), filterBar, hdrColor);
+	m_hdrDvDropdown->setToolTip(tr("Filter by HDR/Dolby Vision format, including Dolby\n"
+	                                "Vision profile and Full/Minimal Enhancement Layer"));
+	m_hdrDvDropdown->setItems(DolbyVisionInfo::filterLabels());
+	connect(m_hdrDvDropdown, &McMultiCheckDropdown::selectionChanged,
+	        this, [this](const QSet<QString>& labels) { m_model->setHdrDvFilter(labels); });
+	filterLayout->addWidget(m_hdrDvDropdown);
+
+	// ── Audio checklist — same widget/reasoning as the library filter bar's.
+	filterLayout->addWidget(vSep(filterBar));
+	m_audioFormatDropdown = new McMultiCheckDropdown(tr("Audio"), filterBar, audioColor);
+	m_audioFormatDropdown->setToolTip(tr("Filter by audio format/codec"));
+	m_audioFormatDropdown->setItems(AudioFormatInfo::filterLabels());
+	connect(m_audioFormatDropdown, &McMultiCheckDropdown::selectionChanged,
+	        this, [this](const QSet<QString>& labels) { m_model->setAudioFormatFilter(labels); });
+	filterLayout->addWidget(m_audioFormatDropdown);
 
 	filterLayout->addWidget(vSep(filterBar));
 	m_ratingLabel = new QLabel(tr("Rating: All"), filterBar);
@@ -1031,6 +1043,14 @@ void McJobPanel::setupUi()
 			emit downloadSubtitlesRequested(fileId);
 		});
 
+		if (m_downloadSceneNfoEnabled) {
+			auto* dlSceneNfoAct = menu.addAction(svgIcon(":/icons/terminal.svg"),
+			                                     tr("Download &Scene NFO…"));
+			connect(dlSceneNfoAct, &QAction::triggered, this, [this, fileId] {
+				emit downloadSceneNfoRequested(fileId);
+			});
+		}
+
 		const QString imdbLabel = selectedFileIds.size() > 1
 		    ? tr("Edit &Movie Metadata (%1 files)…").arg(selectedFileIds.size())
 		    : tr("Edit &Movie Metadata…");
@@ -1540,6 +1560,11 @@ void McJobPanel::setMultiGroupBadgeEnabled(bool enabled)
 {
 	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))
 		d->setMultiGroupBadgeEnabled(enabled);
+}
+
+void McJobPanel::setDownloadSceneNfoEnabled(bool enabled)
+{
+	m_downloadSceneNfoEnabled = enabled;
 }
 
 void McJobPanel::setFanartOpacity(double opacity)

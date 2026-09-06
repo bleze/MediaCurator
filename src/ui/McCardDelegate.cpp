@@ -3,6 +3,7 @@
 #include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
 #include "classifier/RegexClassifier.h"
+#include "core/DolbyVisionInfo.h"
 #include "core/StorageGroupSettings.h"
 #include "engine/TrackDecision.h"
 
@@ -679,6 +680,11 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 			t += QStringLiteral("  %1\xC3\x97%2").arg(s.width).arg(s.height);
 		if (!s.hdrFormat.isEmpty()) {
 			t += "  " + s.hdrFormat;
+			if (s.hdrFormat == QLatin1String("DolbyVision")) {
+				const QString dv = DolbyVisionInfo::label(s.dvProfile, s.dvBlCompatId,
+				                                           s.dvElPresent, s.dvElType, /*compact=*/true);
+				if (!dv.isEmpty()) t += " " + dv;
+			}
 			if (s.maxCll > 0 || s.maxFall > 0)
 				t += QString(" (%1/%2)").arg(s.maxCll).arg(s.maxFall);
 		}
@@ -1630,6 +1636,10 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					if (isSdhFlag) lines << tr("SDH subtitle");
 					if (s.codecType == QLatin1String("video") && !s.hdrFormat.isEmpty()) {
 						QString hdr = s.hdrFormat;
+						if (s.hdrFormat == QLatin1String("DolbyVision")) {
+							const QString dv = DolbyVisionInfo::label(s.dvProfile, s.dvBlCompatId, s.dvElPresent, s.dvElType);
+							if (!dv.isEmpty()) hdr += ", " + dv;
+						}
 						if (s.maxCll > 0 || s.maxFall > 0)
 							hdr += QString("  MaxCLL %1 / MaxFALL %2 nits").arg(s.maxCll).arg(s.maxFall);
 						lines << tr("HDR: %1").arg(hdr);

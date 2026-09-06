@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Downloads and stages ffprobe, mkvmerge and mkvpropedit into tools\windows\.
+    Downloads and stages ffprobe, mkvmerge, mkvpropedit, and dovi_tool into tools\windows\.
     Run once after cloning, and whenever PINNED_VERSIONS changes.
 
 .USAGE
@@ -26,12 +26,19 @@ $FFPROBE_URLS    = @(
 $MKV_VERSION     = "100.0"
 $MKV_URL         = "https://mkvtoolnix.download/windows/releases/100.0/mkvtoolnix-64-bit-100.0.7z"
 
+# dovi_tool (MIT) — used by the opt-in "Deep Scan for FEL/MEL" action, unlike
+# ffprobe/mkvmerge which are LGPL/GPL and can't be linked, just invoked.
+$DOVI_TOOL_VERSION = "2.3.3"
+$DOVI_TOOL_URL      = "https://github.com/quietvoid/dovi_tool/releases/download/$DOVI_TOOL_VERSION/dovi_tool-$DOVI_TOOL_VERSION-x86_64-pc-windows-msvc.zip"
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 $Root       = (Resolve-Path "$PSScriptRoot\..").Path
 $ToolsDir   = Join-Path $Root "tools\windows"
 $FfprobeExe = Join-Path $ToolsDir "ffprobe.exe"
 $MkvDir     = Join-Path $ToolsDir "mkvtoolnix"
 $MkvExe     = Join-Path $MkvDir   "mkvmerge.exe"
+$DoviDir    = Join-Path $ToolsDir "dovi_tool"
+$DoviExe    = Join-Path $DoviDir  "dovi_tool.exe"
 
 New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
 
@@ -160,22 +167,53 @@ if ((-not (Test-Path $MkvExe)) -or $Force) {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  3. Version manifest — consumed by CI and CPack to stamp the installer
+#  3. dovi_tool (MIT) — powers the opt-in "Deep Scan for FEL/MEL" action only;
+#     a plain single-exe zip, no DLLs, so no dedicated-subfolder isolation need
+#     beyond keeping it out of the mkvtoolnix\ folder for clarity.
+# ──────────────────────────────────────────────────────────────────────────────
+if ((-not (Test-Path $DoviExe)) -or $Force) {
+    Write-Host "[dovi_tool $DOVI_TOOL_VERSION]" -ForegroundColor White
+
+    $zipTmp     = Join-Path $env:TEMP "dovi_tool.zip"
+    $extractTmp = Join-Path $env:TEMP "dovi_tool-extract"
+
+    Invoke-DownloadFile -Urls @($DOVI_TOOL_URL) -OutFile $zipTmp | Out-Null
+
+    if (Test-Path $extractTmp) { Remove-Item $extractTmp -Recurse -Force }
+    Expand-Archive -Path $zipTmp -DestinationPath $extractTmp -Force
+
+    $src = Get-ChildItem -Path $extractTmp -Filter "dovi_tool.exe" -Recurse |
+           Select-Object -First 1
+    if (-not $src) { throw "dovi_tool.exe not found inside downloaded archive." }
+
+    New-Item -ItemType Directory -Force -Path $DoviDir | Out-Null
+    Copy-Item $src.FullName $DoviExe -Force
+    Remove-Item $zipTmp     -Force -ErrorAction SilentlyContinue
+    Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+
+    Write-Host "  OK" -ForegroundColor Green
+} else {
+    Write-Host "[dovi_tool] already present  (use -Force to re-download)" -ForegroundColor DarkGray
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  4. Version manifest — consumed by CI and CPack to stamp the installer
 # ──────────────────────────────────────────────────────────────────────────────
 if (-not $FFPROBE_URL) { $FFPROBE_URL = $FFPROBE_URLS[0] }
 
 [ordered]@{
-    ffprobe    = @{ version = $FFPROBE_VERSION; url = $FFPROBE_URL; fallbacks = $FFPROBE_URLS }
-    mkvtoolnix = @{ version = $MKV_VERSION;     url = $(if ($MKV_USED_URL) { $MKV_USED_URL } else { $MKV_URL }) }
+    ffprobe    = @{ version = $FFPROBE_VERSION;    url = $FFPROBE_URL; fallbacks = $FFPROBE_URLS }
+    mkvtoolnix = @{ version = $MKV_VERSION;        url = $(if ($MKV_USED_URL) { $MKV_USED_URL } else { $MKV_URL }) }
+    dovi_tool  = @{ version = $DOVI_TOOL_VERSION;  url = $DOVI_TOOL_URL }
 } | ConvertTo-Json -Depth 3 |
     Set-Content (Join-Path $ToolsDir "versions.json") -Encoding UTF8
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  4. Final status
+#  5. Final status
 # ──────────────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "Status:" -ForegroundColor Cyan
-foreach ($check in @($FfprobeExe, $MkvExe)) {
+foreach ($check in @($FfprobeExe, $MkvExe, $DoviExe)) {
     $label = $check.Replace($Root + "\", "")
     if (Test-Path $check) {
         Write-Host "  [OK]     $label" -ForegroundColor Green

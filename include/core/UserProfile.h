@@ -87,6 +87,19 @@ public:
 	bool downloadSceneNfoEnabled() const { return m_downloadSceneNfoEnabled; }
 	void setDownloadSceneNfoEnabled(bool v);
 
+	// Automatically download a missing scene NFO in the background after
+	// scanning, mirroring autoDownloadSubtitles below. Off by default, and only
+	// meaningful when downloadSceneNfoEnabled() is also on — see SceneNfoManager.
+	bool autoDownloadSceneNfo() const { return m_autoDownloadSceneNfo; }
+	void setAutoDownloadSceneNfo(bool v);
+
+	// Enables the per-track "Deep Scan for FEL/MEL…" context menu action on
+	// dual-layer (Profile 7) Dolby Vision video tracks. Off by default — it
+	// extracts the elementary video stream and runs dovi_tool on it, which is
+	// disk/CPU cost disproportionate to a routine scan.
+	bool deepDolbyVisionScanEnabled() const { return m_deepDolbyVisionScanEnabled; }
+	void setDeepDolbyVisionScanEnabled(bool v);
+
 	// Mux to a local folder first, then copy the finished file back to its real
 	// destination — avoids reading and writing the same NAS share at once.
 	bool useLocalStaging() const { return m_useLocalStaging; }
@@ -200,6 +213,8 @@ private:
 	bool        m_writeJobLog               = false;
 	bool        m_writeNfoFiles             = false;
 	bool        m_downloadSceneNfoEnabled  = false;
+	bool        m_autoDownloadSceneNfo    = false;
+	bool        m_deepDolbyVisionScanEnabled = false;
 	bool        m_useLocalStaging          = false;
 	QString     m_localStagingDir;
 	QString     m_tmdbApiKey;

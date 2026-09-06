@@ -5,6 +5,8 @@ set(MC_SOURCES
     core/AppSettings.cpp
     core/StorageGroupSettings.cpp
     core/DatabaseManager.cpp
+    core/DolbyVisionInfo.cpp
+    core/AudioFormatInfo.cpp
     core/ExternalTools.cpp
     core/LibraryLoader.cpp
     core/UserProfile.cpp
@@ -65,6 +67,7 @@ set(MC_SOURCES
     engine/JobQueue.cpp
     engine/TrackFlagService.cpp
     engine/RemuxJob.cpp
+    engine/DeepDvScanWorker.cpp
     engine/PosterManager.cpp
     engine/SubtitleManager.cpp
     engine/OpenSubtitlesClient.cpp
@@ -83,6 +86,7 @@ set(MC_SOURCES
     scanner/SubtitleLanguageDetector.cpp
     scanner/EditionDetector.cpp
     scanner/EditionBackfillWorker.cpp
+    scanner/DvProfileBackfillWorker.cpp
     scanner/NfoParser.cpp
 
 )
@@ -90,6 +94,8 @@ set(MC_SOURCES
 set(MC_HEADERS
     # Core
     ../include/core/DatabaseManager.h
+    ../include/core/DolbyVisionInfo.h
+    ../include/core/AudioFormatInfo.h
     ../include/core/AppSettings.h
     ../include/core/LibraryLoader.h
     ../include/core/UserProfile.h
@@ -106,6 +112,7 @@ set(MC_HEADERS
     ../include/scanner/SubtitleLanguageDetector.h
     ../include/scanner/EditionDetector.h
     ../include/scanner/EditionBackfillWorker.h
+    ../include/scanner/DvProfileBackfillWorker.h
     ../include/scanner/NfoParser.h
 
     # Engine
@@ -116,6 +123,7 @@ set(MC_HEADERS
     ../include/engine/JobQueue.h
     ../include/engine/TrackFlagService.h
     ../include/engine/RemuxJob.h
+    ../include/engine/DeepDvScanWorker.h
     ../include/engine/TrackDecision.h
     ../include/engine/PosterManager.h
     ../include/engine/SubtitleManager.h
@@ -332,7 +340,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/tools"
             "$<TARGET_FILE_DIR:MediaCurator>/tools"
-        COMMENT "Copying bundled tools to output directory (ffprobe + mkvmerge + mkvpropedit)"
+        COMMENT "Copying bundled tools to output directory (ffprobe + mkvmerge + mkvpropedit + dovi_tool)"
     )
 endif()
 

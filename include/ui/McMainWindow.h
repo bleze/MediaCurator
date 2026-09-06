@@ -31,7 +31,9 @@ struct ITaskbarList3;
 namespace Mc {
 
 class AnalyzeWorker;
+class DeepDvScanWorker;
 class EditionBackfillWorker;
+class DvProfileBackfillWorker;
 class JobQueue;
 class LibraryLoader;
 class McDownloadQueueBand;
@@ -140,6 +142,9 @@ private:
 	// Delayed a few seconds past startup so it never competes with the initial
 	// library load — see EditionBackfillWorker.
 	void startEditionBackfill();
+	// Same idea, but for files scanned before Dolby Vision profile detection
+	// existed — see DvProfileBackfillWorker.
+	void startDvProfileBackfill();
 	void ensureOnScreen();
 	void setNativeWindowBackground();
 	void startScanRoots(const QStringList& roots, bool quickScan, bool silent = false);
@@ -166,6 +171,7 @@ private:
 	void launchInDefaultPlayer(const QString& rawPath);
 	bool analyzeSingleFile(qint64 fileId);
 	void setSubtitleLanguage(const FileRecord& file, const StreamRecord& stream, const QString& langCode);
+	void startDeepDolbyVisionScan(qint64 fileId, const QString& filePath, int streamIndex, int videoOrdinal);
 #ifdef Q_OS_WIN
 	void setTaskbarProgress(int value, int total = 100);
 	void clearTaskbarProgress();
@@ -252,10 +258,15 @@ private:
 	LibraryLoader*   m_loader          = nullptr;
 	QThread*                 m_editionBackfillThread = nullptr;
 	EditionBackfillWorker*   m_editionBackfillWorker = nullptr;
+	QThread*                 m_dvBackfillThread = nullptr;
+	DvProfileBackfillWorker* m_dvBackfillWorker = nullptr;
 	QThread*         m_analyzeThread   = nullptr;
 	AnalyzeWorker*   m_analyzeWorker   = nullptr;
 	QThread*         m_simulateThread  = nullptr;
 	SimulateWorker*  m_simulateWorker  = nullptr;
+	QThread*             m_deepDvScanThread = nullptr;
+	DeepDvScanWorker*    m_deepDvScanWorker = nullptr;
+	QProgressDialog*     m_deepDvScanDialog = nullptr;
 	McWhatIfDialog*  m_whatIfDialog    = nullptr;
 	int              m_analyzeJobCount     = 0;
 	int              m_savedJobPanelHeight = 0;

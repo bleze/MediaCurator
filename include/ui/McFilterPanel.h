@@ -48,12 +48,10 @@ public:
 	enum QuickFilter : quint32 {
 		QF_None         = 0,
 		QF_4K           = 1 << 0,
-		QF_DV           = 1 << 1,
-		QF_HDR          = 1 << 2,
-		QF_Atmos        = 1 << 3,
-		QF_TrueHD       = 1 << 4,
-		QF_DtsHD        = 1 << 5,
-		QF_DtsX         = 1 << 6,
+		// 1<<1 and 1<<2 formerly QF_DV/QF_HDR — replaced by the HDR/DV checklist
+		// dropdown (see hdrDvFilterChanged), same treatment as Edition below.
+		// 1<<3 .. 1<<6 formerly QF_Atmos/QF_TrueHD/QF_DtsHD/QF_DtsX — replaced by
+		// the Audio checklist dropdown (see audioFormatFilterChanged).
 		// Media categories (OR within group when any selected)
 		QF_Movie        = 1 << 7,
 		QF_Tv           = 1 << 8,
@@ -82,6 +80,8 @@ signals:
 	void storageGroupFilterChanged(quint32 groupMask);   // bit (1<<group); 0 = show all
 	void redundantOnlyFilterChanged(bool on);   // GroupedByEdition only
 	void editionFilterChanged(const QSet<QString>& editions);   // empty = show all
+	void hdrDvFilterChanged(const QSet<QString>& labels);   // empty = show all; see DolbyVisionInfo::filterLabels()
+	void audioFormatFilterChanged(const QSet<QString>& labels);   // empty = show all; see AudioFormatInfo::filterLabels()
 
 private:
 	void onPillToggled(quint32 flag, bool on);
@@ -116,6 +116,8 @@ private:
 	bool          m_groupModeActive = false;
 
 	McMultiCheckDropdown* m_editionDropdown = nullptr;
+	McMultiCheckDropdown* m_hdrDvDropdown = nullptr;
+	McMultiCheckDropdown* m_audioFormatDropdown = nullptr;
 
 	void updateRedundantChipVisibility();
 };

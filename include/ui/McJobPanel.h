@@ -43,6 +43,11 @@ public:
 	// Forwarded to the card delegate — see McCardDelegate::setFanartOpacity.
 	void setFanartOpacity(double opacity);
 
+	// Gates whether the context menu offers "Download Scene NFO…" — mirrors
+	// UserProfile::downloadSceneNfoEnabled(), pushed from McMainWindow the same
+	// way setTmdbConfigured() is.
+	void setDownloadSceneNfoEnabled(bool enabled);
+
 	// Rebuilds the storage-group chip row from the current folder→group assignment
 	// and reapplies its filter to the underlying model. Call after folders are
 	// reassigned (e.g. Manage Folders dialog closes) so the chip set stays live
@@ -101,6 +106,7 @@ signals:
 	void refreshPosterRequested(qint64 fileId);
 	void refreshPosterBatchRequested(const QList<qint64>& fileIds);  // batch: multiple selected
 	void downloadSubtitlesRequested(qint64 fileId);
+	void downloadSceneNfoRequested(qint64 fileId);
 #ifdef QT_DEBUG
 	void debugReviewRequested(qint64 jobId);
 #endif
@@ -173,6 +179,10 @@ private:
 	QList<McStorageGroupChipToggle*> m_storageGroupChips;
 
 	McMultiCheckDropdown* m_editionDropdown = nullptr;
+	McMultiCheckDropdown* m_hdrDvDropdown = nullptr;
+	McMultiCheckDropdown* m_audioFormatDropdown = nullptr;
+
+	bool m_downloadSceneNfoEnabled = false;
 };
 
 } // namespace Mc

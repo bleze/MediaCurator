@@ -8,9 +8,12 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 class QUrl;
 
 namespace Mc {
+
+class SceneNfoWorker;
 
 // One srrDB (https://www.srrdb.com) scene-release search hit.
 struct SceneRelease {
@@ -120,6 +123,76 @@ private:
 	QString    m_imdbId;
 	QAtomicInt m_cancelled{0};
 	SrrdbClient* m_client = nullptr; // valid only while a phase is executing
+};
+
+/**
+ * SceneNfoManager — downloads missing scene-release NFOs for the library on a
+ * background thread after scanning, mirroring SubtitleManager's always-on
+ * queue but without any quota/backoff subsystem — srrDB has no known daily
+ * quota, unlike OpenSubtitles.
+ *
+ * Only ever attempts a download when exactly one confident release match is
+ * found for a file; an ambiguous result is left alone for the existing manual
+ * "Download Scene NFO…" action (McSceneNfoDownloadDialog) to resolve
+ * interactively — this queue never surfaces a picker.
+ */
+class SceneNfoManager : public QObject
+{
+	Q_OBJECT
+public:
+	static SceneNfoManager& instance();
+
+	// Call once at startup (after profile is loaded). enabled should already be
+	// the combination of UserProfile::downloadSceneNfoEnabled() (the feature is
+	// on at all) and UserProfile::autoDownloadSceneNfo() (background queue is
+	// on) — this manager doesn't know about either profile flag itself.
+	void start(bool enabled);
+
+	// Stop the background thread gracefully. Call from closeEvent before accept().
+	void stop();
+
+	// Push updated settings (e.g. when the user saves settings).
+	void setEnabled(bool enabled);
+	// UserProfile::writeNfoFiles() — whether a successful download also writes a
+	// real .nfo file to disk, or stays database-only (see NfoParser::writeSceneNfoFile
+	// and the "Enable Download Scene NFO" tooltip in McSettingsDialog).
+	void setWriteNfoFiles(bool enabled);
+	// Shared with poster/subtitle retry cooldown — UserProfile::subtitleRetryCooldownDays().
+	void setRetryCooldownDays(int days);
+
+	// Enqueue a newly-scanned (or rescanned) file for scene-NFO lookup.
+	// No-op if disabled or the file already has a scene NFO.
+	void enqueue(qint64 fileId);
+
+	// Batch enqueue — one cross-thread signal for many IDs (e.g. quick-scan backfill).
+	void enqueueBatch(const QList<qint64>& fileIds);
+
+	// User-initiated cancel — drop every queued file and abort whatever is
+	// currently downloading. The manager stays running and picks up newly
+	// enqueued files afterward (mirrors SubtitleManager::cancelAll()).
+	void cancelAll();
+
+signals:
+	// A background download wrote a scene NFO for fileId; the DB is already
+	// updated — listeners only need to refresh their view.
+	void sceneNfoReady(qint64 fileId);
+	// The queue transitioned between idle and actively processing files.
+	void queueActiveChanged(bool active);
+
+	// Internal — cross-thread commands to the worker.
+	void workerSetEnabled(bool enabled);
+	void workerSetWriteNfoFiles(bool enabled);
+	void workerSetRetryCooldownDays(int days);
+	void workerEnqueueFile(qint64 fileId);
+	void workerEnqueueBatch(QList<qint64> fileIds);
+	void workerCancelAll();
+	void workerStop();
+
+private:
+	explicit SceneNfoManager(QObject* parent = nullptr);
+
+	QThread*        m_thread = nullptr;
+	SceneNfoWorker* m_worker = nullptr;
 };
 
 } // namespace Mc

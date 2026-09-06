@@ -81,11 +81,13 @@ cmake --build build --parallel
 
 ---
 
-## External tools (ffprobe + mkvmerge)
+## External tools (ffprobe + mkvmerge + dovi_tool)
 
-MediaCurator calls `ffprobe` (for scanning) and `mkvmerge` (for remuxing) as
-external processes. They are **not** bundled in the installer because of
-licensing constraints (LGPL / GPL).
+MediaCurator calls `ffprobe` (for scanning), `mkvmerge`/`mkvextract` (for
+remuxing and the Dolby Vision deep scan), and `dovi_tool` (for the Dolby
+Vision deep scan only) as external processes. `ffprobe` and `mkvmerge` are
+**not** bundled in the installer because of licensing constraints (LGPL /
+GPL); `dovi_tool` is MIT-licensed, so it carries no such restriction.
 
 Place them in the `tools/` directory next to the executable, or configure
 their paths in **Settings → Tools**:
@@ -93,4 +95,5 @@ their paths in **Settings → Tools**:
 | Tool | Download |
 |------|---------|
 | `ffprobe` | [ffmpeg.org/download.html](https://ffmpeg.org/download.html) — take any static build, copy just `ffprobe` |
-| `mkvmerge` | [mkvtoolnix.download](https://mkvtoolnix.download/downloads.html) — install MKVToolNix and copy `mkvmerge` |
+| `mkvmerge` / `mkvextract` | [mkvtoolnix.download](https://mkvtoolnix.download/downloads.html) — install MKVToolNix and copy both |
+| `dovi_tool` | [github.com/quietvoid/dovi_tool/releases](https://github.com/quietvoid/dovi_tool/releases) — only needed for the opt-in "Deep Scan for FEL/MEL" action |

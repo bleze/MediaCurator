@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPair>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
@@ -208,6 +209,11 @@ bool DatabaseManager::initSchema()
 			max_cll             INTEGER DEFAULT 0,
 			max_fall            INTEGER DEFAULT 0,
 			mastering_display   TEXT,
+			dv_profile          INTEGER DEFAULT -1,
+			dv_bl_compat_id     INTEGER DEFAULT -1,
+			dv_el_present       INTEGER DEFAULT 0,
+			dv_el_type          TEXT,
+			dv_deep_scanned_at  INTEGER DEFAULT 0,
 			is_default          INTEGER DEFAULT 0,
 			is_forced           INTEGER DEFAULT 0,
 			is_hearing_impaired INTEGER DEFAULT 0,
@@ -514,7 +520,7 @@ bool DatabaseManager::initSchema()
 	// logic instead of leaving their stale label in place forever. Same pattern as
 	// poster_scan_version above — bump kEditionDetectorVersion on the next such change.
 	{
-		static constexpr const char* kEditionDetectorVersion = "7"; // "7": allow 2-letter edition abbreviations (e.g. "DC" for Director's Cut)
+		static constexpr const char* kEditionDetectorVersion = "8"; // "8": Kodi {edition-...} tags now normalize through editionTokens too (e.g. "Extended" -> "Extended Cut")
 		QSqlQuery pv(connection());
 		pv.exec("SELECT value FROM preferences WHERE key='edition_detector_version'");
 		const QString currentVersion = pv.next() ? pv.value(0).toString() : QString();
@@ -563,6 +569,48 @@ bool DatabaseManager::initSchema()
 	{
 		QSqlQuery m(connection());
 		m.exec("ALTER TABLE files ADD COLUMN scene_nfo_text TEXT NOT NULL DEFAULT ''");
+	}
+
+	// Migration: last scene-NFO-download-attempt timestamp, so a file srrDB has
+	// nothing for isn't re-searched on every single scan — same shape as
+	// subtitle_attempted_ms above.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN scene_nfo_attempted_ms INTEGER DEFAULT 0");
+	}
+
+	// Migration: Dolby Vision profile / base-layer compatibility / enhancement-layer
+	// presence, parsed from ffprobe's "DOVI configuration record" side-data. Lets the
+	// UI show e.g. "Profile 8.1 (HDR10-compatible)" instead of a bare "DolbyVision".
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE streams ADD COLUMN dv_profile INTEGER DEFAULT -1");
+		m.exec("ALTER TABLE streams ADD COLUMN dv_bl_compat_id INTEGER DEFAULT -1");
+		m.exec("ALTER TABLE streams ADD COLUMN dv_el_present INTEGER DEFAULT 0");
+	}
+
+	// Migration: result of the opt-in "Deep Scan for FEL/MEL" action (see
+	// DeepDvScanWorker) — extracts the elementary video stream of a dual-layer
+	// (Profile 7) Dolby Vision track and analyzes it with dovi_tool, since that
+	// distinction isn't in ffprobe's metadata at all.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE streams ADD COLUMN dv_el_type TEXT");
+		m.exec("ALTER TABLE streams ADD COLUMN dv_deep_scanned_at INTEGER DEFAULT 0");
+	}
+
+	// Migration: dv_checked distinguishes "never re-probed since Dolby Vision
+	// profile detection existed" from "checked and it's not Dolby Vision" — the
+	// normal scan skip-if-unchanged fast path (ScanWorker::processCandidate) never
+	// re-runs ffprobe on a file whose mtime/size haven't changed, so an ordinary
+	// full/quick scan alone never backfills dv_profile for already-scanned files.
+	// DvProfileBackfillWorker walks files with dv_checked=0 exactly once, resumable
+	// across app restarts (it just re-queries WHERE dv_checked=0) — same pattern as
+	// edition_checked/EditionBackfillWorker above.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN dv_checked INTEGER NOT NULL DEFAULT 0");
+		m.exec("CREATE INDEX IF NOT EXISTS idx_files_dv_checked ON files(dv_checked)");
 	}
 
 	return true;
@@ -696,6 +744,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.ignored          = q.value("ignored").toInt() != 0;
 	r.subtitleAttemptedMs = q.value("subtitle_attempted_ms").toLongLong();
 	r.hasSceneNfo      = q.value("has_scene_nfo").toInt() != 0;
+	r.sceneNfoAttemptedMs = q.value("scene_nfo_attempted_ms").toLongLong();
 	return r;
 }
 
@@ -937,6 +986,11 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<
 		s.extraJson         = q.value("extra_json").toString();
 		s.isExternal        = q.value("is_external").toInt() != 0;
 		s.externalPath      = q.value("external_path").toString();
+		s.dvProfile         = q.value("dv_profile").toInt();
+		s.dvBlCompatId      = q.value("dv_bl_compat_id").toInt();
+		s.dvElPresent       = q.value("dv_el_present").toInt() != 0;
+		s.dvElType          = q.value("dv_el_type").toString();
+		s.dvDeepScannedAt   = q.value("dv_deep_scanned_at").toLongLong();
 		result[s.fileId].append(s);
 	};
 
@@ -1026,6 +1080,16 @@ void DatabaseManager::updateSubtitleAttempted(qint64 fileId, qint64 epochMs)
 	q.addBindValue(fileId);
 	if (!q.exec())
 		qWarning() << "updateSubtitleAttempted failed:" << q.lastError().text();
+}
+
+void DatabaseManager::updateSceneNfoAttempted(qint64 fileId, qint64 epochMs)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET scene_nfo_attempted_ms=? WHERE id=?");
+	q.addBindValue(epochMs);
+	q.addBindValue(fileId);
+	if (!q.exec())
+		qWarning() << "updateSceneNfoAttempted failed:" << q.lastError().text();
 }
 
 int DatabaseManager::fileCount() const
@@ -1131,14 +1195,32 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 			is_default, is_forced, is_original, is_commentary,
 			is_hearing_impaired, is_visual_impaired,
 			pixel_format, frame_rate, codec_level, codec_profile, extra_json,
-			is_external, external_path)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			is_external, external_path, dv_profile, dv_bl_compat_id, dv_el_present,
+			dv_el_type, dv_deep_scanned_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 
 	if (!db.transaction()) {
 		qWarning() << "insertStreams: could not start transaction for file" << fileId
 		           << "—" << db.lastError().text();
 		return false;
+	}
+
+	// A rescan deletes and re-inserts every row for this file from fresh ffprobe
+	// output, which knows nothing about a prior "Deep Scan for FEL/MEL" result —
+	// carry it forward (by stream_index) so re-scanning a file doesn't silently
+	// discard it.
+	QHash<int, QPair<QString, qint64>> preservedDvElType;
+	{
+		QSqlQuery pq(db);
+		pq.prepare("SELECT stream_index, dv_el_type, dv_deep_scanned_at FROM streams "
+		           "WHERE file_id=? AND dv_deep_scanned_at > 0");
+		pq.addBindValue(fileId);
+		if (pq.exec()) {
+			while (pq.next())
+				preservedDvElType.insert(pq.value(0).toInt(),
+					{pq.value(1).toString(), pq.value(2).toLongLong()});
+		}
 	}
 
 	if (!deleteStreamsOnDb(db, fileId)) {
@@ -1178,6 +1260,12 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 		ins.addBindValue(s.extraJson);
 		ins.addBindValue(s.isExternal ? 1 : 0);
 		ins.addBindValue(s.externalPath);
+		ins.addBindValue(s.dvProfile);
+		ins.addBindValue(s.dvBlCompatId);
+		ins.addBindValue(s.dvElPresent ? 1 : 0);
+		const auto preserved = preservedDvElType.value(s.streamIndex);
+		ins.addBindValue(preserved.first);
+		ins.addBindValue(preserved.second);
 		if (!ins.exec()) {
 			qWarning() << "insertStreams row failed:" << ins.lastError().text();
 			db.rollback();
@@ -1238,6 +1326,18 @@ bool DatabaseManager::updateStreamLanguageInternal(qint64 fileId, int streamInde
 	return q.exec();
 }
 
+bool DatabaseManager::updateDolbyVisionElType(qint64 fileId, int streamIndex,
+                                               const QString& elType, qint64 scannedAt)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE streams SET dv_el_type=?, dv_deep_scanned_at=? WHERE file_id=? AND stream_index=?");
+	q.addBindValue(elType);
+	q.addBindValue(scannedAt);
+	q.addBindValue(fileId);
+	q.addBindValue(streamIndex);
+	return q.exec();
+}
+
 QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 {
 	QList<StreamRecord> result;
@@ -1279,6 +1379,11 @@ QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 		s.extraJson         = q.value("extra_json").toString();
 		s.isExternal        = q.value("is_external").toInt() != 0;
 		s.externalPath      = q.value("external_path").toString();
+		s.dvProfile         = q.value("dv_profile").toInt();
+		s.dvBlCompatId      = q.value("dv_bl_compat_id").toInt();
+		s.dvElPresent       = q.value("dv_el_present").toInt() != 0;
+		s.dvElType          = q.value("dv_el_type").toString();
+		s.dvDeepScannedAt   = q.value("dv_deep_scanned_at").toLongLong();
 		result.append(s);
 	}
 	return result;
@@ -1322,6 +1427,11 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
 		s.extraJson         = q.value("extra_json").toString();
 		s.isExternal        = q.value("is_external").toInt() != 0;
 		s.externalPath      = q.value("external_path").toString();
+		s.dvProfile         = q.value("dv_profile").toInt();
+		s.dvBlCompatId      = q.value("dv_bl_compat_id").toInt();
+		s.dvElPresent       = q.value("dv_el_present").toInt() != 0;
+		s.dvElType          = q.value("dv_el_type").toString();
+		s.dvDeepScannedAt   = q.value("dv_deep_scanned_at").toLongLong();
 		result[s.fileId].append(s);
 	}
 	return result;
@@ -1812,6 +1922,28 @@ QList<FileRecord> DatabaseManager::filesNeedingEditionCheck() const
 		result.append(r);
 	}
 	return result;
+}
+
+QList<FileRecord> DatabaseManager::filesNeedingDvCheck() const
+{
+	QList<FileRecord> result;
+	QSqlQuery q(connection());
+	q.exec("SELECT id, path FROM files WHERE dv_checked = 0");
+	while (q.next()) {
+		FileRecord r;
+		r.id   = q.value(0).toLongLong();
+		r.path = q.value(1).toString();
+		result.append(r);
+	}
+	return result;
+}
+
+bool DatabaseManager::markDvChecked(qint64 fileId)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET dv_checked=1 WHERE id=?");
+	q.addBindValue(fileId);
+	return q.exec();
 }
 
 bool DatabaseManager::updateSceneNfo(qint64 fileId, bool hasArt, const QString& text)

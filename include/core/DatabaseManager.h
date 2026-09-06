@@ -83,6 +83,7 @@ struct FileRecord {
 	QString     edition; // e.g. "Theatrical", "Director's Cut", "3D"; blank = undetected. Heuristically
 	                      // filled once at first scan or user override; never re-touched by rescans.
 	bool        hasSceneNfo = false; // co-named .nfo has scene-release ASCII art — see NfoParser::hasSceneAsciiArt
+	qint64      sceneNfoAttemptedMs = 0; // last time an srrDB scene-NFO lookup was attempted (0 = never)
 };
 
 // Mirrors the 'streams' table row
@@ -105,6 +106,11 @@ struct StreamRecord {
 	int         maxCll = 0;      // Max Content Light Level (nits)
 	int         maxFall = 0;     // Max Frame-Average Light Level (nits)
 	QString     masteringDisplay; // e.g. "R(0.68,0.32) G(0.265,0.69) B(0.15,0.06) WP(0.3127,0.329) L(1000,0.0005)"
+	int         dvProfile = -1;      // Dolby Vision profile (5, 7, 8, ...), -1 = not Dolby Vision
+	int         dvBlCompatId = -1;   // dv_bl_signal_compatibility_id (1=HDR10, 2=SDR, 4=HLG), -1 = unknown/none
+	bool        dvElPresent = false; // true = dual-layer (base + enhancement layer), e.g. Profile 7
+	QString     dvElType;            // "FEL"/"MEL" once a deep scan has determined it, else empty
+	qint64      dvDeepScannedAt = 0; // unix timestamp of the last deep scan, 0 = never
 	bool        isDefault = false;
 	bool        isForced = false;
 	bool        isOriginal = false;
@@ -279,6 +285,7 @@ public:
 
 	// ── Subtitle retry cooldown ──────────────────────────────────────────────
 	void updateSubtitleAttempted(qint64 fileId, qint64 epochMs);
+	void updateSceneNfoAttempted(qint64 fileId, qint64 epochMs);
 
 	// ── Streams ──────────────────────────────────────────────────────────────
 	bool insertStreams(qint64 fileId, const QList<StreamRecord>& streams);
@@ -294,6 +301,9 @@ public:
 	// Persists the language of an embedded (non-sidecar) stream. For external
 	// sidecars use updateStreamExternalInfo instead (it also renames the file).
 	bool updateStreamLanguageInternal(qint64 fileId, int streamIndex, const QString& language);
+	// Persists the result of a "Deep Scan for FEL/MEL" (see DeepDvScanWorker) —
+	// elType is "FEL" or "MEL", scannedAt a unix timestamp.
+	bool updateDolbyVisionElType(qint64 fileId, int streamIndex, const QString& elType, qint64 scannedAt);
 	QList<StreamRecord> streamsForFile(qint64 fileId) const;
 	QList<StreamRecord> allStreams() const;
 	QHash<qint64, QList<StreamRecord>> allStreamsGrouped() const;
@@ -363,6 +373,11 @@ public:
 	// Files scanned before edition detection existed (edition_checked=0). Only
 	// id/filename/containerTitle are populated — that's all EditionDetector needs.
 	QList<FileRecord> filesNeedingEditionCheck() const;
+	// Files not yet re-probed since Dolby Vision profile detection existed
+	// (dv_checked=0) — see DvProfileBackfillWorker. Only id/path are populated,
+	// since scanFile() needs nothing else.
+	QList<FileRecord> filesNeedingDvCheck() const;
+	bool markDvChecked(qint64 fileId);
 	// Same effect as calling updateEdition() once per entry, wrapped in a single
 	// transaction — EditionBackfillWorker may be writing hundreds/thousands of rows
 	// in one pass, and SQLite's per-statement autocommit fsync would make that

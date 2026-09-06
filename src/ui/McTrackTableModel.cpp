@@ -1,4 +1,5 @@
 ﻿#include "ui/McTrackTableModel.h"
+#include "core/DolbyVisionInfo.h"
 
 #include <QColor>
 #include <QFont>
@@ -86,11 +87,17 @@ QVariant McTrackTableModel::data(const QModelIndex& index, int role) const
 			const double mb = f.sizeBytes / 1048576.0;
 			return QStringLiteral("%1 MB").arg(mb, 0, 'f', 1);
 		}
-		case Col_HDR:
-		if (s.hdrFormat.isEmpty()) return {};
-		if (s.maxCll > 0 || s.maxFall > 0)
-			return QString("%1 (%2/%3)").arg(s.hdrFormat).arg(s.maxCll).arg(s.maxFall);
-		return s.hdrFormat;
+		case Col_HDR: {
+			if (s.hdrFormat.isEmpty()) return {};
+			QString text = s.hdrFormat;
+			if (s.hdrFormat == QLatin1String("DolbyVision")) {
+				const QString dv = DolbyVisionInfo::label(s.dvProfile, s.dvBlCompatId, s.dvElPresent, s.dvElType);
+				if (!dv.isEmpty()) text += QStringLiteral(", ") + dv;
+			}
+			if (s.maxCll > 0 || s.maxFall > 0)
+				text += QString(" (%1/%2)").arg(s.maxCll).arg(s.maxFall);
+			return text;
+		}
 		case Col_Default:    return s.isDefault ? tr("✓") : QString();
 		case Col_Forced:     return s.isForced  ? tr("✓") : QString();
 		default: return {};

@@ -6,6 +6,8 @@
 #include "ui/McMultiCheckDropdown.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "core/DolbyVisionInfo.h"
+#include "core/AudioFormatInfo.h"
 #include "core/StorageGroupSettings.h"
 
 #include <QColor>
@@ -196,16 +198,10 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		lay->addWidget(m_mediaCategoryContainer);
 	}
 
-	const PillDef resGroup[] = {
-		{ "4K", QF_4K, QStringLiteral("Show only 4K files (width ≥ 3840)") },
-		{ "3D", QF_3D, QStringLiteral("Show only files detected as a 3D release") },
-	};
-	addGroup(videoColor, resGroup);
-
 	// ── Edition checklist ─────────────────────────────────────────────────────
 	// Open-ended value set (whatever editions actually exist in the library
 	// today), so a fixed pill per value doesn't fit like it does for 3D/4K —
-	// a checklist dropdown instead. Combine with the 4K pill above to find,
+	// a checklist dropdown instead. Combine with the 4K pill below to find,
 	// e.g., every 4K IMAX release.
 	lay->addWidget(vSep(this));
 	m_editionDropdown = new McMultiCheckDropdown(tr("Edition"), this,
@@ -216,19 +212,38 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	lay->addWidget(m_editionDropdown);
 	refreshEditions();
 
-	const PillDef hdrGroup[] = {
-		{ "DV",  QF_DV,  "Show only files with Dolby Vision" },
-		{ "HDR", QF_HDR, "Show only files with HDR (HDR10 / HLG / HDR10+)" },
+	const PillDef resGroup[] = {
+		{ "4K", QF_4K, QStringLiteral("Show only 4K files (width ≥ 3840)") },
+		{ "3D", QF_3D, QStringLiteral("Show only files detected as a 3D release") },
 	};
-	addGroup(hdrColor, hdrGroup);
+	addGroup(videoColor, resGroup);
 
-	const PillDef audGroup[] = {
-		{ "Atmos",  QF_Atmos,  "Show only files with Dolby Atmos" },
-		{ "TrueHD", QF_TrueHD, "Show only files with Dolby TrueHD" },
-		{ "DTS-HD", QF_DtsHD,  "Show only files with DTS-HD MA or HRA" },
-		{ "DTS:X",  QF_DtsX,   "Show only files with DTS:X" },
-	};
-	addGroup(audioColor, audGroup);
+	// ── HDR/DV checklist ──────────────────────────────────────────────────────
+	// A fixed, closed set of values (unlike Edition's DB-queried open set), but
+	// still a checklist rather than one pill per value — plain "DV"/"HDR" pills
+	// can't express Dolby Vision profile or FEL/MEL, and one pill per profile/
+	// EL-type combination would be too many for this bar for something checked
+	// occasionally, not on every browse.
+	lay->addWidget(vSep(this));
+	m_hdrDvDropdown = new McMultiCheckDropdown(tr("HDR"), this, hdrColor);
+	m_hdrDvDropdown->setToolTip(tr("Filter by HDR/Dolby Vision format, including Dolby\n"
+	                                "Vision profile and Full/Minimal Enhancement Layer"));
+	m_hdrDvDropdown->setItems(DolbyVisionInfo::filterLabels());
+	connect(m_hdrDvDropdown, &McMultiCheckDropdown::selectionChanged,
+	        this, &McFilterPanel::hdrDvFilterChanged);
+	lay->addWidget(m_hdrDvDropdown);
+
+	// ── Audio checklist ───────────────────────────────────────────────────────
+	// Same fixed-set-but-checklist reasoning as HDR/DV above — replaces the old
+	// Atmos/TrueHD/DTS-HD/DTS:X pills and adds the formats that had no pill at
+	// all (plain DTS, Dolby Digital/Plus, PCM, FLAC, AAC).
+	lay->addWidget(vSep(this));
+	m_audioFormatDropdown = new McMultiCheckDropdown(tr("Audio"), this, audioColor);
+	m_audioFormatDropdown->setToolTip(tr("Filter by audio format/codec"));
+	m_audioFormatDropdown->setItems(AudioFormatInfo::filterLabels());
+	connect(m_audioFormatDropdown, &McMultiCheckDropdown::selectionChanged,
+	        this, &McFilterPanel::audioFormatFilterChanged);
+	lay->addWidget(m_audioFormatDropdown);
 
 	// ── Rating slider ─────────────────────────────────────────────────────────
 	lay->addWidget(vSep(this));

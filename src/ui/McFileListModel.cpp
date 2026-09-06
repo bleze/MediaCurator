@@ -1,5 +1,7 @@
 #include "ui/McFileListModel.h"
 #include "ui/McCardDelegate.h"
+#include "core/DolbyVisionInfo.h"
+#include "core/AudioFormatInfo.h"
 
 #include <QApplication>
 #include <QDebug>
@@ -80,7 +82,9 @@ void McFileListModel::computeDerived(FileEntry& e)
 	e.searchText = s.toLower();
 
 	// Precompute quick-filter flags by scanning streams once + populate grouped lists
-	e.has4K = e.hasDV = e.hasHDR = e.hasAtmos = e.hasTrueHD = e.hasDtsHD = e.hasDtsX = false;
+	e.has4K = false;
+	e.hdrDvLabels.clear();
+	e.audioFormatLabels.clear();
 	// "3D" or "3D (HSBS)"/"3D (VSBS)"/etc — see EditionDetector's packing-format qualifier.
 	e.hasEdition3D = e.file.edition.startsWith(QLatin1String("3D"));
 	e.videoStreams.clear();
@@ -95,31 +99,22 @@ void McFileListModel::computeDerived(FileEntry& e)
 			// exactly 3840 (e.g. 3832) — a strict >=3840 check misses those.
 			if (st.width >= 3600 || st.height >= 2160)
 				e.has4K = true;
-			if (st.hdrFormat == QLatin1String("DolbyVision") ||
-			    st.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive) ||
-			    st.codecProfile.startsWith(QLatin1String("dvav"), Qt::CaseInsensitive))
-				e.hasDV = true;
-			if (!st.hdrFormat.isEmpty() && st.hdrFormat != QLatin1String("DolbyVision"))
-				e.hasHDR = true;
+			for (const QString& label :
+			     DolbyVisionInfo::matchingFilterLabels(st.hdrFormat, st.dvProfile, st.dvElType))
+				if (!e.hdrDvLabels.contains(label)) e.hdrDvLabels << label;
+			// Fallback: some encoders only expose Dolby Vision via the codec profile
+			// string (dvhe/dvav) rather than ffprobe's side-data — same heuristic the
+			// HDR column/badge display never needed, but the original DV pill did.
+			if (st.hdrFormat != QLatin1String("DolbyVision") &&
+			    (st.codecProfile.startsWith(QLatin1String("dvhe"), Qt::CaseInsensitive) ||
+			     st.codecProfile.startsWith(QLatin1String("dvav"), Qt::CaseInsensitive)) &&
+			    !e.hdrDvLabels.contains(QStringLiteral("Dolby Vision (any)")))
+				e.hdrDvLabels << QStringLiteral("Dolby Vision (any)");
 		} else if (st.codecType == QLatin1String("audio")) {
 			e.audioStreams.append(st);
-			const QString n = st.codecName.toLower();
-			const QString p = st.codecProfile.toLower();
-			const QString t = st.title.toLower();
-			if ((n == QLatin1String("truehd") || n == QLatin1String("eac3")) &&
-			    (p.contains(QLatin1String("atmos")) || t.contains(QLatin1String("atmos"))))
-				e.hasAtmos = true;
-			if (n == QLatin1String("truehd"))
-				e.hasTrueHD = true;
-			if (n == QLatin1String("dts") &&
-			    (p.contains(QLatin1String("ma")) || p.contains(QLatin1String("hra")) ||
-			     t.contains(QLatin1String("dts-hd")) ||
-			     p.contains(QLatin1String("dts:x")) || t.contains(QLatin1String("dts:x"))))
-				e.hasDtsHD = true;
-			if (n == QLatin1String("dts") &&
-			    (p.contains(QLatin1String("dts:x")) || p.contains(QLatin1String("dts-x")) ||
-			     t.contains(QLatin1String("dts:x"))))
-				e.hasDtsX = true;
+			for (const QString& label :
+			     AudioFormatInfo::matchingFilterLabels(st.codecName, st.codecProfile, st.title))
+				if (!e.audioFormatLabels.contains(label)) e.audioFormatLabels << label;
 		} else if (st.codecType == QLatin1String("subtitle")) {
 			e.subtitleStreams.append(st);
 		}
@@ -157,19 +152,7 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 	// ── Quick-filter pills ────────────────────────────────────────────────────
 	if (m_quickFilters != QF_None) {
 		if ((m_quickFilters & QF_4K) && !e.has4K) return false;
-		if ((m_quickFilters & QF_DV) && !e.hasDV) return false;
-		if ((m_quickFilters & QF_HDR) && !e.hasHDR) return false;
 		if ((m_quickFilters & QF_3D) && !e.hasEdition3D) return false;
-
-		const quint32 audioMask = QF_Atmos | QF_TrueHD | QF_DtsHD | QF_DtsX;
-		if (m_quickFilters & audioMask) {
-			bool hasAudioMatch = false;
-			if ((m_quickFilters & QF_Atmos) && e.hasAtmos) hasAudioMatch = true;
-			if ((m_quickFilters & QF_TrueHD) && e.hasTrueHD) hasAudioMatch = true;
-			if ((m_quickFilters & QF_DtsHD) && e.hasDtsHD) hasAudioMatch = true;
-			if ((m_quickFilters & QF_DtsX) && e.hasDtsX) hasAudioMatch = true;
-			if (!hasAudioMatch) return false;
-		}
 
 		// Media category pills — OR within the group (Movies | TV | Docs | Misc).
 		const quint32 mediaMask = QF_Movie | QF_Tv | QF_Documentary | QF_Misc;
@@ -206,6 +189,27 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 		bool matched = false;
 		for (const QString& tok : e.file.edition.split(QLatin1String(" & "), Qt::SkipEmptyParts)) {
 			if (m_editionFilter.contains(tok.trimmed())) { matched = true; break; }
+		}
+		if (!matched) return false;
+	}
+
+	// ── HDR/DV filter ─────────────────────────────────────────────────────────
+	// A file can carry several matching labels at once (e.g. "Dolby Vision (any)"
+	// and "Dolby Vision - Profile 7, FEL") - any one of the checked labels
+	// showing up is enough, same OR-within-group logic as edition tokens above.
+	if (!m_hdrDvFilter.isEmpty()) {
+		bool matched = false;
+		for (const QString& label : e.hdrDvLabels) {
+			if (m_hdrDvFilter.contains(label)) { matched = true; break; }
+		}
+		if (!matched) return false;
+	}
+
+	// ── Audio format filter ───────────────────────────────────────────────────
+	if (!m_audioFormatFilter.isEmpty()) {
+		bool matched = false;
+		for (const QString& label : e.audioFormatLabels) {
+			if (m_audioFormatFilter.contains(label)) { matched = true; break; }
 		}
 		if (!matched) return false;
 	}
@@ -792,6 +796,20 @@ void McFileListModel::setEditionFilter(const QSet<QString>& editions)
 {
 	if (m_editionFilter == editions) return;
 	m_editionFilter = editions;
+	applyFilter();
+}
+
+void McFileListModel::setHdrDvFilter(const QSet<QString>& labels)
+{
+	if (m_hdrDvFilter == labels) return;
+	m_hdrDvFilter = labels;
+	applyFilter();
+}
+
+void McFileListModel::setAudioFormatFilter(const QSet<QString>& labels)
+{
+	if (m_audioFormatFilter == labels) return;
+	m_audioFormatFilter = labels;
 	applyFilter();
 }
 

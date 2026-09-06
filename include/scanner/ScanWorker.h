@@ -89,8 +89,10 @@ signals:
 	// Poster/subtitle managers live on the UI thread — never call them directly from run().
 	void posterEnqueueRequested(qint64 fileId);
 	void subtitleEnqueueRequested(qint64 fileId);
+	void sceneNfoEnqueueRequested(qint64 fileId);
 	void posterEnqueueBatchRequested(Mc::FileIdList fileIds);
 	void subtitleEnqueueBatchRequested(Mc::FileIdList fileIds);
+	void sceneNfoEnqueueBatchRequested(Mc::FileIdList fileIds);
 
 private:
 	QString        m_rootPath;

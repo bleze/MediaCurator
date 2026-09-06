@@ -262,13 +262,31 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	m_chkRemoveMjpeg = new QCheckBox(tr("Remove embedded cover-art streams (MJPEG, PNG)"), videoGroup);
 	m_chkRemoveMjpeg->setToolTip(tr(
-		"Some MKV files contain an MJPEG or PNG video stream used as embedded cover art or a thumbnail. "
-		"These streams are not playable content and add unnecessary size. "
+		"Some MKV files contain an MJPEG or PNG video stream used as embedded cover art or a thumbnail.\n"
+		"These streams are not playable content and add unnecessary size.\n"
 		"Enable to mark them for removal during Analyze."));
 	m_chkRemoveMjpeg->setChecked(profile->removeMjpegCoverArt());
 	videoLayout->addWidget(m_chkRemoveMjpeg);
 
 	videoPageLo->addWidget(videoGroup);
+
+	// Dolby Vision deep scan (FEL/MEL)
+	auto* dvGroup  = new QGroupBox(tr("Dolby Vision Deep Scan"), videoPage);
+	auto* dvLayout = new QVBoxLayout(dvGroup);
+
+	m_chkDeepDolbyVisionScan = new QCheckBox(
+		tr("Enable \"Deep Scan for FEL/MEL\""), dvGroup);
+	m_chkDeepDolbyVisionScan->setChecked(profile->deepDolbyVisionScanEnabled());
+	m_chkDeepDolbyVisionScan->setToolTip(tr(
+		"Adds a right-click action on dual-layer Dolby Vision Profile 7 video tracks that\n"
+		"extracts the elementary video stream and analyzes it with dovi_tool to determine\n"
+		"whether it carries a Full (FEL) or Minimal (MEL) Enhancement Layer — a distinction\n"
+		"most players and devices care about, but that plain metadata scanning can't see.\n\n"
+		"Always explicit and per-file, never automatic during a scan, since it means reading\n"
+		"and analyzing the whole video track rather than just its metadata. Off by default."));
+	dvLayout->addWidget(m_chkDeepDolbyVisionScan);
+	videoPageLo->addWidget(dvGroup);
+
 	videoPageLo->addStretch();
 
 	// ═══════════════════════════════════════════════════════════════════════════
@@ -361,8 +379,8 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkKeepCommentary    = new QCheckBox(tr("Keep commentary tracks if in an understood language"), audioOptGroup);
 	m_chkStereoCommentary  = new QCheckBox(tr("Treat stereo as commentary when a surround track exists"), audioOptGroup);
 	m_chkStereoCommentary->setToolTip(tr(
-		"When a file has a surround (5.1+) audio track, any stereo track in the same language "
-		"is assumed to be a commentary or secondary mix — even without a title or flag indicating it. "
+		"When a file has a surround (5.1+) audio track, any stereo track in the same language\n"
+		"is assumed to be a commentary or secondary mix — even without a title or flag indicating it.\n\n"
 		"The commentary keep/remove policy above still applies."));
 	m_chkKeepOriginalAudio->setChecked(profile->alwaysKeepOriginalAudio());
 	m_chkKeepCommentary->setChecked(profile->keepCommentaryIfUnderstood());
@@ -446,13 +464,14 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkKeepOriginalSub->setChecked(profile->keepOriginalLanguageSubtitle());
 	m_chkMergeSidecarSubs->setChecked(profile->mergeSidecarSubtitles());
 	m_chkMergeSidecarSubs->setToolTip(tr(
-		"When a file is remuxed for another reason, also absorb any external .srt/.ass/.vtt "
-		"sidecar subtitles into the output. Disable to leave sidecar files untouched on disk."));
+		"When a file is remuxed for another reason, also absorb any external .srt/.ass/.vtt\n"
+		"sidecar subtitles into the output.\n\n"
+		"Disable to leave sidecar files untouched on disk."));
 	m_chkDetectSubLanguage->setChecked(profile->detectSidecarSubtitleLanguage());
 	m_chkDetectSubLanguage->setToolTip(tr(
-		"When a sidecar .srt/.ass/.ssa/.vtt file's name carries no language code, sample its "
-		"dialogue text to detect the language and rename the file to include it. Only renames "
-		"on a high-confidence read. Off by default since this renames files on disk."));
+		"When a sidecar .srt/.ass/.ssa/.vtt file's name carries no language code, sample its\n"
+		"dialogue text to detect the language and rename the file to include it.\n\n"
+		"Only renames on a high-confidence read. Off by default since this renames files on disk."));
 
 	auto* sdhRow   = new QHBoxLayout;
 	auto* sdhLabel = new QLabel(tr("SDH / hearing-impaired:"), subOptGroup);
@@ -522,10 +541,11 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		tr("Also send an exact-file hash (moviehash) when searching"), osGroup);
 	m_chkComputeMovieHash->setChecked(profile->computeSubtitleMovieHash());
 	m_chkComputeMovieHash->setToolTip(tr(
-		"Reads the first and last 64 KB of each file to compute OpenSubtitles' own file hash, "
-		"which — when it matches — guarantees the exact right subtitle. Only matches an\n"
-		"unmodified original release rip, so it's useless for files you've remuxed/edited "
-		"yourself, and reading every file up front slows down batch downloads. Off by default."));
+		"Reads the first and last 64 KB of each file to compute OpenSubtitles' own file hash,\n"
+		"which — when it matches — guarantees the exact right subtitle.\n\n"
+		"Only matches an unmodified original release rip, so it's useless for files you've\n"
+		"remuxed/edited yourself, and reading every file up front slows down batch downloads.\n"
+		"Off by default."));
 	osLayout->addWidget(m_chkComputeMovieHash);
 	osLayout->addSpacing(16);   // edition-tags list used to occupy this space; now moved to its own tab
 
@@ -658,7 +678,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_spinScanGroups->setRange(2, StorageGroupSettings::MaxGroup);
 	m_spinScanGroups->setValue(StorageGroupSettings::uiMaxGroup());
 	m_spinScanGroups->setToolTip(tr(
-		"How many storage groups appear in Manage Folders. Group folders on the same "
+		"How many storage groups appear in Manage Folders. Group folders on the same\n"
 		"drive or NAS together; different groups can scan and remux in parallel."));
 	scanGroupsRow->addWidget(scanGroupsLabel);
 	scanGroupsRow->addWidget(m_spinScanGroups);
@@ -672,7 +692,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_spinPosterWorkers->setValue(
 	    AppSettings::instance().value(QStringLiteral("poster/parallelWorkers"), 4).toInt());
 	m_spinPosterWorkers->setToolTip(tr(
-		"Number of parallel background threads for TMDB poster and fanart downloads. "
+		"Number of parallel background threads for TMDB poster and fanart downloads.\n"
 		"Higher values speed up large libraries but use more network bandwidth."));
 	posterWorkersRow->addWidget(posterWorkersLabel);
 	posterWorkersRow->addWidget(m_spinPosterWorkers);
@@ -686,11 +706,12 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	m_chkUseLocalStaging = new QCheckBox(tr("Mux to a local folder, then copy the result back"), stagingGroup);
 	m_chkUseLocalStaging->setToolTip(tr(
-		"When the source file lives on a network share, reading and writing to it at the "
-		"same time can slow both down. Enabling this writes the muxed output to a local "
-		"folder first, then copies the finished file back over the network as a separate "
-		"step. Requires enough free space in the local folder to hold the output file — "
-		"falls back to muxing in place when there isn't enough room."));
+		"When the source file lives on a network share, reading and writing to it at the\n"
+		"same time can slow both down.\n\n"
+		"Enabling this writes the muxed output to a local folder first, then copies the\n"
+		"finished file back over the network as a separate step.\n\n"
+		"Requires enough free space in the local folder to hold the output file — falls\n"
+		"back to muxing in place when there isn't enough room."));
 	m_chkUseLocalStaging->setChecked(profile->useLocalStaging());
 	stagingLayout->addWidget(m_chkUseLocalStaging);
 
@@ -744,10 +765,10 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkAlwaysUseExplorer = new QCheckBox(
 	    tr("Always use File Explorer for \"Open Containing Folder\" (selects the file)"), fileMgrGroup);
 	m_chkAlwaysUseExplorer->setToolTip(tr(
-	    "Off (default): opens your system default file manager, but it just opens the "
+	    "Off (default): opens your system default file manager, but it just opens the\n"
 	    "folder without selecting the file.\n"
-	    "On: always launches File Explorer specifically, with the file pre-selected — "
-	    "useful if your default file manager isn't File Explorer but you still want the "
+	    "On: always launches File Explorer specifically, with the file pre-selected —\n"
+	    "useful if your default file manager isn't File Explorer but you still want the\n"
 	    "file highlighted."));
 	m_chkAlwaysUseExplorer->setChecked(
 	    AppSettings::instance().value("settings/alwaysUseExplorerForReveal", false).toBool());
@@ -762,9 +783,9 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkAggregateManualDeletes = new QCheckBox(
 	    tr("Include manually deleted files (e.g. duplicates) in Reclaimed / Money Saved"), statsGroup);
 	m_chkAggregateManualDeletes->setToolTip(tr(
-	    "Files deleted via \"Delete File from Disk\" aren't posted to the leaderboard — unlike "
-	    "mkvmerge track removal, a manual delete is easy to fake (copy a file, then \"reclaim\" "
-	    "it) — but you can still choose to see them reflected in your own local totals here."));
+	    "Files deleted via \"Delete File from Disk\" aren't posted to the leaderboard — unlike\n"
+	    "mkvmerge track removal, a manual delete is easy to fake (copy a file, then \"reclaim\" it).\n\n"
+	    "But you can still choose to see them reflected in your own local totals here."));
 	m_chkAggregateManualDeletes->setChecked(
 	    AppSettings::instance().value("settings/includeManualDeletesInTotals", true).toBool());
 	statsLayout->addWidget(m_chkAggregateManualDeletes);
@@ -789,7 +810,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	const int initialFanartPct = AppSettings::instance().value("library/fanartOpacity", 5).toInt();
 	m_sliderFanartOpacity->setValue(initialFanartPct);
 	m_sliderFanartOpacity->setToolTip(tr(
-		"How visible the movie's fanart backdrop is behind each card. "
+		"How visible the movie's fanart backdrop is behind each card.\n"
 		"0% hides it entirely; higher values make it more prominent."));
 	m_lblFanartOpacity = new QLabel(tr("%1%").arg(initialFanartPct), cardsGroup);
 	m_lblFanartOpacity->setMinimumWidth(36);
@@ -970,14 +991,15 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	m_chkWriteNfo = new QCheckBox(tr("Write .nfo files"), enrichGroup);
 	m_chkWriteNfo->setToolTip(tr(
-		"Writes a Kodi-style .nfo file next to each matched video, containing its IMDb and "
-		"TMDB ids, title, original title, year, and TMDB rating. Title is picked from your "
-		"Understood Languages list, above — the first one TMDB actually has a translation "
-		"for; original title is always included too, so Kodi's own \"Show original titles "
-		"for movies\" setting can prefer it on this machine without affecting other viewers "
-		"of a shared library. If an .nfo already exists, only these specific tags are added "
-		"or updated — everything else in the file is left untouched, and a scene-release "
-		"NFO's free-form text only ever has its id corrected in place, never replaced. "
+		"Writes a Kodi-style .nfo file next to each matched video, containing its IMDb and\n"
+		"TMDB ids, title, original title, year, and TMDB rating. Title is picked from your\n"
+		"Understood Languages list, above — the first one TMDB actually has a translation\n"
+		"for; original title is always included too, so Kodi's own \"Show original titles\n"
+		"for movies\" setting can prefer it on this machine without affecting other viewers\n"
+		"of a shared library.\n\n"
+		"If an .nfo already exists, only these specific tags are added or updated —\n"
+		"everything else in the file is left untouched, and a scene-release NFO's free-form\n"
+		"text only ever has its id corrected in place, never replaced.\n\n"
 		"Off by default."));
 	m_chkWriteNfo->setChecked(profile->writeNfoFiles());
 	enrichLayout->addWidget(m_chkWriteNfo);
@@ -998,17 +1020,30 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		tr("Enable \"Download Scene NFO…\" (via srrDB)"), sceneNfoGroup);
 	m_chkDownloadSceneNfo->setChecked(profile->downloadSceneNfoEnabled());
 	m_chkDownloadSceneNfo->setToolTip(tr(
-		"Adds a right-click action per file that looks up the original scene-release "
-		".nfo on srrDB.com (a community-run scene-release archive, not an official API) "
-		"and saves it — useful when a local scene NFO is wrong/stale or corrupted beyond "
-		"recovery. Always explicit and per-file, never automatic during a scan.\n\n"
-		"The result is always recorded in the database so the NFO viewer picks it up. "
-		"Whether it's also written to disk as a real .nfo file depends on \"Write .nfo "
-		"files\" above: when that's on, MediaCurator is already writing its own Kodi-style "
-		"XML to that same filename, so a downloaded scene NFO stays database-only to avoid "
-		"the two fighting over one file; when it's off, the download is written to disk too. "
+		"Adds a right-click action per file that looks up the original scene-release\n"
+		".nfo on srrDB.com (a community-run scene-release archive, not an official API)\n"
+		"and saves it — useful when a local scene NFO is wrong/stale or corrupted beyond\n"
+		"recovery.\n\n"
+		"The result is always recorded in the database so the NFO viewer picks it up.\n"
+		"Whether it's also written to disk as a real .nfo file depends on \"Write .nfo\n"
+		"files\" above: when that's on, MediaCurator is already writing its own Kodi-style\n"
+		"XML to that same filename, so a downloaded scene NFO stays database-only to avoid\n"
+		"the two fighting over one file; when it's off, the download is written to disk too.\n"
 		"Off by default."));
 	sceneNfoLayout->addWidget(m_chkDownloadSceneNfo);
+
+	m_chkAutoDownloadSceneNfo = new QCheckBox(
+		tr("Automatically download missing scene NFOs after scanning"), sceneNfoGroup);
+	m_chkAutoDownloadSceneNfo->setChecked(profile->autoDownloadSceneNfo());
+	m_chkAutoDownloadSceneNfo->setEnabled(m_chkDownloadSceneNfo->isChecked());
+	connect(m_chkDownloadSceneNfo, &QCheckBox::toggled, m_chkAutoDownloadSceneNfo, &QCheckBox::setEnabled);
+	m_chkAutoDownloadSceneNfo->setToolTip(tr(
+		"Looks up and saves the scene-release .nfo in the background as files are\n"
+		"scanned, the same way subtitles/posters are fetched automatically — only for\n"
+		"files with no local scene NFO already, and only when a single confident srrDB\n"
+		"match is found (an ambiguous result is left for the action above to resolve\n"
+		"by hand). Requires \"Enable Download Scene NFO\" above. Off by default."));
+	sceneNfoLayout->addWidget(m_chkAutoDownloadSceneNfo);
 	genPageLo->addWidget(sceneNfoGroup);
 
 	// Retry cooldown — shared by TMDB poster/NFO lookups and OpenSubtitles re-search,
@@ -1032,10 +1067,10 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_spinRetryCooldown->setSpecialValueText(tr("Off (always retry)"));
 	m_spinRetryCooldown->setValue(profile->subtitleRetryCooldownDays());
 	m_spinRetryCooldown->setToolTip(tr(
-		"How long to wait before re-checking a file that came up empty on a previous attempt "
-		"— a poster/rating TMDB had no match for, or a subtitle OpenSubtitles had nothing for. "
+		"How long to wait before re-checking a file that came up empty on a previous attempt\n"
+		"— a poster/rating TMDB had no match for, or a subtitle OpenSubtitles had nothing for.\n\n"
 		"Without this, every scan and every launch repeats the same lookup (including a local\n"
-		"folder scan for poster/NFO files) for files that were already checked and found to "
+		"folder scan for poster/NFO files) for files that were already checked and found to\n"
 		"have nothing. Shared by both TMDB and OpenSubtitles lookups. 0 disables the cooldown."));
 	retryRow->addWidget(retryLabel);
 	retryRow->addWidget(m_spinRetryCooldown);
@@ -1049,14 +1084,14 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	m_chkSkipSubOnly = new QCheckBox(tr("Skip jobs where only subtitle tracks would be removed"), analysisGroup);
 	m_chkSkipSubOnly->setToolTip(tr(
-		"Subtitle tracks are tiny — removing them saves almost no space but still requires "
+		"Subtitle tracks are tiny — removing them saves almost no space but still requires\n"
 		"a full remux. Enable this to ignore those files during Analyze."));
 	m_chkSkipSubOnly->setChecked(profile->skipSubtitleOnlyJobs());
 	analysisLayout->addWidget(m_chkSkipSubOnly);
 
 	m_chkWriteLog = new QCheckBox(tr("Write .mc-log file alongside each processed file"), analysisGroup);
 	m_chkWriteLog->setToolTip(tr(
-		"After each successful remux, writes a plain-text report next to the output file. "
+		"After each successful remux, writes a plain-text report next to the output file.\n"
 		"Contains the filename, date, space reclaimed, removed tracks, and the exact mkvmerge command."));
 	m_chkWriteLog->setChecked(profile->writeJobLog());
 	analysisLayout->addWidget(m_chkWriteLog);
@@ -1271,6 +1306,8 @@ void McSettingsDialog::accept()
 	m_profile->setTmdbApiKey(m_editTmdbKey->text().trimmed());
 	m_profile->setWriteNfoFiles(m_chkWriteNfo->isChecked());
 	m_profile->setDownloadSceneNfoEnabled(m_chkDownloadSceneNfo->isChecked());
+	m_profile->setAutoDownloadSceneNfo(m_chkAutoDownloadSceneNfo->isChecked());
+	m_profile->setDeepDolbyVisionScanEnabled(m_chkDeepDolbyVisionScan->isChecked());
 	m_profile->setOpenSubtitlesApiKey(m_editOsApiKey->text().trimmed());
 	m_profile->setOpenSubtitlesUsername(m_editOsUsername->text().trimmed());
 	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());

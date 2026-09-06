@@ -141,6 +141,8 @@ public slots:
 	void setQuickFilters(quint32 flags);           // McFilterPanel::QF_* bitmask
 	void setStorageGroupFilter(quint32 groupMask); // bit (1<<group) per StorageGroupSettings group; 0 = show all
 	void setEditionFilter(const QSet<QString>& editions); // empty = show all
+	void setHdrDvFilter(const QSet<QString>& labels); // empty = show all; see DolbyVisionInfo::filterLabels()
+	void setAudioFormatFilter(const QSet<QString>& labels); // empty = show all; see AudioFormatInfo::filterLabels()
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
@@ -199,6 +201,8 @@ private:
 	quint32                m_quickFilters = 0;
 	quint32                m_storageGroupMask = 0;  // 0 = no storage-group filtering
 	QSet<QString>          m_editionFilter;         // empty = no edition filtering
+	QSet<QString>          m_hdrDvFilter;           // empty = no HDR/DV filtering
+	QSet<QString>          m_audioFormatFilter;     // empty = no audio-format filtering
 	double                 m_ratingMin    = 0.0;
 	double                 m_ratingMax    = 10.0;
 	JobSortMode            m_sortMode     = JobSortMode::SmallestFirst;

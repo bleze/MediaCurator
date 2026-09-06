@@ -6,7 +6,7 @@ class QProcess;
 
 namespace Mc {
 /**
- * ExternalTools — locates and validates ffprobe and mkvmerge.
+ * ExternalTools — locates and validates ffprobe, mkvmerge, and dovi_tool.
  * Searches in: tools/<platform>/ relative to the executable, then PATH.
  */
 class ExternalTools : public QObject {
@@ -19,10 +19,12 @@ public:
 	QString mkvmergePath()    const;
 	QString mkvextractPath()  const;
 	QString mkvpropeditPath() const;
+	QString doviToolPath()    const;
 
 	bool    validateAll();
 	QString ffprobeVersion()  const;
 	QString mkvmergeVersion() const;
+	QString doviToolVersion() const;
 
 	// Configures a not-yet-started QProcess (ffprobe/mkvmerge) to run at a lower CPU
 	// scheduling priority, so bulk scans and remuxes compete less for CPU with
@@ -39,9 +41,12 @@ private:
 	mutable QString m_mkvmergePath;
 	mutable QString m_mkvextractPath;
 	mutable QString m_mkvpropeditPath;
+	mutable QString m_doviToolPath;
 	mutable QString m_ffprobeVersion;
 	mutable bool    m_ffprobeVersionQueried = false;
 	mutable QString m_mkvmergeVersion;
 	mutable bool    m_mkvmergeVersionQueried = false;
+	mutable QString m_doviToolVersion;
+	mutable bool    m_doviToolVersionQueried = false;
 };
 } // namespace Mc

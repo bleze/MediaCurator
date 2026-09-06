@@ -492,6 +492,7 @@ void ScanWorker::run()
 				// any missing display_title or rating without re-running ffprobe.
 				emit posterEnqueueRequested(existing->id);
 				emit subtitleEnqueueRequested(existing->id);
+				emit sceneNfoEnqueueRequested(existing->id);
 				return;
 			}
 		}
@@ -592,6 +593,7 @@ void ScanWorker::run()
 		// Kick off poster lookup in parallel with the next FFprobe call.
 		emit posterEnqueueRequested(*fileId);
 		emit subtitleEnqueueRequested(*fileId);
+		emit sceneNfoEnqueueRequested(*fileId);
 	};
 
 	if (m_quickScan) {
@@ -642,6 +644,11 @@ void ScanWorker::run()
 				emit posterEnqueueBatchRequested(posterIds);
 			if (!subtitleIds.isEmpty())
 				emit subtitleEnqueueBatchRequested(subtitleIds);
+			// Same id list as subtitles (files with a known IMDb id) — eligibility
+			// (no local scene NFO already, cooldown) is filtered downstream in
+			// SceneNfoManager, same as subtitle coverage is filtered in SubtitleManager.
+			if (!subtitleIds.isEmpty())
+				emit sceneNfoEnqueueBatchRequested(subtitleIds);
 		}
 
 		QSet<QString> visitedDirs;

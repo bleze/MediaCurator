@@ -458,6 +458,10 @@ QString ActionEngine::serializeStreamSnapshot(const QList<StreamRecord>& streams
 		if (s.maxCll > 0) o["max_cll"] = s.maxCll;
 		if (s.maxFall > 0) o["max_fall"] = s.maxFall;
 		if (!s.masteringDisplay.isEmpty()) o["mastering"] = s.masteringDisplay;
+		if (s.dvProfile >= 0)     o["dv_profile"]  = s.dvProfile;
+		if (s.dvBlCompatId >= 0)  o["dv_bl_compat"] = s.dvBlCompatId;
+		if (s.dvElPresent)        o["dv_el"]        = true;
+		if (!s.dvElType.isEmpty()) o["dv_el_type"]  = s.dvElType;
 		o["default"]    = s.isDefault;
 		o["forced"]     = s.isForced;
 		o["original"]   = s.isOriginal;
@@ -497,6 +501,10 @@ QList<StreamRecord> ActionEngine::deserializeStreamSnapshot(const QString& json)
 		s.isHearingImpaired = o["hi"].toBool();
 		s.isExternal        = o["ext"].toBool();
 		s.externalPath      = o["extPath"].toString();
+		s.dvProfile         = o["dv_profile"].toInt(-1);
+		s.dvBlCompatId      = o["dv_bl_compat"].toInt(-1);
+		s.dvElPresent       = o["dv_el"].toBool(false);
+		s.dvElType          = o["dv_el_type"].toString();
 		result << s;
 	}
 	return result;
