@@ -64,6 +64,7 @@ set(MC_SOURCES
     engine/RuleEngine.cpp
     engine/ActionEngine.cpp
     engine/AnalyzeWorker.cpp
+    engine/CopyToFolderWorker.cpp
     engine/SimulateWorker.cpp
     engine/JobQueue.cpp
     engine/TrackFlagService.cpp
@@ -120,6 +121,7 @@ set(MC_HEADERS
     ../include/engine/RuleEngine.h
     ../include/engine/ActionEngine.h
     ../include/engine/AnalyzeWorker.h
+    ../include/engine/CopyToFolderWorker.h
     ../include/engine/SimulateWorker.h
     ../include/engine/JobQueue.h
     ../include/engine/TrackFlagService.h
@@ -301,6 +303,7 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/imdb.png
         resources/icons/tmdb.svg
         resources/icons/vlc.svg
+        resources/icons/youtube.svg
         resources/icons/dollar.svg
         resources/icons/lightning_qr.png
         resources/icons/paypal_qr.png

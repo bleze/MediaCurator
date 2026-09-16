@@ -28,6 +28,7 @@
 #include "ui/McTitleBar.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
+#include "engine/CopyToFolderWorker.h"
 #include "engine/DeepDvScanWorker.h"
 #include "engine/TrackFlagService.h"
 #include "engine/DownloadClientRegistry.h"
@@ -721,6 +722,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onTmdbDataReady);
 	connect(&pm, &PosterManager::releaseDatesReady,
 	        m_listModel, &McFileListModel::onReleaseDatesReady);
+	connect(&pm, &PosterManager::trailerReady,
+	        m_listModel, &McFileListModel::onTrailerReady);
 	// Keep job-card media types (and category pills) current during enrichment.
 	connect(&pm, &PosterManager::tmdbDataReady, this,
 	        [this](qint64 fileId, const QString&, int, double, const QString& mediaType) {
@@ -894,6 +897,17 @@ McMainWindow::RemoveFileChoice McMainWindow::showRemoveFileDialog(const QString&
 	return isFolder ? RemoveFileChoice::DeleteFolders : RemoveFileChoice::DeleteFiles;
 }
 
+void McMainWindow::addCopyToFolderMenuAction(QMenu& menu)
+{
+	const int n = m_listModel->checkedCount();
+	if (n == 0) return;
+
+	menu.addSeparator();
+	auto* copyAction = menu.addAction(svgIcon(":/icons/folder_open.svg"),
+	                                   tr("&Copy %1 Checked File(s) to Folder…").arg(n));
+	connect(copyAction, &QAction::triggered, this, &McMainWindow::onCopyCheckedFilesToFolder);
+}
+
 void McMainWindow::setupUi()
 {
 	m_splitter = new QSplitter(Qt::Vertical, this);
@@ -914,6 +928,12 @@ void McMainWindow::setupUi()
 	        this, [this](const QModelIndex&, qint64 fileId) {
 		if (const auto file = DatabaseManager::instance().fileById(fileId))
 			launchInDefaultPlayer(file->path);
+	});
+	connect(fileDelegate, &McFileCardDelegate::trailerRequested,
+	        this, [this](const QModelIndex& idx) {
+		const QString key = idx.data(McFileListModel::TrailerKeyRole).toString();
+		if (!key.isEmpty())
+			QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.youtube.com/watch?v=%1").arg(key)));
 	});
 	connect(fileDelegate, &McFileCardDelegate::imdbPageRequested,
 	        this, [this](const QModelIndex& idx) {
@@ -987,6 +1007,17 @@ void McMainWindow::setupUi()
 		QApplication::setOverrideCursor(Qt::WaitCursor);
 		m_listModel->toggleForcedRemoval(fileId, streamIndex);
 		QApplication::restoreOverrideCursor();
+	});
+	connect(fileDelegate, &McFileCardDelegate::checkToggleRequested,
+	        this, [this](qint64 fileId) {
+		if (fileId > 0) m_listModel->toggleChecked(fileId);
+	});
+	// A checked file's checkbox may be drawn as its own row or nested inside a
+	// mega card, and the checked set is keyed by fileId rather than row — a plain
+	// viewport repaint is simpler and cheap (only fires on a checkbox click) than
+	// tracking which visual rows are affected.
+	connect(m_listModel, &McFileListModel::checkedCountChanged, this, [this](int) {
+		m_listView->viewport()->update();
 	});
 
 	m_listView->setItemDelegate(fileDelegate);
@@ -1580,6 +1611,7 @@ void McMainWindow::setupUi()
 				});
 			}
 
+			addCopyToFolderMenuAction(menu);
 			menu.exec(m_listView->viewport()->mapToGlobal(pos));
 			return;
 		}
@@ -2018,6 +2050,7 @@ void McMainWindow::setupUi()
 			}
 		});
 
+		addCopyToFolderMenuAction(menu);
 		menu.exec(m_listView->viewport()->mapToGlobal(pos));
 	});
 
@@ -3243,6 +3276,20 @@ void McMainWindow::setupStatusBar()
 	});
 	statusBar()->addPermanentWidget(m_btnCancelPosterRefresh);
 
+	m_copyProgressBar = new QProgressBar(this);
+	m_copyProgressBar->setMaximumWidth(200);
+	m_copyProgressBar->setVisible(false);
+	statusBar()->addPermanentWidget(m_copyProgressBar);
+
+	m_btnCancelCopy = new QPushButton(tr("Cancel Copy"), this);
+	m_btnCancelCopy->setVisible(false);
+	connect(m_btnCancelCopy, &QPushButton::clicked, this, [this] {
+		if (m_copyWorker) m_copyWorker->cancel();
+		m_btnCancelCopy->setEnabled(false);
+		m_btnCancelCopy->setText(tr("Cancelling…"));
+	});
+	statusBar()->addPermanentWidget(m_btnCancelCopy);
+
 	m_savedLabel = new QLabel(this);
 	m_savedLabel->setVisible(false);
 	statusBar()->addPermanentWidget(m_savedLabel);
@@ -3342,6 +3389,21 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 			return;
 		}
 		m_jobQueue->cancel();
+	}
+
+	if (m_copyThread && m_copyThread->isRunning()) {
+		// Same "stop after current file" guarantee as the JobQueue "Quit After"
+		// path above — QFile::copy() can't be safely interrupted mid-file without
+		// risking a truncated file at the destination, so cancel() only stops the
+		// loop from starting the *next* file (same between-files-only cancellation
+		// AnalyzeWorker/ScanWorker use), and the close itself is deferred until
+		// the current file actually finishes copying and the thread exits.
+		if (m_copyWorker) m_copyWorker->cancel();
+		connect(m_copyThread, &QThread::finished, this, &McMainWindow::close,
+		        static_cast<Qt::ConnectionType>(Qt::SingleShotConnection | Qt::UniqueConnection));
+		logRestartDebug(QStringLiteral("closeEvent: copy in progress -> deferring close until current file finishes"));
+		event->ignore();
+		return;
 	}
 
 	// Flush a pending highscore submission now rather than let it die with the
@@ -3870,10 +3932,10 @@ void McMainWindow::startLibraryLoader()
 	QHash<qint64, QString> posters, imdbs, fanarts;
 	QHash<qint64, double> ratings;
 	QHash<qint64, int> tmdbIds;
-	QHash<qint64, QString> premiereDates, digitalDates, physicalDates;
-	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds, premiereDates, digitalDates, physicalDates);
+	QHash<qint64, QString> premiereDates, digitalDates, physicalDates, trailerKeys;
+	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds, premiereDates, digitalDates, physicalDates, trailerKeys);
 	m_listModel->initMeta(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts, tmdbIds,
-	                       premiereDates, digitalDates, physicalDates);
+	                       premiereDates, digitalDates, physicalDates, trailerKeys);
 
 	// ── First page: library + queue (synchronous, splash still visible) ───────
 	// Must use the same sort order the model itself sorts by (persisted setting,
@@ -3966,9 +4028,10 @@ void McMainWindow::startLibraryLoader()
 	               const QHash<qint64, int>& tmdbIds,
 	               const QHash<qint64, QString>& premiereDates,
 	               const QHash<qint64, QString>& digitalDates,
-	               const QHash<qint64, QString>& physicalDates) {
+	               const QHash<qint64, QString>& physicalDates,
+	               const QHash<qint64, QString>& trailerKeys) {
 		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths, tmdbIds,
-		                       premiereDates, digitalDates, physicalDates);
+		                       premiereDates, digitalDates, physicalDates, trailerKeys);
 		if (auto* cardDelegate = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			cardDelegate->prefetchVisibleArtwork();
 	});
@@ -4529,6 +4592,75 @@ void McMainWindow::onAnalyzeFinished(int /*analyzed*/, int created)
 	m_statusLabel->setText(tr("Analyze complete — %1 job(s) proposed").arg(created));
 }
 
+void McMainWindow::onCopyCheckedFilesToFolder()
+{
+	if (m_copyThread) return;   // already running
+
+	const QList<qint64> ids = m_listModel->checkedFileIds();
+	if (ids.isEmpty()) return;
+
+	auto& db = DatabaseManager::instance();
+	QList<FileRecord> files;
+	for (qint64 id : ids)
+		if (const auto f = db.fileById(id)) files << *f;
+	if (files.isEmpty()) return;
+
+	const QString dir = QFileDialog::getExistingDirectory(
+		this, tr("Copy Files To Folder"), m_lastCopyDestDir,
+		QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+	if (dir.isEmpty()) return;   // cancelled — leave the checkboxes as-is
+	m_lastCopyDestDir = dir;
+
+	// Deselect immediately on confirm, not on completion — the copy itself keeps
+	// running in the background regardless.
+	m_listModel->clearChecked();
+
+	m_copyProgressBar->setMaximum(files.size());
+	m_copyProgressBar->setValue(0);
+	m_copyProgressBar->setVisible(true);
+	m_btnCancelCopy->setEnabled(true);
+	m_btnCancelCopy->setText(tr("Cancel Copy"));
+	m_btnCancelCopy->setVisible(true);
+
+	m_copyThread = new QThread(this);
+	m_copyWorker = new CopyToFolderWorker(files, dir);
+	m_copyWorker->moveToThread(m_copyThread);
+
+	connect(m_copyThread, &QThread::started, m_copyWorker, &CopyToFolderWorker::run);
+	connect(m_copyWorker, &CopyToFolderWorker::finished, m_copyThread, &QThread::quit);
+	// See onAnalyzeLibrary(): worker cleanup belongs to QThread::finished, not a
+	// direct self-deleteLater on CopyToFolderWorker::finished.
+	connect(m_copyThread, &QThread::finished, this, [this] {
+		if (m_copyWorker) {
+			m_copyWorker->deleteLater();
+			m_copyWorker = nullptr;
+		}
+		m_copyThread->deleteLater();
+		m_copyThread = nullptr;
+	});
+
+	connect(m_copyWorker, &CopyToFolderWorker::progress, this, &McMainWindow::onCopyProgress);
+	connect(m_copyWorker, &CopyToFolderWorker::finished, this, &McMainWindow::onCopyFinished);
+
+	m_copyThread->start();
+}
+
+void McMainWindow::onCopyProgress(int current, int total, const QString& filename)
+{
+	m_copyProgressBar->setValue(current);
+	m_statusLabel->setText(tr("Copying %1/%2: %3").arg(current).arg(total).arg(filename));
+}
+
+void McMainWindow::onCopyFinished(int copied, int failed)
+{
+	// m_copyWorker is intentionally not nulled here — QThread::finished owns cleanup.
+	m_copyProgressBar->setVisible(false);
+	m_btnCancelCopy->setVisible(false);
+	m_statusLabel->setText(failed > 0
+	    ? tr("Copied %1 file(s) to folder — %2 failed").arg(copied).arg(failed)
+	    : tr("Copied %1 file(s) to folder").arg(copied));
+}
+
 void McMainWindow::onSimulate()
 {
 	if (m_simulateThread || m_analyzeThread) return;
@@ -4930,20 +5062,23 @@ void McMainWindow::onDownloadQueueChanged()
 void McMainWindow::updateDownloadQueueVisibility()
 {
 	const bool configured = DownloadClientRegistry::instance().anyConfigured();
-	const bool hasData    = !DownloadClientRegistry::instance().allQueueItems().isEmpty();
-	const bool shouldShow = configured && hasData && !m_downloadQueueBandPinned;
+	// Always toggleable once a download client is configured — an empty queue
+	// shows an explicit "No active downloads" state (see McDownloadQueueBand)
+	// rather than disabling the button, which read as "broken" when nothing
+	// was queued.
+	const bool shouldShow = configured && !m_downloadQueueBandPinned;
 
 	if (m_actToggleDownloadQueue) {
 		QSignalBlocker blocker(m_actToggleDownloadQueue);
 		m_actToggleDownloadQueue->setVisible(configured);
 		m_actToggleDownloadQueue->setChecked(shouldShow);
-		m_actToggleDownloadQueue->setEnabled(hasData);
+		m_actToggleDownloadQueue->setEnabled(configured);
 	}
 	if (m_menuDownloadQueueBtn) {
 		auto* toggle = static_cast<McQueueToggle*>(m_menuDownloadQueueBtn);
 		toggle->setVisible(configured);
 		toggle->setChecked(shouldShow);
-		toggle->setEnabled(hasData);
+		toggle->setEnabled(configured);
 	}
 	if (m_downloadQueueBand)
 		m_downloadQueueBand->setVisible(shouldShow);

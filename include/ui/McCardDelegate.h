@@ -160,6 +160,15 @@ signals:
 	// clicked; fileId identifies which sibling file, unlike playRequested's index
 	// (which only ever identified the representative file).
 	void groupMemberPlayRequested(const QModelIndex& index, qint64 fileId);
+	// Single-file cards only (no mega-card equivalent — a trailer belongs to the
+	// movie as a whole, not to one specific edition) — the trailer icon next to
+	// the play button was clicked.
+	void trailerRequested(const QModelIndex& index);
+	// Library mode only — the checkbox next to a filename (single-file card, or
+	// one member's row inside a mega card) was clicked. Carries the fileId rather
+	// than the index since a mega card's checkbox belongs to one specific member,
+	// not the row as a whole; McMainWindow forwards it to McFileListModel::toggleChecked.
+	void checkToggleRequested(qint64 fileId);
 
 public:
 	int  hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
@@ -206,6 +215,8 @@ private:
 		QString             physicalDate;
 		QString             edition;                // detected/user edition (e.g. "3D"); empty = undetected (Library only)
 		QString             mediaType;              // MediaTypes::* (Library only; empty = unknown)
+		bool                checked        = false; // Library, single-file card only — see McFileListModel::isChecked
+		QString             trailerKey;             // Library, single-file card only — TMDB YouTube trailer key
 		QString             containerTitle;         // ffprobe format tags title (Library only)
 		int                 folderCount    = 1;     // files sharing the same parent folder (Library only)
 		QString             originalLanguage;       // ISO 639-2 original audio language (both modes)
@@ -259,7 +270,18 @@ private:
 	// cached at some earlier, no-longer-current width). See m_resizeRelayoutTimer.
 	void relayoutVisibleRows();
 
-	static QRect   playButtonRect(const QRect& contentRect);
+	// hasTrailer shifts the play button one slot left so the trailer button (the
+	// outer/rightmost slot when present — see trailerButtonRect) never overlaps it.
+	static QRect   playButtonRect(const QRect& contentRect, bool hasTrailer = false);
+	// Single-file and mega-card-member rows alike — the outer (rightmost) slot,
+	// only meaningful when CardData::trailerKey is non-empty. See trailerRequested.
+	static QRect   trailerButtonRect(const QRect& contentRect);
+	// Library mode only — small square to the left of a filename (single-file
+	// header row, or a mega-card member's own header row). headerRow is the same
+	// rect paint()/handlePress() already compute for that row (see hdr / ml.headerRect).
+	static QRect   checkboxRect(const QRect& headerRow);
+	static void    drawCheckbox(QPainter* painter, const QRect& r, bool checked,
+	                            bool hovered, const QPalette& pal);
 
 	// Mega card layout: each GroupMember gets a header row (edition badge + filename
 	// + play icon) followed by its own real track-badge rows (video/audio/subtitle),
@@ -295,7 +317,10 @@ private:
 	// actually gets drawn.
 	static int     badgeRowCount(const QList<StreamRecord>& group, int areaW,
 	                             const QFontMetrics& fm);
-	static QRect   groupMemberPlayButtonRect(const QRect& headerRect);
+	// hasTrailer shifts this one slot left — see playButtonRect.
+	static QRect   groupMemberPlayButtonRect(const QRect& headerRect, bool hasTrailer = false);
+	// Outer (rightmost) slot on a mega-card member's row — see trailerButtonRect.
+	static QRect   groupMemberTrailerButtonRect(const QRect& headerRect);
 	static QRect   imdbButtonRect(const QRect& contentRect);
 	// hasImdb: whether the IMDb button is also present — shifts the TMDB button
 	// one slot left so the two never overlap. IMDb always anchors the rightmost slot.
@@ -400,6 +425,8 @@ private:
 	static constexpr int kRatingReserveW = 46;
 	static constexpr int kPosterGap = 8;  // gap between the poster column right edge and the content area
 	static constexpr int kMinRowH   = 140; // minimum card height; ensures the poster column never looks cramped
+	static constexpr int kCheckW    = 14; // checkbox square size (Library mode, next to a filename)
+	static constexpr int kCheckGap  = 8;  // gap between the checkbox and the filename/badges that follow it
 };
 
 } // namespace Mc

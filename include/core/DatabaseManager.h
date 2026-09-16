@@ -188,6 +188,9 @@ struct PosterRecord {
 	QString premiereDate;   // best theatrical date: type 3 (Theatrical), else 2, else 1 (Premiere)
 	QString digitalDate;    // type 4 (Digital)
 	QString physicalDate;   // type 5 (Physical)
+	// TMDB /movie|tv/{id}/videos — YouTube video key of the best trailer found
+	// (official Trailer > Trailer > official Teaser > Teaser); empty = none found.
+	QString trailerKey;
 };
 
 // For display in McJobPanel (jobs JOIN files JOIN poster_cache)
@@ -218,6 +221,7 @@ struct JobDisplayRecord {
 	QString edition;           // from files.edition; empty = undetected — see EditionDetector
 	bool    ignored = false;   // hidden from the job panel's normal filters — see setJobIgnored()
 	bool    hasSceneNfo = false; // from files.has_scene_nfo — see FileRecord::hasSceneNfo
+	QString trailerKey;        // from poster_cache; empty = no YouTube trailer found
 };
 
 enum class JobSortMode {
@@ -441,7 +445,8 @@ public:
 	                    QHash<qint64, int>& tmdbIds,
 	                    QHash<qint64, QString>& premiereDates,
 	                    QHash<qint64, QString>& digitalDates,
-	                    QHash<qint64, QString>& physicalDates) const;
+	                    QHash<qint64, QString>& physicalDates,
+	                    QHash<qint64, QString>& trailerKeys) const;
 
 	void                        resetPosterForFile(qint64 fileId);
 	void                        clearPosterPath(const QString& imagePath);
@@ -453,6 +458,10 @@ public:
 	// already checked the existing record decides whether to skip the call.
 	void                        updateReleaseDates(qint64 fileId, const QString& premiereDate,
 	                                              const QString& digitalDate, const QString& physicalDate);
+	// Persists the TMDB trailer YouTube key — see PosterRecord::trailerKey.
+	// Empty is written as-is (no "don't clobber" merge); a caller that already
+	// checked the existing record decides whether to skip the call.
+	void                        updateTrailer(qint64 fileId, const QString& trailerKey);
 	void                        resetNoPosterRecords();
 
 	// ── Startup cleanup ──────────────────────────────────────────────────────

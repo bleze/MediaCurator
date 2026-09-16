@@ -18,6 +18,7 @@
 #include "engine/HighscoreClient.h"
 #include "scanner/ScanWorker.h"
 
+class QMenu;
 class QMenuBar;
 class QPaintEvent;
 class QProgressDialog;
@@ -31,6 +32,7 @@ struct ITaskbarList3;
 namespace Mc {
 
 class AnalyzeWorker;
+class CopyToFolderWorker;
 class DeepDvScanWorker;
 class EditionBackfillWorker;
 class DvProfileBackfillWorker;
@@ -112,6 +114,9 @@ private slots:
 	void onAnalyzeProgress(int current, int total, const QString& filename);
 	void onAnalyzeJobProposed(qint64 fileId);
 	void onAnalyzeFinished(int analyzed, int created);
+	void onCopyCheckedFilesToFolder();
+	void onCopyProgress(int current, int total, const QString& filename);
+	void onCopyFinished(int copied, int failed);
 	void onAbout();
 	void onDonate();
 	void onSettings();
@@ -181,6 +186,11 @@ private:
 	enum class RemoveFileChoice { Cancelled, RemoveFromLibrary, DeleteFiles, DeleteFolders };
 	RemoveFileChoice showRemoveFileDialog(const QString& title, const QString& body,
 	                                      int fileCount, int folderCount);
+	// Appends "Copy N Checked File(s) to Folder…" to a context menu when at least
+	// one file is checked (see McFileListModel::checkedFileIds) — shared by both
+	// the flat-view and mega-card context menus. No-op (adds nothing) when the
+	// checked set is empty.
+	void addCopyToFolderMenuAction(QMenu& menu);
 #ifdef Q_OS_WIN
 	void setTaskbarProgress(int value, int total = 100);
 	void clearTaskbarProgress();
@@ -236,6 +246,8 @@ private:
 	QPushButton*     m_btnCancelSubtitles  = nullptr;
 	QPushButton*     m_btnCancelSceneNfo   = nullptr;
 	QPushButton*     m_btnCancelPosterRefresh = nullptr;
+	QProgressBar*    m_copyProgressBar     = nullptr;
+	QPushButton*     m_btnCancelCopy       = nullptr;
 	QProgressDialog* m_updateProgressDlg   = nullptr;
 	QSplitter*       m_splitter          = nullptr;
 	// Cached manually-constructed menu bar — see setupTitleBar() for why the
@@ -272,6 +284,11 @@ private:
 	DvProfileBackfillWorker* m_dvBackfillWorker = nullptr;
 	QThread*         m_analyzeThread   = nullptr;
 	AnalyzeWorker*   m_analyzeWorker   = nullptr;
+	QThread*             m_copyThread      = nullptr;
+	CopyToFolderWorker*  m_copyWorker      = nullptr;
+	// Session-only "Copy to Folder" destination hint — deliberately never read from
+	// or written to AppSettings/UserProfile, so it resets on every app restart.
+	QString              m_lastCopyDestDir;
 	QThread*         m_simulateThread  = nullptr;
 	SimulateWorker*  m_simulateWorker  = nullptr;
 	QThread*             m_deepDvScanThread = nullptr;

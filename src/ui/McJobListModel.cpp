@@ -904,6 +904,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case TmdbIdRole:         return e.job.tmdbId;
 	case EditionRole:        return e.job.edition;
 	case HasSceneNfoRole:    return e.job.hasSceneNfo;
+	case TrailerKeyRole:     return e.job.trailerKey;
 	default:                   return {};
 	}
 }

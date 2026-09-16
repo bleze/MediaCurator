@@ -481,7 +481,7 @@ void McFileListModel::reload()
 	}
 
 	db.loadPosterMeta(m_posterPaths, m_imdbIds, m_ratings, m_fanartPaths, m_tmdbIds,
-	                  m_premiereDates, m_digitalDates, m_physicalDates);
+	                  m_premiereDates, m_digitalDates, m_physicalDates, m_trailerKeys);
 	m_forcedRemovals = db.allStreamForcedRemovals();
 
 	recomputeFolderCounts();
@@ -515,7 +515,8 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
                                const QHash<qint64, int>& tmdbIds,
                                const QHash<qint64, QString>& premiereDates,
                                const QHash<qint64, QString>& digitalDates,
-                               const QHash<qint64, QString>& physicalDates)
+                               const QHash<qint64, QString>& physicalDates,
+                               const QHash<qint64, QString>& trailerKeys)
 {
 	m_posterPaths    = posterPaths;
 	m_imdbIds        = imdbIds;
@@ -530,6 +531,7 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 	if (!premiereDates.isEmpty()) m_premiereDates = premiereDates;
 	if (!digitalDates.isEmpty())  m_digitalDates  = digitalDates;
 	if (!physicalDates.isEmpty()) m_physicalDates = physicalDates;
+	if (!trailerKeys.isEmpty())   m_trailerKeys   = trailerKeys;
 	bool tmdbIdsChanged = false;
 	if (!tmdbIds.isEmpty())     { m_tmdbIds = tmdbIds; tmdbIdsChanged = true; }
 	if (tmdbIdsChanged)
@@ -538,7 +540,7 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 		const QList<int> roles = {
 			FanartRole, PosterRole, PosterVersionRole,
 			DisplayTitleRole, DisplayYearRole, RatingRole, ImdbRole, TmdbRole,
-			JobStatusRole, PremiereDateRole, DigitalDateRole, PhysicalDateRole
+			JobStatusRole, PremiereDateRole, DigitalDateRole, PhysicalDateRole, TrailerKeyRole
 		};
 		emit dataChanged(index(0), index(m_entries.size() - 1), roles);
 	}
@@ -636,6 +638,8 @@ void McFileListModel::applyFileUpdate(const FileRecord& file, const QList<Stream
 
 void McFileListModel::removeEntry(qint64 fileId)
 {
+	m_checkedFileIds.remove(fileId);
+
 	for (int i = 0; i < m_allEntries.size(); ++i) {
 		if (m_allEntries[i].file.id == fileId) {
 			m_allEntries.removeAt(i);
@@ -811,6 +815,19 @@ void McFileListModel::onReleaseDatesReady(qint64 fileId, const QString& premiere
 		if (m_entries.at(row).file.id == fileId) {
 			const QModelIndex idx = index(row);
 			emit dataChanged(idx, idx, { PremiereDateRole, DigitalDateRole, PhysicalDateRole });
+			break;
+		}
+	}
+}
+
+void McFileListModel::onTrailerReady(qint64 fileId, const QString& trailerKey)
+{
+	if (trailerKey.isEmpty()) return;
+	m_trailerKeys[fileId] = trailerKey;
+	for (int row = 0; row < m_entries.size(); ++row) {
+		if (m_entries.at(row).file.id == fileId) {
+			const QModelIndex idx = index(row);
+			emit dataChanged(idx, idx, { TrailerKeyRole });
 			break;
 		}
 	}
@@ -1013,6 +1030,7 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case PremiereDateRole:  return m_premiereDates.value(e.file.id);
 	case DigitalDateRole:   return m_digitalDates.value(e.file.id);
 	case PhysicalDateRole:  return m_physicalDates.value(e.file.id);
+	case TrailerKeyRole:    return m_trailerKeys.value(e.file.id);
 	case DisplayTitleRole:  return e.file.displayTitle;
 	case DisplayYearRole:   return e.file.displayYear;
 	case ContainerTitleRole:return e.file.containerTitle;
@@ -1048,6 +1066,29 @@ void McFileListModel::toggleForcedRemoval(qint64 fileId, int streamIndex)
 			break;
 		}
 	}
+}
+
+void McFileListModel::setChecked(qint64 fileId, bool checked)
+{
+	if (checked) {
+		if (!m_checkedFileIds.contains(fileId)) m_checkedFileIds.insert(fileId);
+		else return;
+	} else if (!m_checkedFileIds.remove(fileId)) {
+		return;
+	}
+	emit checkedCountChanged(m_checkedFileIds.size());
+}
+
+void McFileListModel::toggleChecked(qint64 fileId)
+{
+	setChecked(fileId, !m_checkedFileIds.contains(fileId));
+}
+
+void McFileListModel::clearChecked()
+{
+	if (m_checkedFileIds.isEmpty()) return;
+	m_checkedFileIds.clear();
+	emit checkedCountChanged(0);
 }
 
 } // namespace Mc

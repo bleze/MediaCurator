@@ -31,7 +31,8 @@ signals:
 	               QHash<qint64, int> tmdbIds,
 	               QHash<qint64, QString> premiereDates,
 	               QHash<qint64, QString> digitalDates,
-	               QHash<qint64, QString> physicalDates);
+	               QHash<qint64, QString> physicalDates,
+	               QHash<qint64, QString> trailerKeys);
 	void fileReady(Mc::FileRecord file, QList<Mc::StreamRecord> streams);
 	void pageReady(QList<Mc::FileRecord> files, Mc::FileStreamMap streams);
 	void finished(int totalFileCount);

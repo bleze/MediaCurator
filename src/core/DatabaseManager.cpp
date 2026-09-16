@@ -623,6 +623,14 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE poster_cache ADD COLUMN physical_date TEXT NOT NULL DEFAULT ''");
 	}
 
+	// Migration: TMDB trailer — YouTube video key from /movie|tv/{id}/videos, so
+	// the card's play row can offer a "play trailer" icon. Empty = no YouTube
+	// trailer found (or not yet fetched).
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE poster_cache ADD COLUMN trailer_key TEXT NOT NULL DEFAULT ''");
+	}
+
 	return true;
 }
 
@@ -2210,6 +2218,7 @@ static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& res
 		r.edition            = q.value("edition").toString();
 		r.ignored            = q.value("ignored").toBool();
 		r.hasSceneNfo        = q.value("has_scene_nfo").toBool();
+		r.trailerKey         = q.value("trailer_key").toString();
 		result.append(r);
 	}
 }
@@ -2241,7 +2250,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel(JobSortMode sortMode) c
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
 		"       COALESCE(j.ignored, 0) AS ignored,"
-		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo,"
+		"       COALESCE(pc.trailer_key, '') AS trailer_key"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" ORDER BY %1").arg(orderBy);
@@ -2279,7 +2289,8 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const Q
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
 		"       COALESCE(j.ignored, 0) AS ignored,"
-		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo,"
+		"       COALESCE(pc.trailer_key, '') AS trailer_key"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id");
 	// The panel's "running" filter tab means "actively running OR queued to run
@@ -2334,7 +2345,8 @@ std::optional<JobDisplayRecord> DatabaseManager::jobDisplayRecordById(qint64 job
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
 		"       COALESCE(j.ignored, 0) AS ignored,"
-		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo,"
+		"       COALESCE(pc.trailer_key, '') AS trailer_key"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.id = ?"));
@@ -2369,7 +2381,8 @@ QList<JobDisplayRecord> DatabaseManager::liveJobsForPanel() const
 		"       COALESCE(f.media_type, 'unknown') AS media_type,"
 		"       COALESCE(f.edition, '') AS edition,"
 		"       COALESCE(j.ignored, 0) AS ignored,"
-		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo"
+		"       COALESCE(f.has_scene_nfo, 0) AS has_scene_nfo,"
+		"       COALESCE(pc.trailer_key, '') AS trailer_key"
 		" FROM jobs j LEFT JOIN files f ON j.file_id = f.id"
 		" LEFT JOIN poster_cache pc ON j.file_id = pc.file_id"
 		" WHERE j.status IN ('running', 'queued')"
@@ -2471,8 +2484,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count, attempt_count, nfo_written, premiere_date, digital_date, physical_date)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count, attempt_count, nfo_written, premiere_date, digital_date, physical_date, trailer_key)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET
 			source=excluded.source,
 			status=excluded.status,
@@ -2487,7 +2500,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 			nfo_written=CASE WHEN excluded.nfo_written != 0 THEN 1 ELSE nfo_written END,
 			premiere_date=CASE WHEN excluded.premiere_date != '' THEN excluded.premiere_date ELSE premiere_date END,
 			digital_date=CASE WHEN excluded.digital_date != '' THEN excluded.digital_date ELSE digital_date END,
-			physical_date=CASE WHEN excluded.physical_date != '' THEN excluded.physical_date ELSE physical_date END
+			physical_date=CASE WHEN excluded.physical_date != '' THEN excluded.physical_date ELSE physical_date END,
+			trailer_key=CASE WHEN excluded.trailer_key != '' THEN excluded.trailer_key ELSE trailer_key END
 	)");
 	// Bind empty string (not null) — Qt maps null QString → SQL NULL which violates NOT NULL
 	auto nn = [](const QString& s) { return s.isNull() ? QString("") : s; };
@@ -2506,6 +2520,7 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 	q.addBindValue(nn(rec.premiereDate));
 	q.addBindValue(nn(rec.digitalDate));
 	q.addBindValue(nn(rec.physicalDate));
+	q.addBindValue(nn(rec.trailerKey));
 	if (!q.exec())
 		qWarning() << "upsertPosterRecord failed:" << q.lastError().text();
 }
@@ -2525,7 +2540,7 @@ void DatabaseManager::markNfoWritten(qint64 fileId)
 std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id,attempt_count,nfo_written,premiere_date,digital_date,physical_date FROM poster_cache WHERE file_id=?");
+	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id,attempt_count,nfo_written,premiere_date,digital_date,physical_date,trailer_key FROM poster_cache WHERE file_id=?");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return {};
 	PosterRecord r;
@@ -2544,6 +2559,7 @@ std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 	r.premiereDate = q.value(11).toString();
 	r.digitalDate  = q.value(12).toString();
 	r.physicalDate = q.value(13).toString();
+	r.trailerKey   = q.value(14).toString();
 	return r;
 }
 
@@ -2646,6 +2662,20 @@ void DatabaseManager::updateReleaseDates(qint64 fileId, const QString& premiereD
 		qWarning() << "updateReleaseDates failed:" << q.lastError().text();
 }
 
+void DatabaseManager::updateTrailer(qint64 fileId, const QString& trailerKey)
+{
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, fetched_at, trailer_key)
+		VALUES(?, '', 'pending', '', 0, ?)
+		ON CONFLICT(file_id) DO UPDATE SET trailer_key = excluded.trailer_key
+	)");
+	q.addBindValue(fileId);
+	q.addBindValue(trailerKey);
+	if (!q.exec())
+		qWarning() << "updateTrailer failed:" << q.lastError().text();
+}
+
 void DatabaseManager::clearPosterPath(const QString& imagePath)
 {
 	QSqlQuery q(connection());
@@ -2718,13 +2748,14 @@ void DatabaseManager::loadPosterMeta(QHash<qint64, QString>& posterPaths,
                                      QHash<qint64, int>& tmdbIds,
                                      QHash<qint64, QString>& premiereDates,
                                      QHash<qint64, QString>& digitalDates,
-                                     QHash<qint64, QString>& physicalDates) const
+                                     QHash<qint64, QString>& physicalDates,
+                                     QHash<qint64, QString>& trailerKeys) const
 {
 	QSqlQuery q(connection());
 	// Single pass over poster_cache for the common startup meta.
 	// Individual methods are kept for targeted use.
 	q.exec("SELECT file_id, image_path, imdb_id, vote_average, fanart_path, tmdb_id, "
-	       "premiere_date, digital_date, physical_date FROM poster_cache");
+	       "premiere_date, digital_date, physical_date, trailer_key FROM poster_cache");
 	while (q.next()) {
 		const qint64 id = q.value(0).toLongLong();
 
@@ -2759,6 +2790,10 @@ void DatabaseManager::loadPosterMeta(QHash<qint64, QString>& posterPaths,
 		const QString physical = q.value(8).toString();
 		if (!physical.isEmpty())
 			physicalDates.insert(id, physical);
+
+		const QString trailer = q.value(9).toString();
+		if (!trailer.isEmpty())
+			trailerKeys.insert(id, trailer);
 	}
 }
 

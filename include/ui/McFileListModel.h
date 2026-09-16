@@ -102,6 +102,7 @@ public:
 		PremiereDateRole   = Qt::UserRole + 23,
 		DigitalDateRole    = Qt::UserRole + 24,
 		PhysicalDateRole   = Qt::UserRole + 25,
+		TrailerKeyRole     = Qt::UserRole + 26,  // QString — TMDB YouTube trailer key, empty = none
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -151,7 +152,8 @@ public:
 	              const QHash<qint64, int>& tmdbIds = {},
 	              const QHash<qint64, QString>& premiereDates = {},
 	              const QHash<qint64, QString>& digitalDates = {},
-	              const QHash<qint64, QString>& physicalDates = {});
+	              const QHash<qint64, QString>& physicalDates = {},
+	              const QHash<qint64, QString>& trailerKeys = {});
 	void applyFileUpdate(const Mc::FileRecord& file, const QList<Mc::StreamRecord>& streams);
 	void removeEntry(qint64 fileId);
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter
@@ -166,6 +168,14 @@ public:
 	/** Returns the set of stream indices the user has force-marked for removal. */
 	QSet<int> forcedRemovalsFor(qint64 fileId) const { return m_forcedRemovals.value(fileId); }
 
+	// Checkbox selection for the "Copy to Folder" action — deliberately independent
+	// of QListView's own row-selection (blue highlight), and keyed by fileId (not
+	// row) so a file checked as a mega-card member stays checked if the sort order
+	// changes and it re-appears as its own row. Session-only, never persisted.
+	bool isChecked(qint64 fileId) const { return m_checkedFileIds.contains(fileId); }
+	QList<qint64> checkedFileIds() const { return m_checkedFileIds.values(); }
+	int checkedCount() const { return m_checkedFileIds.size(); }
+
 signals:
 	// Fired when the library goes from "no classified types" ↔ "has at least one".
 	// Filter bars use this to show/hide the Movies/TV/Docs/Misc pills.
@@ -173,6 +183,10 @@ signals:
 	// Fired whenever the grouped view is (re)built — lets the filter bar's redundant-
 	// versions chip show a live count without polling the model.
 	void redundantGroupCountChanged(int count);
+	// Fired whenever the checked set changes — McMainWindow repaints the list
+	// (a checked file's checkbox may be drawn either as its own row or nested
+	// inside a mega card) rather than tracking which visual rows are affected.
+	void checkedCountChanged(int count);
 
 public slots:
 	void setFilterText(const QString& text);
@@ -193,6 +207,9 @@ public slots:
 	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
 	void setMediaTypeForFile(qint64 fileId, const QString& mediaType);
 	void setMediaTypeBatch(const QList<qint64>& fileIds, const QString& mediaType);
+	void setChecked(qint64 fileId, bool checked);
+	void toggleChecked(qint64 fileId);
+	void clearChecked();
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void onImdbIdSaved(qint64 fileId, const QString& imdbId);
@@ -201,6 +218,7 @@ public slots:
 	                     const QString& mediaType = {});
 	void onReleaseDatesReady(qint64 fileId, const QString& premiereDate,
 	                         const QString& digitalDate, const QString& physicalDate);
+	void onTrailerReady(qint64 fileId, const QString& trailerKey);
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
 
 private:
@@ -243,8 +261,10 @@ private:
 	QHash<qint64, QString>    m_premiereDates;
 	QHash<qint64, QString>    m_digitalDates;
 	QHash<qint64, QString>    m_physicalDates;
+	QHash<qint64, QString>    m_trailerKeys;     // fileId → TMDB YouTube trailer key
 	QHash<qint64, int>        m_folderCounts;    // fileId → count of files sharing the same parent folder
 	QHash<qint64, QSet<int>>  m_forcedRemovals;  // fileId → stream indices user wants removed
+	QSet<qint64>              m_checkedFileIds;  // fileId → checked for "Copy to Folder"; see isChecked()
 	QString                   m_filterText;
 	QStringList               m_filterTokens;    // m_filterText split on whitespace, lowercased — each must match independently (AND, order-independent)
 	bool                      m_filterHasRemovals  = false;

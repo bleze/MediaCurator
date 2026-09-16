@@ -63,6 +63,12 @@ McDownloadQueueBand::McDownloadQueueBand(QWidget* parent)
 
 void McDownloadQueueBand::setItems(const QList<DownloadQueueItem>& items)
 {
+	if (items.isEmpty()) {
+		m_progress->setVisible(false);
+		m_label->setText(tr("No active downloads — › View queue"));
+		return;
+	}
+
 	qint64 totalMb             = 0;
 	qint64 remainingMb         = 0;
 	qint64 downloadingTotalMb     = 0;

@@ -103,6 +103,8 @@ signals:
 	// Fired whenever release dates (premiere/digital/physical) are resolved and
 	// persisted. Any of the three may be empty (unknown).
 	void releaseDatesReady(qint64 fileId, QString premiereDate, QString digitalDate, QString physicalDate);
+	// Fired whenever a TMDB trailer (YouTube key) is resolved and persisted.
+	void trailerReady(qint64 fileId, QString trailerKey);
 
 	// Batch refresh progress — driven by refreshBatch()/cancelBatch().
 	void batchProgressChanged(int done, int total);

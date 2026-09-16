@@ -673,6 +673,12 @@ void McJobPanel::setupUi()
 		QDesktopServices::openUrl(
 		    QUrl(QStringLiteral("https://www.themoviedb.org/%1/%2").arg(kind).arg(id)));
 	});
+	connect(jobDelegate, &McJobCardDelegate::trailerRequested,
+	        this, [](const QModelIndex& idx) {
+		const QString key = idx.data(McJobListModel::TrailerKeyRole).toString();
+		if (!key.isEmpty())
+			QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.youtube.com/watch?v=%1").arg(key)));
+	});
 	connect(jobDelegate, &McJobCardDelegate::nfoViewRequested,
 	        this, [this](const QModelIndex& idx) {
 		// Cached at scan time (DatabaseManager::sceneNfoText) rather than read

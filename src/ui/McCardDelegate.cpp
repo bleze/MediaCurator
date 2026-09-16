@@ -522,6 +522,9 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.isGroupCard       = index.data(McFileListModel::IsGroupCardRole).toBool();
 		d.isGroupRedundant  = index.data(McFileListModel::GroupIsRedundantRole).toBool();
 		d.groupMembers      = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
+		d.trailerKey        = index.data(McFileListModel::TrailerKeyRole).toString();
+		if (const auto* m = qobject_cast<const McFileListModel*>(index.model()))
+			d.checked = m->isChecked(file.id);
 	} else {
 		d.jobId            = index.data(McJobListModel::JobIdRole).toLongLong();
 		d.filename         = index.data(McJobListModel::FilenameRole).toString();
@@ -560,6 +563,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 			if (!keptIdx.contains(s.streamIndex)) d.removedIndices.insert(s.streamIndex);
 		d.flagChangesJson   = index.data(McJobListModel::FlagChangesRole).toString();
 		d.finishedAt        = index.data(McJobListModel::FinishedAtRole).toLongLong();
+		d.trailerKey        = index.data(McJobListModel::TrailerKeyRole).toString();
 	}
 	return d;
 }
@@ -768,8 +772,47 @@ QString McCardDelegate::statusLabel(const QString& status)
 
 // ── Geometry helpers ───────────────────────────────────────────────────────────
 
-QRect McCardDelegate::playButtonRect(const QRect& contentRect)
+QRect McCardDelegate::checkboxRect(const QRect& headerRow)
 {
+	return QRect(headerRow.left(), headerRow.top() + (headerRow.height() - kCheckW) / 2,
+	             kCheckW, kCheckW);
+}
+
+void McCardDelegate::drawCheckbox(QPainter* painter, const QRect& r, bool checked,
+                                    bool hovered, const QPalette& pal)
+{
+	painter->save();
+	painter->setRenderHint(QPainter::Antialiasing);
+	if (checked) {
+		painter->setPen(Qt::NoPen);
+		painter->setBrush(pal.color(QPalette::Highlight));
+		painter->drawRoundedRect(r, 3, 3);
+		QPen tick(pal.color(QPalette::HighlightedText), 1.6);
+		painter->setPen(tick);
+		painter->setBrush(Qt::NoBrush);
+		const QPointF p1(r.left() + r.width() * 0.22, r.top() + r.height() * 0.55);
+		const QPointF p2(r.left() + r.width() * 0.42, r.top() + r.height() * 0.76);
+		const QPointF p3(r.left() + r.width() * 0.80, r.top() + r.height() * 0.26);
+		painter->drawLine(p1, p2);
+		painter->drawLine(p2, p3);
+	} else {
+		painter->setBrush(hovered ? pal.color(QPalette::Highlight).lighter(180) : Qt::NoBrush);
+		painter->setPen(QPen(pal.color(QPalette::Mid), 1.2));
+		painter->drawRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+	}
+	painter->restore();
+}
+
+QRect McCardDelegate::playButtonRect(const QRect& contentRect, bool hasTrailer)
+{
+	const int bY = contentRect.top() + kFolderH + kFolderGap + (kHeaderH - kPlayBtnW) / 2;
+	const int xOffset = hasTrailer ? (kPlayBtnW + kBadgeGap) : 0;
+	return QRect(contentRect.right() - kPlayBtnW - xOffset, bY, kPlayBtnW, kPlayBtnW);
+}
+
+QRect McCardDelegate::trailerButtonRect(const QRect& contentRect)
+{
+	// Always the outer (rightmost) slot when present — play shifts left instead.
 	const int bY = contentRect.top() + kFolderH + kFolderGap + (kHeaderH - kPlayBtnW) / 2;
 	return QRect(contentRect.right() - kPlayBtnW, bY, kPlayBtnW, kPlayBtnW);
 }
@@ -843,8 +886,16 @@ McCardDelegate::GroupCardLayout McCardDelegate::layoutGroupCard(const QRect& con
 	return layout;
 }
 
-QRect McCardDelegate::groupMemberPlayButtonRect(const QRect& headerRect)
+QRect McCardDelegate::groupMemberPlayButtonRect(const QRect& headerRect, bool hasTrailer)
 {
+	const int xOffset = hasTrailer ? (kPlayBtnW + kBadgeGap) : 0;
+	return QRect(headerRect.right() - kPlayBtnW - xOffset,
+	            headerRect.top() + (headerRect.height() - kPlayBtnW) / 2, kPlayBtnW, kPlayBtnW);
+}
+
+QRect McCardDelegate::groupMemberTrailerButtonRect(const QRect& headerRect)
+{
+	// Always the outer (rightmost) slot when present — play shifts left instead.
 	return QRect(headerRect.right() - kPlayBtnW,
 	            headerRect.top() + (headerRect.height() - kPlayBtnW) / 2, kPlayBtnW, kPlayBtnW);
 }
@@ -1179,18 +1230,31 @@ bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect
 	if (index.isValid() && index.data(McFileListModel::IsGroupCardRole).toBool()) {
 		if (hasImdb && imdbButtonRect(content).contains(pos)) return true;
 		if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) return true;
+		const bool hasTrailer = !index.data(McFileListModel::TrailerKeyRole).toString().isEmpty();
 		const auto members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
 		QFont badgeFont = m_view ? m_view->font() : QFont{};
 		badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
 		const auto layout = layoutGroupCard(content, members, QFontMetrics(badgeFont));
-		for (const auto& ml : layout.members)
-			if (groupMemberPlayButtonRect(ml.headerRect).contains(pos)) return true;
+		for (const auto& ml : layout.members) {
+			if (groupMemberPlayButtonRect(ml.headerRect, hasTrailer).contains(pos)) return true;
+			if (hasTrailer && groupMemberTrailerButtonRect(ml.headerRect).contains(pos)) return true;
+			if (m_mode == Mode::Library && checkboxRect(ml.headerRect).contains(pos)) return true;
+		}
 		return false;
 	}
-	if (playButtonRect(content).contains(pos)) return true;
+	const QString trailerKey = m_mode == Mode::Library
+		? index.data(McFileListModel::TrailerKeyRole).toString()
+		: index.data(McJobListModel::TrailerKeyRole).toString();
+	const bool hasTrailer = !trailerKey.isEmpty();
+	if (playButtonRect(content, hasTrailer).contains(pos)) return true;
 	if (hasImdb && imdbButtonRect(content).contains(pos)) return true;
 	if (hasTmdb && tmdbButtonRect(content, hasImdb).contains(pos)) return true;
 	if (hasNfo && nfoButtonRect(content, hasImdb, hasTmdb).contains(pos)) return true;
+	if (m_mode == Mode::Library) {
+		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap, content.width(), kHeaderH);
+		if (checkboxRect(hdr).contains(pos)) return true;
+	}
+	if (hasTrailer && trailerButtonRect(content).contains(pos)) return true;
 	return false;
 }
 
@@ -1417,12 +1481,26 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 			return true;
 		}
 
+		// One trailer per movie, shared by every edition — a click on any member's
+		// trailer icon opens the same YouTube link, so this re-emits trailerRequested
+		// with the card's own index rather than needing a per-member variant.
+		const bool hasTrailer = !index.data(McFileListModel::TrailerKeyRole).toString().isEmpty();
+
 		const auto members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
 		QFont badgeFont = viewFont;
 		badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
 		const auto layout = layoutGroupCard(content, members, QFontMetrics(badgeFont));
 		for (int i = 0; i < layout.members.size() && i < members.size(); ++i) {
-			if (groupMemberPlayButtonRect(layout.members.at(i).headerRect).contains(pos)) {
+			const QRect& headerRow = layout.members.at(i).headerRect;
+			if (m_mode == Mode::Library && checkboxRect(headerRow).contains(pos)) {
+				emit checkToggleRequested(members[i].fileId);
+				return true;
+			}
+			if (hasTrailer && groupMemberTrailerButtonRect(headerRow).contains(pos)) {
+				emit trailerRequested(index);
+				return true;
+			}
+			if (groupMemberPlayButtonRect(headerRow, hasTrailer).contains(pos)) {
 				emit groupMemberPlayRequested(index, members[i].fileId);
 				return true;
 			}
@@ -1430,7 +1508,24 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 		return false;   // no card-level play button on a mega card
 	}
 
-	if (playButtonRect(content).contains(pos)) {
+	if (m_mode == Mode::Library) {
+		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap, content.width(), kHeaderH);
+		if (checkboxRect(hdr).contains(pos)) {
+			emit checkToggleRequested(index.data(McFileListModel::FileIdRole).toLongLong());
+			return true;
+		}
+	}
+
+	const QString trailerKey = m_mode == Mode::Library
+		? index.data(McFileListModel::TrailerKeyRole).toString()
+		: index.data(McJobListModel::TrailerKeyRole).toString();
+	const bool hasTrailer = !trailerKey.isEmpty();
+	if (hasTrailer && trailerButtonRect(content).contains(pos)) {
+		emit trailerRequested(index);
+		return true;
+	}
+
+	if (playButtonRect(content, hasTrailer).contains(pos)) {
 		emit playRequested(index);
 		return true;
 	}
@@ -1505,8 +1600,14 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 		return true;
 	}
 
+	// Trailer button tooltip
+	if (!d.trailerKey.isEmpty() && trailerButtonRect(content).contains(event->pos())) {
+		QToolTip::showText(event->globalPos(), tr("Play trailer on YouTube"), view);
+		return true;
+	}
+
 	// Play button tooltip
-	if (playButtonRect(content).contains(event->pos())) {
+	if (playButtonRect(content, !d.trailerKey.isEmpty()).contains(event->pos())) {
 		QToolTip::showText(event->globalPos(), tr("Play in default player"), view);
 		return true;
 	}
@@ -1515,7 +1616,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	if (m_showGroupBadge) {
 		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
 		                content.width(), kHeaderH);
-		const QRect playBtn = playButtonRect(content);
+		const QRect playBtn = playButtonRect(content, !d.trailerKey.isEmpty());
 
 		const int   chipW = groupChipWidth(d.storageGroup, option.font);
 		const QRect chipRect(playBtn.left() - kBadgeGap - chipW,
@@ -1535,7 +1636,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	if (m_mode == Mode::JobQueue) {
 		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
 		                content.width(), kHeaderH);
-		const QRect playBtn = playButtonRect(content);
+		const QRect playBtn = playButtonRect(content, !d.trailerKey.isEmpty());
 		int rightEdgeForFilename = playBtn.left() - kBadgeGap;
 		if (m_showGroupBadge)
 			rightEdgeForFilename -= groupChipWidth(d.storageGroup, option.font) + kBadgeGap;
@@ -2231,11 +2332,14 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 		const auto layout = layoutGroupCard(content, d.groupMembers, memberFm);
 		static const QSet<int> noRemovals;
+		const auto* checkModel = qobject_cast<const McFileListModel*>(index.model());
+		// One trailer per movie, shared by every edition row — see CardData::trailerKey.
+		const bool hasTrailer = !d.trailerKey.isEmpty();
 
 		for (int i = 0; i < d.groupMembers.size(); ++i) {
 			const GroupMember& gm  = d.groupMembers.at(i);
 			const QRect row     = layout.members.at(i).headerRect;
-			const QRect playBtn = groupMemberPlayButtonRect(row);
+			const QRect playBtn = groupMemberPlayButtonRect(row, hasTrailer);
 			const bool  hovered = playBtn.contains(m_lastMousePos);
 
 			QPixmap playIcon;
@@ -2252,7 +2356,31 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			                    playBtn.top()  + (playBtn.height() - playIcon.height()) / 2, playIcon);
 			painter->restore();
 
+			if (hasTrailer) {
+				const QRect trailerBtn = groupMemberTrailerButtonRect(row);
+				const bool  trailerHovered = trailerBtn.contains(m_lastMousePos);
+				QPixmap trailerIcon;
+				const QString trailerCacheKey = QStringLiteral("trailer_icon_%1").arg(trailerBtn.height());
+				if (!QPixmapCache::find(trailerCacheKey, &trailerIcon)) {
+					trailerIcon = QPixmap(":/icons/youtube.svg").scaled(
+					    trailerBtn.height(), trailerBtn.height(),
+					    Qt::KeepAspectRatio, Qt::SmoothTransformation);
+					QPixmapCache::insert(trailerCacheKey, trailerIcon);
+				}
+				painter->save();
+				painter->setOpacity(trailerHovered ? 1.0 : 0.80);
+				painter->drawPixmap(trailerBtn.left() + (trailerBtn.width()  - trailerIcon.width())  / 2,
+				                    trailerBtn.top()  + (trailerBtn.height() - trailerIcon.height()) / 2, trailerIcon);
+				painter->restore();
+			}
+
 			int leftX = row.left();
+			if (m_mode == Mode::Library) {
+				const QRect cb = checkboxRect(row);
+				drawCheckbox(painter, cb, checkModel && checkModel->isChecked(gm.fileId),
+				             cb.contains(m_lastMousePos), option.palette);
+				leftX = cb.right() + kCheckGap;
+			}
 			// 4K badge first — it's the most common badge, so rarer ones like the
 			// edition badge come after it rather than pushing it further right.
 			if (hasVideo4K(gm.videoStreams)) {
@@ -2332,8 +2460,32 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		const QRect hdr(content.left(), content.top() + kFolderH + kFolderGap,
 		                content.width(), kHeaderH);
 
-		// Play icon — rightmost element, vertically centred in header
-		const QRect playBtn = playButtonRect(content);
+		// Trailer icon — outer (rightmost) slot, only when TMDB resolved a
+		// YouTube trailer for this movie/show (see CardData::trailerKey).
+		// youtube.svg carries its own brand colors (red rounded rect + white
+		// triangle), same convention as vlc.svg's play icon — no recolor tint.
+		const bool hasTrailer = !d.trailerKey.isEmpty();
+		if (hasTrailer) {
+			const QRect trailerBtn = trailerButtonRect(content);
+			const bool  trailerHovered = trailerBtn.contains(m_lastMousePos);
+			QPixmap trailerIcon;
+			const QString cacheKey = QStringLiteral("trailer_icon_%1").arg(trailerBtn.height());
+			if (!QPixmapCache::find(cacheKey, &trailerIcon)) {
+				trailerIcon = QPixmap(":/icons/youtube.svg").scaled(
+				    trailerBtn.height(), trailerBtn.height(),
+				    Qt::KeepAspectRatio, Qt::SmoothTransformation);
+				QPixmapCache::insert(cacheKey, trailerIcon);
+			}
+			painter->save();
+			painter->setOpacity(trailerHovered ? 1.0 : 0.80);
+			const int ox = trailerBtn.left() + (trailerBtn.width()  - trailerIcon.width())  / 2;
+			const int oy = trailerBtn.top()  + (trailerBtn.height() - trailerIcon.height()) / 2;
+			painter->drawPixmap(ox, oy, trailerIcon);
+			painter->restore();
+		}
+
+		// Play icon — inner slot, shifted left of the trailer icon when present.
+		const QRect playBtn = playButtonRect(content, hasTrailer);
 		const bool  hovered = playBtn.contains(m_lastMousePos);
 		{
 			QPixmap playIcon;
@@ -2440,6 +2592,11 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		// 4K badge first — it's the most common badge, so rarer ones like the
 		// edition badge (Theatrical/Director's Cut/3D/...) come after it.
 		int filenameLeft = hdr.left();
+		if (m_mode == Mode::Library) {
+			const QRect cb = checkboxRect(hdr);
+			drawCheckbox(painter, cb, d.checked, cb.contains(m_lastMousePos), option.palette);
+			filenameLeft = cb.right() + kCheckGap;
+		}
 		if (hasVideo4K(d.videoStreams)) {
 			QFont resBadgeFont = option.font;
 			resBadgeFont.setPointSizeF(option.font.pointSizeF() * 0.82);

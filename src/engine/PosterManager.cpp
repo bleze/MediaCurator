@@ -253,6 +253,8 @@ signals:
 	// persisted — lets the UI update without waiting for a restart. Any of the
 	// three may be empty (unknown).
 	void releaseDatesReady(qint64 fileId, QString premiereDate, QString digitalDate, QString physicalDate);
+	// Fired whenever a TMDB trailer (YouTube key) is resolved and persisted.
+	void trailerReady(qint64 fileId, QString trailerKey);
 	// Fired once per file after processFile() returns, regardless of outcome —
 	// drives PosterManager's batch-refresh progress tracking.
 	void fileProcessed(qint64 fileId);
@@ -377,6 +379,15 @@ private:
 						    fileId, rd.premiereDate, rd.digitalDate, rd.physicalDate);
 						emit releaseDatesReady(fileId, rd.premiereDate, rd.digitalDate, rd.physicalDate);
 					}
+				}
+			}
+			// Trailer (YouTube key) — one extra TMDB call, movies and TV alike,
+			// skipped once a trailer is already on record for this file.
+			if (info.tmdbId > 0 && (!existing || existing->trailerKey.isEmpty())) {
+				const QString trailerKey = fetchTrailerKey(info.tmdbId, info.isTv);
+				if (!trailerKey.isEmpty()) {
+					DatabaseManager::instance().updateTrailer(fileId, trailerKey);
+					emit trailerReady(fileId, trailerKey);
 				}
 			}
 		};
@@ -798,6 +809,39 @@ private:
 		return out;
 	}
 
+	// TMDB /movie|tv/{id}/videos — YouTube key of the best trailer available.
+	// Prefers an official Trailer, then any Trailer, then an official Teaser,
+	// then any Teaser; returns empty if no YouTube entry matches any of those.
+	QString fetchTrailerKey(int tmdbId, bool isTv)
+	{
+		QByteArray data;
+		if (!fetchHttp(QUrl(QStringLiteral("https://api.themoviedb.org/3/%1/%2/videos?api_key=%3")
+		        .arg(isTv ? QStringLiteral("tv") : QStringLiteral("movie"))
+		        .arg(tmdbId).arg(m_tmdbApiKey)), data))
+			return {};
+
+		QString bestTrailer, bestOfficialTrailer, bestTeaser, bestOfficialTeaser;
+		for (const QJsonValue& v : QJsonDocument::fromJson(data)["results"].toArray()) {
+			const QJsonObject o = v.toObject();
+			if (o[QStringLiteral("site")].toString() != QLatin1String("YouTube")) continue;
+			const QString key = o[QStringLiteral("key")].toString();
+			if (key.isEmpty()) continue;
+			const QString type = o[QStringLiteral("type")].toString();
+			const bool official = o[QStringLiteral("official")].toBool();
+			if (type == QLatin1String("Trailer")) {
+				if (official && bestOfficialTrailer.isEmpty()) bestOfficialTrailer = key;
+				else if (bestTrailer.isEmpty())                bestTrailer         = key;
+			} else if (type == QLatin1String("Teaser")) {
+				if (official && bestOfficialTeaser.isEmpty()) bestOfficialTeaser = key;
+				else if (bestTeaser.isEmpty())                bestTeaser         = key;
+			}
+		}
+		if (!bestOfficialTrailer.isEmpty()) return bestOfficialTrailer;
+		if (!bestTrailer.isEmpty())         return bestTrailer;
+		if (!bestOfficialTeaser.isEmpty())  return bestOfficialTeaser;
+		return bestTeaser;
+	}
+
 	static bool jsonHasGenre(const QJsonObject& obj, int genreId)
 	{
 		for (const QJsonValue& v : obj[QStringLiteral("genre_ids")].toArray()) {
@@ -1191,6 +1235,8 @@ void PosterManager::startWorkerPool()
 		        this,     &PosterManager::tmdbIdSaved);
 		connect(worker, &PosterWorker::releaseDatesReady,
 		        this,     &PosterManager::releaseDatesReady);
+		connect(worker, &PosterWorker::trailerReady,
+		        this,     &PosterManager::trailerReady);
 		connect(worker, &PosterWorker::fileProcessed,
 		        this, [this](qint64 fileId) {
 			if (!m_batchActive || !m_batchIds.remove(fileId)) return;
