@@ -17,18 +17,18 @@ $ErrorActionPreference = "Stop"
 #   To upgrade: bump the version + URLs, delete tools\windows\, re-run.
 #   FFPROBE_URLS: gyan.dev rolling "release" first; GitHub mirror is the same
 #   essentials build pinned to FFPROBE_VERSION (fallback when gyan.dev 503s).
-$FFPROBE_VERSION = "8.1.2"
+$FFPROBE_VERSION = "9.0.1"
 $FFPROBE_URLS    = @(
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
     "https://github.com/GyanD/codexffmpeg/releases/download/$FFPROBE_VERSION/ffmpeg-$FFPROBE_VERSION-essentials_build.zip"
 )
 
-$MKV_VERSION     = "100.0"
-$MKV_URL         = "https://mkvtoolnix.download/windows/releases/100.0/mkvtoolnix-64-bit-100.0.7z"
+$MKV_VERSION     = "102.0"
+$MKV_URL         = "https://mkvtoolnix.download/windows/releases/102.0/mkvtoolnix-64-bit-102.0.7z"
 
 # dovi_tool (MIT) — used by the opt-in "Deep Scan for FEL/MEL" action, unlike
 # ffprobe/mkvmerge which are LGPL/GPL and can't be linked, just invoked.
-$DOVI_TOOL_VERSION = "2.3.3"
+$DOVI_TOOL_VERSION = "2.3.4"
 $DOVI_TOOL_URL      = "https://github.com/quietvoid/dovi_tool/releases/download/$DOVI_TOOL_VERSION/dovi_tool-$DOVI_TOOL_VERSION-x86_64-pc-windows-msvc.zip"
 
 # ── Paths ──────────────────────────────────────────────────────────────────────

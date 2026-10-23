@@ -60,25 +60,26 @@ bool HighscoreClient::isEnabled() const
 void HighscoreClient::submitScore(const QString& name, qint64 score)
 {
 	if (!isEnabled() || m_submitInFlight) {
-		emit scoreSubmitted(false);
+		emit scoreSubmitted(false, score);
 		return;
 	}
 	m_submitInFlight = true;
 
+	score = qMax<qint64>(0, score);
 	const QString encodedName = QString::fromLatin1(QUrl::toPercentEncoding(name));
 	QNetworkRequest req{ QUrl(QStringLiteral("http://dreamlo.com/lb/%1/add/%2/%3")
 	                              .arg(privateCode(), encodedName)
-	                              .arg(qMax<qint64>(0, score))) };
+	                              .arg(score)) };
 	req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("MediaCurator"));
 
 	QNetworkReply* reply = m_nam->get(req);
-	connect(reply, &QNetworkReply::finished, this, [this, reply] {
+	connect(reply, &QNetworkReply::finished, this, [this, reply, score] {
 		m_submitInFlight = false;
 		const bool ok = reply->error() == QNetworkReply::NoError;
 		if (!ok)
 			qWarning() << "HighscoreClient: submit failed:" << reply->errorString();
 		reply->deleteLater();
-		emit scoreSubmitted(ok);
+		emit scoreSubmitted(ok, score);
 	});
 }
 

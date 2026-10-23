@@ -40,7 +40,7 @@ public:
 	void fetchLeaderboard();
 
 signals:
-	void scoreSubmitted(bool ok);
+	void scoreSubmitted(bool ok, qint64 score);
 	void leaderboardReady(QList<Mc::HighscoreEntry> entries);
 	void leaderboardFetchFailed(QString error);
 

@@ -633,13 +633,22 @@ McMainWindow::McMainWindow(QWidget* parent)
 		connect(&HighscoreClient::instance(), &HighscoreClient::leaderboardReady,
 		        this, &McMainWindow::onHighscoreLeaderboardReady);
 		connect(&HighscoreClient::instance(), &HighscoreClient::scoreSubmitted,
-		        this, [](bool ok) { if (ok) HighscoreClient::instance().fetchLeaderboard(); });
+		        this, [](bool ok, qint64 score) {
+			        if (!ok)
+				        return;
+			        AppSettings::instance().setValue("highscore/lastSubmittedMb", score);
+			        HighscoreClient::instance().fetchLeaderboard();
+		        });
 
 		// Recover a submission a previous session's closeEvent flush didn't catch
 		// (crash, forced shutdown, killed process) — only for players who already
 		// joined, so this never surprises a first-time user with the join prompt
-		// before they've done anything this session.
-		if (!AppSettings::instance().value("highscore/playerName").toString().isEmpty())
+		// before they've done anything this session. Only when the local counter
+		// has actually moved past what dreamlo last accepted: every /add bumps
+		// dreamlo's "date" (shown as Last active), so an unconditional startup
+		// submit made merely launching the app look like activity.
+		if (!AppSettings::instance().value("highscore/playerName").toString().isEmpty()
+		    && currentReclaimedMb() != AppSettings::instance().value("highscore/lastSubmittedMb", -1).toLongLong())
 			QTimer::singleShot(0, this, &McMainWindow::submitHighscoreIfDue);
 	}
 
