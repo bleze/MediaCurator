@@ -633,23 +633,22 @@ McMainWindow::McMainWindow(QWidget* parent)
 		connect(&HighscoreClient::instance(), &HighscoreClient::leaderboardReady,
 		        this, &McMainWindow::onHighscoreLeaderboardReady);
 		connect(&HighscoreClient::instance(), &HighscoreClient::scoreSubmitted,
-		        this, [](bool ok, qint64 score) {
-			        if (!ok)
-				        return;
-			        AppSettings::instance().setValue("highscore/lastSubmittedMb", score);
-			        HighscoreClient::instance().fetchLeaderboard();
+		        this, [](bool ok, qint64) {
+			        if (ok)
+				        HighscoreClient::instance().fetchLeaderboard();
 		        });
 
 		// Recover a submission a previous session's closeEvent flush didn't catch
 		// (crash, forced shutdown, killed process) — only for players who already
-		// joined, so this never surprises a first-time user with the join prompt
-		// before they've done anything this session. Only when the local counter
-		// has actually moved past what dreamlo last accepted: every /add bumps
-		// dreamlo's "date" (shown as Last active), so an unconditional startup
-		// submit made merely launching the app look like activity.
-		if (!AppSettings::instance().value("highscore/playerName").toString().isEmpty()
-		    && currentReclaimedMb() != AppSettings::instance().value("highscore/lastSubmittedMb", -1).toLongLong())
-			QTimer::singleShot(0, this, &McMainWindow::submitHighscoreIfDue);
+		// joined, so this never surprises a first-time user with the join prompt.
+		// Decided in onHighscoreLeaderboardReady() against dreamlo's own record,
+		// not a locally cached "last submitted" value: the closeEvent flush's
+		// request usually reaches dreamlo but the process exits before the reply
+		// is handled, so a local cache stays stale and every following launch
+		// re-submitted the same score — and every /add bumps dreamlo's "date"
+		// (Last active), making merely launching the app look like activity.
+		m_highscoreStartupCheckPending =
+		    !AppSettings::instance().value("highscore/playerName").toString().isEmpty();
 	}
 
 	connect(&DownloadClientRegistry::instance(), &DownloadClientRegistry::queueChanged,
@@ -5018,6 +5017,22 @@ void McMainWindow::onHighscoreLeaderboardReady(QList<HighscoreEntry> entries)
 				break;
 			}
 		}
+	}
+
+	// Startup recovery (see constructor): submit only if the local counter is
+	// ahead of what dreamlo actually holds for this player. An identical score
+	// is a no-op re-submit that would just bump our "Last active" date.
+	if (m_highscoreStartupCheckPending) {
+		m_highscoreStartupCheckPending = false;
+		qint64 serverMb = -1;
+		for (const HighscoreEntry& e : entries) {
+			if (e.name.compare(name, Qt::CaseInsensitive) == 0) {
+				serverMb = e.score;
+				break;
+			}
+		}
+		if (currentReclaimedMb() > serverMb)
+			QTimer::singleShot(0, this, &McMainWindow::submitHighscoreIfDue);
 	}
 
 	if (m_highscoreBand)

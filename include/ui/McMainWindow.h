@@ -307,6 +307,7 @@ private:
 	McHighscoreDialog* m_highscoreDialog     = nullptr;
 	QTimer*            m_highscoreDebounce   = nullptr;
 	bool               m_highscoreBandPinned = false;
+	bool               m_highscoreStartupCheckPending = false;   // recover an un-posted score once dreamlo's board is known
 	QList<HighscoreEntry> m_lastHighscoreEntries;
 	McDownloadQueueBand*   m_downloadQueueBand   = nullptr;
 	McDownloadQueueDialog* m_downloadQueueDialog = nullptr;
