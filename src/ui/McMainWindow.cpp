@@ -3424,6 +3424,28 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		m_highscoreDebounce->stop();
 		submitHighscoreIfDue();
 	}
+	// submitScore() only queues the GET on QNetworkAccessManager; nothing hits
+	// the wire until the event loop runs. When the close follows a job within
+	// the same tick ("close/shut down after current job"), teardown + exit beat
+	// it, the score never reaches dreamlo, and the next launch's recovery
+	// submit stamps that day as "Last active" instead. Briefly spin a local
+	// loop until the reply (or timeout) so the submit actually lands now.
+	static bool s_waitingForHighscore = false;
+	if (!s_waitingForHighscore && HighscoreClient::instance().isSubmitInFlight()) {
+		s_waitingForHighscore = true;
+		QEventLoop loop;
+		QTimer timeout;
+		timeout.setSingleShot(true);
+		connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+		connect(&HighscoreClient::instance(), &HighscoreClient::scoreSubmitted, &loop, &QEventLoop::quit);
+		timeout.start(4000);
+		loop.exec(QEventLoop::ExcludeUserInputEvents);
+		if (!timeout.isActive())
+			qWarning() << "Highscore: close-time submit did not complete within 4s";
+		logRestartDebug(QStringLiteral("closeEvent: highscore submit flush %1")
+		                    .arg(timeout.isActive() ? "completed" : "timed out"));
+		s_waitingForHighscore = false;
+	}
 
 	// Release the single-instance lock now, before the slow teardown below —
 	// see setSingleInstanceLockReleaser() for why this can't wait until the

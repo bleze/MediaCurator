@@ -35,6 +35,9 @@ public:
 	// name is percent-encoded internally. score must be >= 0 (whole MB).
 	void submitScore(const QString& name, qint64 score);
 
+	// True between submitScore() sending its GET and the reply being handled.
+	[[nodiscard]] bool isSubmitInFlight() const { return m_submitInFlight; }
+
 	// Fetches the full public leaderboard. Safe to call with no private code
 	// configured (the read-only public code is always compiled in).
 	void fetchLeaderboard();
