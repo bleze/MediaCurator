@@ -13,6 +13,8 @@ namespace {
 QString formatReclaimed(qint64 mb)
 {
 	const double gb = mb / 1024.0;
+	if (gb >= 1024.0)
+		return QObject::tr("%1 TB").arg(gb / 1024.0, 0, 'f', 2);
 	return gb >= 1.0
 	    ? QObject::tr("%1 GB").arg(gb, 0, 'f', 2)
 	    : QObject::tr("%1 MB").arg(static_cast<double>(mb), 0, 'f', 1);

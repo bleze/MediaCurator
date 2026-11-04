@@ -4792,9 +4792,12 @@ void McMainWindow::updateSavedLabel()
 	QString text;
 	if (total > 0) {
 		const double gb = total / 1073741824.0;
-		text = gb >= 1.0
-		    ? tr("Reclaimed: %1 GB").arg(gb, 0, 'f', 2)
-		    : tr("Reclaimed: %1 MB").arg(total / 1048576.0, 0, 'f', 1);
+		if (gb >= 1024.0)
+			text = tr("Reclaimed: %1 TB").arg(gb / 1024.0, 0, 'f', 2);
+		else
+			text = gb >= 1.0
+			    ? tr("Reclaimed: %1 GB").arg(gb, 0, 'f', 2)
+			    : tr("Reclaimed: %1 MB").arg(total / 1048576.0, 0, 'f', 1);
 	} else {
 		text = tr("Reclaimed: None");
 	}
