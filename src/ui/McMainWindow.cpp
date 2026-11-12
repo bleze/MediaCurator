@@ -2213,6 +2213,31 @@ void McMainWindow::setupUi()
 	connect(m_jobPanel, &McJobPanel::previewRequested,
 	        this, &McMainWindow::onShowPreview);
 
+	// Reverse of the library's "Find in Queue": select the file's card (or the
+	// mega card it's grouped into), clearing library filters only if they hide it.
+	connect(m_jobPanel, &McJobPanel::findInLibraryRequested,
+	        this, [this](qint64 fileId) {
+		const auto fOpt = DatabaseManager::instance().fileById(fileId);
+		const QString name = fOpt ? fOpt->filename : tr("File");
+		int row = m_listModel->rowForFile(fileId);
+		if (row < 0) {
+			bool ignored = false;
+			if (m_listModel->hasFile(fileId, &ignored)) {
+				m_filterPanel->clearFilters(ignored);
+				row = m_listModel->rowForFile(fileId);
+			}
+		}
+		if (row < 0) {
+			m_statusLabel->setText(tr("%1 is not in the library view").arg(name));
+			return;
+		}
+		const QModelIndex idx = m_listModel->index(row);
+		m_listView->selectionModel()->setCurrentIndex(idx, QItemSelectionModel::ClearAndSelect);
+		m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+		m_listView->setFocus(Qt::OtherFocusReason);
+		m_statusLabel->setText(tr("Found %1 in the library").arg(name));
+	});
+
 	connect(m_jobPanel, &McJobPanel::playRequested,
 	        this, &McMainWindow::launchInDefaultPlayer);
 

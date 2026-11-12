@@ -100,6 +100,7 @@ public slots:
 signals:
 	void jobsChanged(int count);   // emitted after any load/remove; count = total visible rows
 	void previewRequested(qint64 fileId);
+	void findInLibraryRequested(qint64 fileId);
 	void playRequested(const QString& filePath);
 	void editImdbLinkRequested(qint64 fileId);
 	void editImdbLinksRequested(const QList<qint64>& fileIds);  // batch: multiple selected

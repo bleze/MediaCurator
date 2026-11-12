@@ -665,6 +665,27 @@ void McFileListModel::removeEntry(qint64 fileId)
 	}
 }
 
+int McFileListModel::rowForFile(qint64 fileId) const
+{
+	for (int row = 0; row < m_entries.size(); ++row) {
+		const FileEntry& e = m_entries.at(row);
+		if (e.file.id == fileId) return row;
+		for (const GroupMember& m : e.groupMembers)
+			if (m.fileId == fileId) return row;
+	}
+	return -1;
+}
+
+bool McFileListModel::hasFile(qint64 fileId, bool* ignored) const
+{
+	for (const FileEntry& e : m_allEntries) {
+		if (e.file.id != fileId) continue;
+		if (ignored) *ignored = e.file.ignored;
+		return true;
+	}
+	return false;
+}
+
 void McFileListModel::setFilterText(const QString& text)
 {
 	if (m_filterText == text) return;

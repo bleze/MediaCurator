@@ -1013,6 +1013,13 @@ void McJobPanel::setupUi()
 			emit previewRequested(fileId);
 		});
 
+		auto* findInLibAct = menu.addAction(svgIcon(":/icons/manage_search.svg"),
+		                                    tr("&Find in Library"));
+		findInLibAct->setEnabled(fileId > 0);
+		connect(findInLibAct, &QAction::triggered, this, [this, fileId] {
+			emit findInLibraryRequested(fileId);
+		});
+
 		auto* previewCmdAct = menu.addAction(svgIcon(":/icons/terminal.svg"),
 		                                     tr("Preview &Command…"));
 		connect(previewCmdAct, &QAction::triggered, this, [this, jobId] {

@@ -45,6 +45,11 @@ public:
 	// shown while GroupedByEdition is the active sort mode.
 	void setRedundantGroupCount(int count);
 
+	// Resets every filter (search, status, pills, storage groups, edition/HDR/audio,
+	// rating, duplicates-only) so a specific file can be revealed. Sort order is kept.
+	// showIgnored picks "Ignored files" instead of "All files", since "All" hides ignored.
+	void clearFilters(bool showIgnored);
+
 	enum QuickFilter : quint32 {
 		QF_None         = 0,
 		QF_4K           = 1 << 0,
@@ -97,6 +102,7 @@ private:
 	void emitRatingFilter();
 
 	quint32    m_activeFilters  = QF_None;
+	QList<QToolButton*> m_quickFilterPills;   // every pill that maps to a QuickFilter bit
 	QTimer*    m_searchTimer    = nullptr;
 	QTimer*    m_ratingTimer    = nullptr;
 	QLineEdit* m_search         = nullptr;

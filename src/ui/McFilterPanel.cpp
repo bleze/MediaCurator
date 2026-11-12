@@ -160,6 +160,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 			const quint32 f = pd.flag;
 			connect(btn, &QToolButton::toggled, this, [this, f](bool on) { onPillToggled(f, on); });
 			lay->addWidget(btn);
+			m_quickFilterPills.append(btn);
 		}
 	};
 
@@ -196,6 +197,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 			const quint32 f = pd.flag;
 			connect(btn, &QToolButton::toggled, this, [this, f](bool on) { onPillToggled(f, on); });
 			mediaLay->addWidget(btn);
+			m_quickFilterPills.append(btn);
 		}
 		m_mediaCategoryContainer->setVisible(false);  // until library has classified types
 		lay->addWidget(m_mediaCategoryContainer);
@@ -338,6 +340,56 @@ void McFilterPanel::setRedundantGroupCount(int count)
 	m_redundantGroupCount = count;
 	m_redundantChip->setText(count == 1 ? tr("1 duplicate") : tr("%1 duplicates").arg(count));
 	updateRedundantChipVisibility();
+}
+
+void McFilterPanel::clearFilters(bool showIgnored)
+{
+	// Search — bypass the debounce so the model is filtered before we return.
+	m_searchTimer->stop();
+	m_search->blockSignals(true);
+	m_search->clear();
+	m_search->blockSignals(false);
+	emit filterTextChanged(QString());
+
+	const int statusIdx = m_statusCombo->findData(showIgnored ? 3 : 0);
+	if (statusIdx >= 0)
+		m_statusCombo->setCurrentIndex(statusIdx);   // emits filterStatusChanged
+
+	// Quick-filter pills — uncheck silently, then emit once.
+	if (m_activeFilters != QF_None) {
+		for (QToolButton* btn : m_quickFilterPills) {
+			btn->blockSignals(true);
+			btn->setChecked(false);
+			btn->blockSignals(false);
+		}
+		m_activeFilters = QF_None;
+		emit quickFiltersChanged(m_activeFilters);
+	}
+
+	m_redundantChip->setChecked(false);   // emits redundantOnlyFilterChanged if it was on
+
+	bool storageGroupChanged = false;
+	for (McStorageGroupChipToggle* chip : m_storageGroupChips) {
+		if (!chip->isChecked()) {
+			chip->setChecked(true);
+			storageGroupChanged = true;
+		}
+	}
+	if (storageGroupChanged)
+		emitStorageGroupFilter();
+
+	m_editionDropdown->clearSelection();
+	m_hdrDvDropdown->clearSelection();
+	m_audioFormatDropdown->clearSelection();
+
+	if (auto* slider = qobject_cast<RangeSlider*>(m_ratingSlider)) {
+		if (slider->GetLowerValue() != 0 || slider->GetUpperValue() != 100) {
+			slider->SetLowerValue(0);
+			slider->SetUpperValue(100);
+			m_ratingTimer->stop();
+			emitRatingFilter();
+		}
+	}
 }
 
 void McFilterPanel::onPillToggled(quint32 flag, bool on)

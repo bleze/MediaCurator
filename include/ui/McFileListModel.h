@@ -159,6 +159,10 @@ public:
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter
 	int  fileCount() const { return m_entries.size(); }
 	int  totalCount() const { return m_allEntries.size(); }
+	// Visible row showing fileId (its own card, or the mega card it's grouped into); -1 if filtered out/absent.
+	[[nodiscard]] int rowForFile(qint64 fileId) const;
+	// True if fileId is loaded at all, regardless of filters; *ignored receives its ignored flag.
+	[[nodiscard]] bool hasFile(qint64 fileId, bool* ignored = nullptr) const;
 	int  sortOrder() const { return m_sortOrder; }
 
 	// True when at least one library file has a non-unknown media_type — used to
