@@ -167,6 +167,11 @@ else()
     # shipped, which doesn't have to match the 6.8.3 build used in CI — that
     # mismatch is what caused crashes like "libQt6Svg.so.6: version 'qt_6.8'
     # not found".
+    # mkvmerge/mkvextract/mkvpropedit come from the distro package rather than
+    # being bundled: they link dynamically against distro-specific libraries,
+    # so a copy taken from the CI runner only runs on that exact release.
+    # ExternalTools::findTool() falls back to PATH when no bundled copy exists.
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS     "mkvtoolnix")
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE    "https://github.com/bleze/MediaCurator")
 endif()
 

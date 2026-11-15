@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 #   To upgrade: bump the version + URLs, delete tools\windows\, re-run.
 #   FFPROBE_URLS: gyan.dev rolling "release" first; GitHub mirror is the same
 #   essentials build pinned to FFPROBE_VERSION (fallback when gyan.dev 503s).
-$FFPROBE_VERSION = "9.0.1"
+$FFPROBE_VERSION = "9.0.2"
 $FFPROBE_URLS    = @(
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
     "https://github.com/GyanD/codexffmpeg/releases/download/$FFPROBE_VERSION/ffmpeg-$FFPROBE_VERSION-essentials_build.zip"

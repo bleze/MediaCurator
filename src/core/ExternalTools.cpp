@@ -58,13 +58,20 @@ QString ExternalTools::findTool(const QString& name) const
 #endif
 	// mkvmerge/mkvextract live in a dedicated subfolder so their bundled DLLs
 	// stay isolated from the app's own Qt/MSVC runtime copies.
-	const QString base = exeDir + "/tools/" + platformDir + "/";
-	for (const QString& candidate : {
-			base + name + ext,
-			base + "mkvtoolnix/" + name + ext,
-			base + "dovi_tool/" + name + ext,
-		}) {
-		if (QFile::exists(candidate)) return candidate;
+	QStringList bases{exeDir + "/tools/" + platformDir + "/"};
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS)
+	// The .deb puts the executable in <prefix>/bin but the tools in
+	// <prefix>/lib/MediaCurator/tools (see the install rules in src/CMakeLists.txt).
+	bases << exeDir + "/../lib/MediaCurator/tools/" + platformDir + "/";
+#endif
+	for (const QString& base : bases) {
+		for (const QString& candidate : {
+				base + name + ext,
+				base + "mkvtoolnix/" + name + ext,
+				base + "dovi_tool/" + name + ext,
+			}) {
+			if (QFile::exists(candidate)) return candidate;
+		}
 	}
 	return name + ext;
 }

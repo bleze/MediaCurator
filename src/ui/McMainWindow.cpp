@@ -3748,14 +3748,7 @@ void McMainWindow::enqueueScanRoot(const QString& root, bool quickScan)
 
 void McMainWindow::createScanWorkerForGroup(int groupId, const QString& folderPath, bool quickScan)
 {
-	const QString exeDir = QCoreApplication::applicationDirPath();
-#ifdef Q_OS_WIN
-	const QString ffprobePath = exeDir + "/tools/windows/ffprobe.exe";
-#elif defined(Q_OS_MACOS)
-	const QString ffprobePath = exeDir + "/tools/macos/ffprobe";
-#else
-	const QString ffprobePath = exeDir + "/tools/linux/ffprobe";
-#endif
+	const QString ffprobePath = ExternalTools::instance().ffprobePath();
 
 	ScanGroupState& state = m_scanGroups[groupId];
 	state.quickScan = quickScan;

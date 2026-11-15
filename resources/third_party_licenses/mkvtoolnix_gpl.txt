@@ -1,6 +1,6 @@
 MKVToolNix (mkvmerge)
 =====================
-Version bundled: 88.0
+Version bundled: 102.0 (Windows)
 Source:          https://mkvtoolnix.download/
 Upstream source: https://gitlab.com/mbunkus/mkvtoolnix
 

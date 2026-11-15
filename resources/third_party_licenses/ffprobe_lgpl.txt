@@ -1,7 +1,8 @@
 FFprobe (part of FFmpeg)
 ========================
-Version bundled: 7.1
-Source:          https://www.gyan.dev/ffmpeg/builds/
+Version bundled: 9.0.x
+Source:          https://www.gyan.dev/ffmpeg/builds/ (Windows)
+                 https://github.com/BtbN/FFmpeg-Builds (Linux, LGPL build)
 Upstream source: https://ffmpeg.org/
 
 FFmpeg is free software; you can redistribute it and/or modify it under the

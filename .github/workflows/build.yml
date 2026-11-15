@@ -7,8 +7,8 @@ on:
   pull_request:
     branches: [ main ]
 
-# install-qt-action and msvc-dev-cmd don't have Node.js 24 builds yet; allow
-# them to fall back to Node 20 until their maintainers publish Node 24 versions.
+# msvc-dev-cmd doesn't have a Node.js 24 build yet; allow it to fall back to
+# Node 20 until its maintainer publishes a Node 24 version.
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
@@ -30,7 +30,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     # Writes the gitignored dreamlo write-key header from a repo secret so the
     # leaderboard feature is compiled in for official builds. PRs from forks
@@ -80,7 +80,7 @@ jobs:
       run: choco install ccache -y --no-progress
 
     - name: Cache ccache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-windows-${{ github.sha }}
@@ -97,7 +97,7 @@ jobs:
       run: cmake --build build --parallel
 
     - name: Cache Chocolatey NSIS package
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: C:\Users\runneradmin\AppData\Local\Temp\chocolatey
         key: choco-nsis
@@ -111,7 +111,7 @@ jobs:
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 
     - name: Upload installer
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: MediaCurator-Windows-Installer
         path: build/packages/MediaCurator-*.exe
@@ -122,7 +122,7 @@ jobs:
     # from this exact build can be symbolicated later in Visual Studio by just
     # pointing Symbols settings at the folder this was downloaded into.
     - name: Upload debug symbols (PDB)
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: MediaCurator-Windows-PDB
         path: build/bin/MediaCurator.pdb
@@ -141,7 +141,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     # See the Windows job's identical step for why this exists — writes the
     # gitignored dreamlo write-key header from a repo secret (empty on fork
@@ -158,7 +158,7 @@ jobs:
     # Must run before "Configure CMake" — src/CMakeLists.txt's install() rule
     # for tools/ (DESTINATION MediaCurator.app/Contents/MacOS/tools) is gated
     # on the files already existing at configure time.
-    - name: Download bundled tools (ffprobe + mkvtoolnix)
+    - name: Download bundled tools (ffprobe + mkvtoolnix + dovi_tool)
       run: bash scripts/setup_tools.sh
 
     - name: Install Qt
@@ -179,7 +179,7 @@ jobs:
       run: brew install ccache
 
     - name: Cache ccache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-macos-${{ github.sha }}
@@ -202,7 +202,7 @@ jobs:
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 
     - name: Upload installer
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: MediaCurator-macOS-DMG
         path: build/packages/MediaCurator-*.dmg
@@ -227,7 +227,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     # See the Windows job's identical step for why this exists — writes the
     # gitignored dreamlo write-key header from a repo secret (empty on fork
@@ -271,7 +271,7 @@ jobs:
     # for tools/ (DESTINATION lib/MediaCurator/tools) is gated on the files
     # already existing at configure time. (Needs apt-get update from the step
     # above for the mkvtoolnix install.)
-    - name: Download bundled tools (ffprobe + mkvtoolnix)
+    - name: Download bundled tools (ffprobe + mkvtoolnix + dovi_tool)
       run: bash scripts/setup_tools.sh
 
     - name: Install Qt
@@ -284,7 +284,7 @@ jobs:
         cache: true
 
     - name: Cache ccache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-linux-${{ github.sha }}
@@ -330,7 +330,7 @@ jobs:
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
 
     - name: Upload installer
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: MediaCurator-Linux-DEB
         path: build/packages/MediaCurator-*.deb
@@ -350,12 +350,12 @@ jobs:
 
     steps:
     - name: Download all installers
-      uses: actions/download-artifact@v6
+      uses: actions/download-artifact@v8
       with:
         path: artifacts
 
     - name: Create release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         files: artifacts/**/*
         generate_release_notes: true
