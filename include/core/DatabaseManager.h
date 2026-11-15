@@ -194,6 +194,15 @@ struct PosterRecord {
 };
 
 // For display in McJobPanel (jobs JOIN files JOIN poster_cache)
+// One TMDB-identified file's title state — drives the "show the original title
+// when its language is understood" backfill in PosterManager.
+struct FileTitleState {
+	qint64  fileId = 0;
+	QString originalLanguage;  // ISO 639-2
+	QString originalTitle;     // TMDB original_title; empty if never fetched
+	QString displayTitle;
+};
+
 struct JobDisplayRecord {
 	qint64  jobId      = -1;
 	qint64  fileId     = -1;
@@ -361,6 +370,9 @@ public:
 	bool recoverRunningJobs();
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
 	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
+	// TMDB's original_title / original_name for the file's current identity.
+	bool updateOriginalTitle(qint64 fileId, const QString& title);
+	[[nodiscard]] QString originalTitleForFile(qint64 fileId) const;
 	bool updateMediaType(qint64 fileId, const QString& mediaType);
 	bool updateEdition(qint64 fileId, const QString& edition);
 	// Persists the scene-NFO-art flag and its decoded text, both detected by
@@ -431,6 +443,8 @@ public:
 	// Safe to call whether or not a poster_cache row exists yet for fileId.
 	void                        markNfoWritten(qint64 fileId);
 	QList<qint64>               fileIdsNeedingPosters() const;
+	// Every file with a resolved poster record, an IMDb id and a known original language.
+	QList<FileTitleState>       identifiedFileTitleStates() const;
 	QHash<qint64, QString>      allDonePosterPaths() const;
 	QHash<qint64, QString>      allDoneFanartPaths() const;
 	QHash<qint64, QString>      allKnownImdbIds() const;

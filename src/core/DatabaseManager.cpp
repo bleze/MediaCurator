@@ -379,6 +379,14 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE files ADD COLUMN display_year INTEGER DEFAULT 0");
 	}
 
+	// Migration: add original_title to files (TMDB original_title; shown as the
+	// display title when the movie's original language is one the user understands)
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN original_title TEXT DEFAULT ''");
+		// Ignore error — column already exists
+	}
+
 	// Migration: add ignored flag to files
 	{
 		QSqlQuery m(connection());
@@ -1930,6 +1938,24 @@ bool DatabaseManager::updateDisplayTitle(qint64 fileId, const QString& title, in
 	return q.exec();
 }
 
+bool DatabaseManager::updateOriginalTitle(qint64 fileId, const QString& title)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET original_title=? WHERE id=?");
+	q.addBindValue(title);
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
+QString DatabaseManager::originalTitleForFile(qint64 fileId) const
+{
+	QSqlQuery q(connection());
+	q.prepare("SELECT COALESCE(original_title, '') FROM files WHERE id=?");
+	q.addBindValue(fileId);
+	if (!q.exec() || !q.next()) return {};
+	return q.value(0).toString();
+}
+
 bool DatabaseManager::updateMediaType(qint64 fileId, const QString& mediaType)
 {
 	QSqlQuery q(connection());
@@ -2595,6 +2621,29 @@ QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 	QList<qint64> ids;
 	while (q.next()) ids << q.value(0).toLongLong();
 	return ids;
+}
+
+QList<FileTitleState> DatabaseManager::identifiedFileTitleStates() const
+{
+	QSqlQuery q(connection());
+	q.exec(R"(
+		SELECT f.id, f.original_language,
+		       COALESCE(f.original_title, ''), COALESCE(f.display_title, '')
+		FROM files f
+		JOIN poster_cache pc ON pc.file_id = f.id
+		WHERE pc.status = 'done' AND pc.imdb_id != ''
+		  AND f.original_language IS NOT NULL AND f.original_language != ''
+	)");
+	QList<FileTitleState> states;
+	while (q.next()) {
+		FileTitleState s;
+		s.fileId           = q.value(0).toLongLong();
+		s.originalLanguage = q.value(1).toString();
+		s.originalTitle    = q.value(2).toString();
+		s.displayTitle     = q.value(3).toString();
+		states << s;
+	}
+	return states;
 }
 
 void DatabaseManager::resetPosterForFile(qint64 fileId)

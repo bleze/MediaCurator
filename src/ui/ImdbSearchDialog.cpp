@@ -589,7 +589,20 @@ void ImdbSearchDialog::setBatchMode(int current, int total)
 }
 
 QString    ImdbSearchDialog::selectedImdbId()     const { return m_imdbIdEdit->text().trimmed(); }
-QString    ImdbSearchDialog::selectedTitle()      const { return m_selectedTitle; }
+QString    ImdbSearchDialog::selectedTitle()      const
+{
+	// A movie in a language the user understands keeps its original title
+	// (same rule as PosterManager's background matcher).
+	const QString originalTitle = selectedOriginalTitle();
+	const QString originalLang  = selectedOriginalLanguage();
+	if (!m_selectedTitle.isEmpty() && !originalTitle.isEmpty() && !originalLang.isEmpty()) {
+		for (const QString& code : std::as_const(m_understoodLanguages)) {
+			if (McLanguageFlags::toIso1(code) == originalLang)
+				return originalTitle;
+		}
+	}
+	return m_selectedTitle;
+}
 int        ImdbSearchDialog::selectedYear()       const { return m_selectedYear; }
 QString    ImdbSearchDialog::selectedPosterPath() const { return m_selectedPosterPath; }
 QString    ImdbSearchDialog::selectedMediaType()  const { return m_selectedMediaType; }

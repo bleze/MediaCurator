@@ -24,7 +24,7 @@ Edit `CMakeLists.txt`:
 
 ```cmake
 project(MediaCurator
-    VERSION 2.6.0
+    VERSION 2.6.1
     ...
 )
 ```
@@ -42,11 +42,11 @@ redundant build on the plain `main` push, see note below:
 
 ```powershell
 git add CMakeLists.txt
-git commit -m "Release 2.6.0"
+git commit -m "Release 2.6.1"
 git push origin main
 
-git tag v2.6.0
-git push origin v2.6.0
+git tag v2.6.1
+git push origin v2.6.1
 ```
 
 > `build.yml`'s `build-windows`/`build-macos`/`build-linux` jobs skip themselves when

@@ -269,10 +269,21 @@ NfoParser::SceneNfoScan NfoParser::scanSceneNfo(const QString& videoPath)
 
 QString NfoParser::decodeSceneNfoBytes(const QByteArray& raw)
 {
-	const QString text = looksLikeCorruptedMixedEncoding(raw)
-	    ? decodeCorruptedMixedEncoding(raw)
-	    : decodeCp437(raw);
-	return stripTrailingWhitespacePerLine(text);
+	if (looksLikeCorruptedMixedEncoding(raw))
+		return stripTrailingWhitespacePerLine(decodeCorruptedMixedEncoding(raw));
+
+	// Some NFOs are UTF-8 rather than CP437 (modern groups, or a file re-saved
+	// by a tool along the way). Feeding those through the CP437 table turns each
+	// multi-byte character into 2-3 unrelated glyphs and pushes the rest of the
+	// line out of alignment. Strict whole-file validation keeps real CP437 art
+	// out of this branch: its runs of 0xB0-0xDF bytes are never valid UTF-8.
+	const bool hasHighByte = std::any_of(raw.begin(), raw.end(),
+	                                     [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
+	if (hasHighByte && raw.isValidUtf8()) {
+		const qsizetype bom = raw.startsWith("\xEF\xBB\xBF") ? 3 : 0;
+		return stripTrailingWhitespacePerLine(QString::fromUtf8(raw.constData() + bom, raw.size() - bom));
+	}
+	return stripTrailingWhitespacePerLine(decodeCp437(raw));
 }
 
 QString NfoParser::bbcodeToHtml(const QString& text)

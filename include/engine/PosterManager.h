@@ -48,10 +48,11 @@ public:
 	// (see UserProfile::writeNfoFiles) — mirrors the user's Settings choice.
 	void setWriteNfoFiles(bool enabled);
 
-	// Ordered (ISO 639-2) language preference used to pick which localized TMDB
-	// title gets written as <title> in the .nfo — mirrors UserProfile's
-	// understood-languages list. <originaltitle> is always TMDB's original_title
-	// regardless of this setting.
+	// Ordered (ISO 639-2) language preference — mirrors UserProfile's
+	// understood-languages list. A movie whose original language is on the list
+	// is titled with TMDB's original_title; otherwise the top resolvable entry
+	// picks the localized title. The same title is written as <title> in the
+	// .nfo; <originaltitle> is always TMDB's original_title regardless.
 	void setUnderstoodLanguages(const QStringList& languages);
 
 	// Days to wait before retrying a file whose status is 'no_poster' (TMDB had no
@@ -121,6 +122,10 @@ private:
 	explicit PosterManager(QObject* parent = nullptr);
 	void startWorkerPool();
 	void stopWorkerPool(bool wait);
+	// Queues every already-titled file whose original language is understood but
+	// whose title isn't the original one yet (existing libraries, or a language
+	// newly added to the understood list).
+	void enqueueOriginalTitleBackfill();
 
 	class PosterWorkQueue* m_queue = nullptr;
 	struct WorkerSlot {

@@ -734,7 +734,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onTrailerReady);
 	// Keep job-card media types (and category pills) current during enrichment.
 	connect(&pm, &PosterManager::tmdbDataReady, this,
-	        [this](qint64 fileId, const QString&, int, double, const QString& mediaType) {
+	        [this](qint64 fileId, const QString& title, int year, double, const QString& mediaType) {
+		m_jobPanel->setTitleForFile(fileId, title, year);
 		if (mediaType.isEmpty() || mediaType == QLatin1String(MediaTypes::Unknown))
 			return;
 		m_jobPanel->setMediaTypeForFile(fileId, mediaType);
@@ -1101,6 +1102,7 @@ void McMainWindow::setupUi()
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(file.id, title, dlg.selectedYear());
+					DatabaseManager::instance().updateOriginalTitle(file.id, dlg.selectedOriginalTitle());
 					m_listModel->setDisplayTitleForFile(file.id, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(file.id, title, dlg.selectedYear());
 				}
@@ -1539,6 +1541,7 @@ void McMainWindow::setupUi()
 					const QString title = dlg.selectedTitle();
 					if (!title.isEmpty()) {
 						DatabaseManager::instance().updateDisplayTitle(repFile.id, title, dlg.selectedYear());
+						DatabaseManager::instance().updateOriginalTitle(repFile.id, dlg.selectedOriginalTitle());
 						m_listModel->setDisplayTitleForFile(repFile.id, title, dlg.selectedYear());
 						m_jobPanel->setTitleForFile(repFile.id, title, dlg.selectedYear());
 					}
@@ -1901,6 +1904,7 @@ void McMainWindow::setupUi()
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(f.id, title, dlg.selectedYear());
+					DatabaseManager::instance().updateOriginalTitle(f.id, dlg.selectedOriginalTitle());
 					m_listModel->setDisplayTitleForFile(f.id, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(f.id, title, dlg.selectedYear());
 				}
@@ -2290,6 +2294,7 @@ void McMainWindow::setupUi()
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(fileId, title, dlg.selectedYear());
+					DatabaseManager::instance().updateOriginalTitle(fileId, dlg.selectedOriginalTitle());
 					m_listModel->setDisplayTitleForFile(fileId, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(fileId, title, dlg.selectedYear());
 				}
@@ -2364,6 +2369,7 @@ void McMainWindow::setupUi()
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty()) {
 					DatabaseManager::instance().updateDisplayTitle(fileId, title, dlg.selectedYear());
+					DatabaseManager::instance().updateOriginalTitle(fileId, dlg.selectedOriginalTitle());
 					m_listModel->setDisplayTitleForFile(fileId, title, dlg.selectedYear());
 					m_jobPanel->setTitleForFile(fileId, title, dlg.selectedYear());
 				}

@@ -105,6 +105,39 @@ static void resetMissingPosterMediaInDb()
 	}
 }
 
+// ── Original-title preference ─────────────────────────────────────────────────
+
+// UserProfile::understoodLanguages(), in priority order, converted to the
+// ISO 639-1 codes TMDB uses. Unmapped/duplicate codes are dropped.
+static QStringList iso1Languages(const QStringList& iso6392Codes)
+{
+	QStringList out;
+	for (const QString& code : iso6392Codes) {
+		const QString iso1 = McLanguageFlags::toIso1(code);
+		if (!iso1.isEmpty() && !out.contains(iso1))
+			out << iso1;
+	}
+	return out;
+}
+
+// True when an already-titled file still needs a TMDB round-trip to show its
+// original title: its original language is understood, and the title on record
+// isn't known to be the original one.
+static bool needsOriginalTitleFetch(const QString& originalLanguage, const QString& originalTitle,
+                                    const QString& displayTitle, const QStringList& understoodLanguages)
+{
+	const QString iso1 = McLanguageFlags::toIso1(originalLanguage);
+	const QStringList preferred = iso1Languages(understoodLanguages);
+	if (iso1.isEmpty() || !preferred.contains(iso1))
+		return false;
+	if (!originalTitle.isEmpty())
+		return originalTitle != displayTitle;
+	// Original title never fetched. An English original with English as the top
+	// understood language already shows it (both the unlocalized TMDB title and
+	// the language=en one are the original), so skip the bulk of a typical library.
+	return !(iso1 == QLatin1String("en") && preferred.first() == QLatin1String("en"));
+}
+
 // ── Shared work queue (all poster workers pull from this) ───────────────────────
 
 class PosterWorkQueue : public QObject
@@ -323,12 +356,21 @@ private:
 				DatabaseManager::instance().updateFileOriginalLanguage(
 				    fileId, McLanguageFlags::iso6392FromIso1(info.originalLanguage));
 			}
-			if (!info.title.isEmpty()) {
-				if (fileOpt->displayTitle.isEmpty())
-					DatabaseManager::instance().updateDisplayTitle(fileId, info.title, info.year);
+			if (!info.originalTitle.isEmpty())
+				DatabaseManager::instance().updateOriginalTitle(fileId, info.originalTitle);
+			// Fill-only, except that an original title in an understood language
+			// replaces whatever (localized) title is already on record.
+			QString shownTitle = fileOpt->displayTitle;
+			int     shownYear  = fileOpt->displayYear;
+			if (!info.title.isEmpty()
+			    && (shownTitle.isEmpty() || (info.titleIsOriginal && shownTitle != info.title))) {
+				DatabaseManager::instance().updateDisplayTitle(fileId, info.title, info.year);
+				shownTitle = info.title;
+				shownYear  = info.year;
 			}
 			if (!info.title.isEmpty() || !appliedMediaType.isEmpty()) {
-				emit tmdbDataReady(fileId, info.title, info.year, info.voteAverage, appliedMediaType);
+				emit tmdbDataReady(fileId, info.title.isEmpty() ? QString() : shownTitle,
+				                   shownYear, info.voteAverage, appliedMediaType);
 			}
 			// Write .nfo so imdbId (plus whatever TMDB metadata we have) survives
 			// future DB deletions — opt-in, and only if MediaCurator hasn't already
@@ -400,7 +442,10 @@ private:
 		    && !existing->imagePath.isEmpty()
 		    && QFile::exists(existing->imagePath)) {
 			const bool needsRating    = existing->voteAverage <= 0.0;
-			const bool needsTitle     = fileOpt->displayTitle.isEmpty();
+			const bool needsTitle     = fileOpt->displayTitle.isEmpty()
+			    || needsOriginalTitleFetch(fileOpt->originalLanguage,
+			                               DatabaseManager::instance().originalTitleForFile(fileId),
+			                               fileOpt->displayTitle, m_understoodLanguages);
 			const bool needsMediaType = fileOpt->mediaType.isEmpty()
 			    || fileOpt->mediaType == QLatin1String(MediaTypes::Unknown);
 			const bool needsNfo       = m_writeNfoFiles && !existing->nfoWritten;
@@ -749,7 +794,8 @@ private:
 		QString backdropPath;  // best backdrop for use as card fanart
 		double  voteAverage = 0.0;
 		int     voteCount   = 0;
-		QString title;          // localized per m_understoodLanguages' top resolvable entry, else unlocalized
+		QString title;          // see applyPreferredTitle(); unlocalized until that runs
+		bool    titleIsOriginal = false; // title is originalTitle because its language is understood
 		int     year        = 0;
 		QString imdbId;     // populated by fetchTmdbInfoByTitle; caller already has it for fetchTmdbInfo
 		int     tmdbId        = 0;
@@ -856,18 +902,20 @@ private:
 		return false;
 	}
 
-	// UserProfile::understoodLanguages(), in priority order, converted to the
-	// ISO 639-1 codes TMDB's `language` query param expects. Unmapped/duplicate
-	// codes are dropped.
-	QStringList preferredIso1Languages() const
+	// Picks the title to show: the original title when the movie's original
+	// language is one the user understands, otherwise the localized title for the
+	// top resolvable understood language, otherwise TMDB's unlocalized one.
+	void applyPreferredTitle(TmdbInfo& info)
 	{
-		QStringList out;
-		for (const QString& code : m_understoodLanguages) {
-			const QString iso1 = McLanguageFlags::toIso1(code);
-			if (!iso1.isEmpty() && !out.contains(iso1))
-				out << iso1;
+		const QStringList preferred = iso1Languages(m_understoodLanguages);
+		if (!info.originalTitle.isEmpty() && preferred.contains(info.originalLanguage)) {
+			info.title           = info.originalTitle;
+			info.titleIsOriginal = true;
+			return;
 		}
-		return out;
+		const QString localizedTitle = fetchLocalizedTitle(info.tmdbId, info.isTv, preferred);
+		if (!localizedTitle.isEmpty())
+			info.title = localizedTitle;
 	}
 
 	static TmdbInfo tmdbInfoFromMovieJson(const QJsonObject& obj, const QString& imdbId)
@@ -958,10 +1006,7 @@ private:
 		else
 			return {};
 
-		const QString localizedTitle =
-		    fetchLocalizedTitle(info.tmdbId, info.isTv, preferredIso1Languages());
-		if (!localizedTitle.isEmpty())
-			info.title = localizedTitle;
+		applyPreferredTitle(info);
 		return info;
 	}
 
@@ -1058,10 +1103,7 @@ private:
 		if (info.imdbId.isEmpty())
 			return info;
 
-		const QString localizedTitle =
-		    fetchLocalizedTitle(info.tmdbId, info.isTv, preferredIso1Languages());
-		if (!localizedTitle.isEmpty())
-			info.title = localizedTitle;
+		applyPreferredTitle(info);
 		return info;
 	}
 
@@ -1349,6 +1391,7 @@ void PosterManager::setTmdbApiKey(const QString& key)
 	emit workerTmdbKeyChanged(key);
 	if (!key.isEmpty() && m_queue)
 		m_queue->enqueueFile(-1);
+	enqueueOriginalTitleBackfill();
 }
 
 void PosterManager::setWriteNfoFiles(bool enabled)
@@ -1363,6 +1406,19 @@ void PosterManager::setUnderstoodLanguages(const QStringList& languages)
 	if (languages == m_understoodLanguages) return;
 	m_understoodLanguages = languages;
 	emit workerUnderstoodLanguagesChanged(languages);
+	enqueueOriginalTitleBackfill();
+}
+
+void PosterManager::enqueueOriginalTitleBackfill()
+{
+	if (!m_queue || m_tmdbApiKey.isEmpty() || m_understoodLanguages.isEmpty()) return;
+	QList<qint64> ids;
+	for (const FileTitleState& s : DatabaseManager::instance().identifiedFileTitleStates()) {
+		if (needsOriginalTitleFetch(s.originalLanguage, s.originalTitle, s.displayTitle,
+		                            m_understoodLanguages))
+			ids << s.fileId;
+	}
+	m_queue->enqueueBatch(ids);
 }
 
 void PosterManager::setRetryCooldownDays(int days)
