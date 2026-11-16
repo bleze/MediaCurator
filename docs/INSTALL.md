@@ -83,14 +83,17 @@ cmake --build build --parallel
 
 ## External tools (ffprobe + mkvmerge + dovi_tool)
 
-MediaCurator calls `ffprobe` (for scanning), `mkvmerge`/`mkvextract` (for
-remuxing and the Dolby Vision deep scan), and `dovi_tool` (for the Dolby
-Vision deep scan only) as external processes. `ffprobe` and `mkvmerge` are
-**not** bundled in the installer because of licensing constraints (LGPL /
-GPL); `dovi_tool` is MIT-licensed, so it carries no such restriction.
+MediaCurator calls `ffprobe` (for scanning), `mkvmerge`/`mkvpropedit` (for
+remuxing and flag edits), and `dovi_tool` (for the Dolby Vision deep scan
+only) as external processes. All of them are **bundled with the installer**
+in the `tools/` directory next to the executable, so there is normally
+nothing to set up. They are separate programs under their own licenses
+(FFmpeg: LGPL/GPL, MKVToolNix: GPL v2, dovi_tool: MIT) and are never linked
+into MediaCurator itself.
 
-Place them in the `tools/` directory next to the executable, or configure
-their paths in **Settings → Tools**:
+If you build from source, or want to use different versions, place them in
+the `tools/` directory next to the executable or configure their paths in
+**Settings → Tools**:
 
 | Tool | Download |
 |------|---------|

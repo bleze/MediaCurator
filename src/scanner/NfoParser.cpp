@@ -359,7 +359,47 @@ QString NfoParser::redecodeCachedSceneNfoText(const QString& cached)
 	return decodeSceneNfoBytes(raw);
 }
 
-QString NfoParser::bbcodeToHtml(const QString& text)
+// One image-markup shape (BBCode or pasted HTML): swaps every match for either
+// an inline <img> (when its URL is in inlineImages) or a plain "[image]" link.
+// The image URL is reported/looked up unescaped; the html itself stays escaped.
+static QString replaceImageMarkup(const QString& html, const QRegularExpression& re, int linkGroup, int srcGroup,
+                                  const QSet<QString>* inlineImages, QStringList* foundUrls)
+{
+	QString out;
+	qsizetype last = 0;
+	auto it = re.globalMatch(html);
+	while (it.hasNext()) {
+		const QRegularExpressionMatch m = it.next();
+		const QString link = m.captured(linkGroup).trimmed();
+		const QString src  = m.captured(srcGroup).trimmed();
+		QString key = src;
+		key.replace(QLatin1String("&amp;"), QLatin1String("&"));
+		if (foundUrls && !foundUrls->contains(key))
+			foundUrls->append(key);
+		out += QStringView(html).mid(last, m.capturedStart() - last);
+		if (inlineImages && inlineImages->contains(key))
+			out += QStringLiteral(R"(<a href="%1"><img src="%2"></a>)").arg(link, src);
+		else
+			out += QStringLiteral(R"(<a href="%1">[image]</a>)").arg(link);
+		last = m.capturedEnd();
+	}
+	out += QStringView(html).mid(last);
+	return out;
+}
+
+QStringList NfoParser::sceneNfoImageUrls(const QString& text)
+{
+	QStringList urls;
+	(void)convertBbcode(text, nullptr, &urls);
+	return urls;
+}
+
+QString NfoParser::bbcodeToHtml(const QString& text, const QSet<QString>* inlineImages)
+{
+	return convertBbcode(text, inlineImages, nullptr);
+}
+
+QString NfoParser::convertBbcode(const QString& text, const QSet<QString>* inlineImages, QStringList* foundUrls)
 {
 	QString html = text.toHtmlEscaped();
 
@@ -367,15 +407,35 @@ QString NfoParser::bbcodeToHtml(const QString& text)
 	// passes below don't turn it into an <a> nested inside another <a>
 	// (invalid HTML) — collapse the whole thing into one link up front.
 	static const QRegularExpression nestedUrlImgRe(
-		R"(\[url=(https?://[^\]]+)\]\s*\[img\]https?://[^\[]+\[/img\]\s*\[/url\])",
+		R"(\[url=(https?://[^\]]+)\]\s*\[img\](https?://[^\[]+)\[/img\]\s*\[/url\])",
 		QRegularExpression::CaseInsensitiveOption);
-	html.replace(nestedUrlImgRe, QStringLiteral(R"(<a href="\1">[image]</a>)"));
+	html = replaceImageMarkup(html, nestedUrlImgRe, 1, 2, inlineImages, foundUrls);
 
-	// Never fetched/embedded — this stays a local file viewer, not something
-	// that reaches out to whatever image host a downloaded NFO points at.
+	// Nothing is fetched here — an image only becomes an inline <img> once the
+	// caller (McSceneNfoDialog) has downloaded it and passes its URL back in
+	// via inlineImages; until then, and on any failure, it stays a link.
 	static const QRegularExpression imgRe(
 		R"(\[img\](https?://[^\[]+)\[/img\])", QRegularExpression::CaseInsensitiveOption);
-	html.replace(imgRe, QStringLiteral(R"(<a href="\1">[image]</a>)"));
+	html = replaceImageMarkup(html, imgRe, 1, 1, inlineImages, foundUrls);
+
+	// Some groups paste the image host's raw HTML embed snippet instead of
+	// BBCode (<a href="..."><img src="..."/></a>). Matched in its escaped form
+	// (toHtmlEscaped above turned < > " into entities), so only these exact
+	// shapes become markup.
+	static const QRegularExpression htmlLinkedImgRe(
+		R"(&lt;a\s(?:(?!&gt;).)*?href=(?:&quot;|')(https?://(?:(?!&quot;|'|&gt;)\S)+)(?:&quot;|')(?:(?!&gt;).)*&gt;\s*&lt;img\s(?:(?!&gt;).)*?src=(?:&quot;|')(https?://(?:(?!&quot;|'|&gt;)\S)+)(?:&quot;|')(?:(?!&gt;).)*&gt;\s*&lt;/a&gt;)",
+		QRegularExpression::CaseInsensitiveOption);
+	html = replaceImageMarkup(html, htmlLinkedImgRe, 1, 2, inlineImages, foundUrls);
+
+	static const QRegularExpression htmlImgRe(
+		R"(&lt;img\s(?:(?!&gt;).)*?src=(?:&quot;|')(https?://(?:(?!&quot;|'|&gt;)\S)+)(?:&quot;|')(?:(?!&gt;).)*&gt;)",
+		QRegularExpression::CaseInsensitiveOption);
+	html = replaceImageMarkup(html, htmlImgRe, 1, 1, inlineImages, foundUrls);
+
+	static const QRegularExpression htmlAnchorRe(
+		R"(&lt;a\s(?:(?!&gt;).)*?href=(?:&quot;|')(https?://(?:(?!&quot;|'|&gt;)\S)+)(?:&quot;|')(?:(?!&gt;).)*&gt;((?:(?!&lt;a\s|<a\s).)*?)&lt;/a&gt;)",
+		QRegularExpression::CaseInsensitiveOption);
+	html.replace(htmlAnchorRe, QStringLiteral(R"(<a href="\1">\2</a>)"));
 
 	static const QRegularExpression urlEqRe(
 		R"(\[url=(https?://[^\]]+)\](.*?)\[/url\])", QRegularExpression::CaseInsensitiveOption);

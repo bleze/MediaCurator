@@ -47,6 +47,7 @@ set(MC_SOURCES
     ui/ImdbSearchDialog.cpp
     ui/McSubtitleDownloadDialog.cpp
     ui/McSceneNfoDownloadDialog.cpp
+    ui/McSceneNfoDialog.cpp
     ui/McCalibrationDialog.cpp
     ui/McHighscoreBand.cpp
     ui/McHighscoreDialog.cpp
@@ -174,6 +175,7 @@ set(MC_HEADERS
     ../include/ui/ImdbSearchDialog.h
     ../include/ui/McSubtitleDownloadDialog.h
     ../include/ui/McSceneNfoDownloadDialog.h
+    ../include/ui/McSceneNfoDialog.h
     ../include/ui/McCalibrationDialog.h
     ../include/ui/McHighscoreBand.h
     ../include/ui/McHighscoreDialog.h

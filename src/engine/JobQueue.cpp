@@ -401,8 +401,13 @@ void JobQueue::runJob(qint64 jobId)
 	(void)tryStartJob(*jobOpt);
 }
 
-void JobQueue::dispatchJobs(qint64 excludeJobId)
+void JobQueue::dispatchJobs(qint64 excludeJobId, bool keepPreflightSkips)
 {
+	// Jobs whose pre-flight said "not right now" are only skipped for the
+	// dispatch round that discovered it — any fresh trigger retries them.
+	if (!keepPreflightSkips)
+		m_preflightSkippedJobIds.clear();
+
 	if (!m_running || m_paused) return;
 	if (m_reviewJobId >= 0) return;
 
@@ -451,7 +456,7 @@ void JobQueue::dispatchJobs(qint64 excludeJobId)
 
 	QSet<int> startedThisRound;
 	for (const JobRecord& job : jobs) {
-		if (job.id == excludeJobId)
+		if (job.id == excludeJobId || m_preflightSkippedJobIds.contains(job.id))
 			continue;
 		const int group = StorageGroupSettings::groupForFileId(job.fileId);
 		if (isGroupBusy(group) || startedThisRound.contains(group)) {
@@ -581,118 +586,214 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 
 	// ── Remux job via mkvmerge ───────────────────────────────────────────────
 
-	// Disk space guard — need at least as much free space as the source file.
-	// Network drives (UNC paths, mapped drives) may return isValid()=false or
-	// report inaccurate values; skip the check silently in that case.
 	std::optional<FileRecord> fileOpt;
-	if (fileId > 0) {
+	if (fileId > 0)
 		fileOpt = db.fileById(fileId);
-		if (fileOpt && fileOpt->sizeBytes > 0) {
-			const QStorageInfo storage(QFileInfo(fileOpt->path).absolutePath());
-			if (!storage.isValid() || storage.isReadOnly()) {
-				// Network drive or read-only volume — can't query free space, proceed.
-			} else if (storage.bytesAvailable() < fileOpt->sizeBytes) {
-				const double needed = fileOpt->sizeBytes / 1073741824.0;
-				const double avail  = storage.bytesAvailable() / 1073741824.0;
-				logDispatchDebug(QStringLiteral(
-				    "  tryStartJob job=%1: DISK SPACE GUARD skip — need %2 GB, have %3 GB free (\"%4\")")
-				    .arg(jobId).arg(needed, 0, 'f', 2).arg(avail, 0, 'f', 2).arg(fileOpt->filename));
-				emit warning(QStringLiteral(
-				    "Not enough disk space for \"%1\" — need %2 GB, have %3 GB free. Skipping for now.")
-				    .arg(fileOpt->filename)
-				    .arg(needed, 0, 'f', 2)
-				    .arg(avail,  0, 'f', 2));
-				return false;
-			}
-		}
-	}
 
-	// Pre-flight staleness check — ffprobe the file live and compare it against
-	// what the DB (and therefore this job's command line) currently believes the
-	// track layout is. Catches a source file that drifted out-of-band since the
-	// last scan before burning a full mkvmerge remux only to discover the same
-	// mismatch afterward via RemuxJob::onProcessFinished's post-mux verification.
-	// Sidecar subtitles aren't part of the ffprobe comparison — ffprobe never sees
-	// them — so they're only checked for continued existence on disk.
-	if (fileId > 0 && fileOpt) {
-		const QString preflightFfprobePath = ExternalTools::instance().ffprobePath();
-		FfprobeScanner preflightScanner(preflightFfprobePath);
-		const auto preflightResult = preflightScanner.scanFile(fileOpt->path);
-		if (preflightResult.success) {
-			const QList<StreamRecord> dbStreams = db.streamsForFile(fileId);
-
-			QList<StreamRecord> dbContainerStreams;
-			bool sidecarMissing = false;
-			for (const auto& s : dbStreams) {
-				if (s.isExternal) {
-					if (!s.externalPath.isEmpty() && !QFile::exists(s.externalPath))
-						sidecarMissing = true;
-				} else {
-					dbContainerStreams.append(s);
-				}
-			}
-
-			const ActionEngine::StreamDiff preflightDiff =
-				ActionEngine::diffStreams(dbContainerStreams, preflightResult.streams);
-
-			if (!preflightDiff.isEmpty() || sidecarMissing) {
-				qWarning() << "JobQueue: job" << jobId << "for file" << fileId
-				           << "is stale vs the current on-disk track layout"
-				           << (sidecarMissing ? "(missing sidecar file)" : "(track drift)")
-				           << "— dropping and rescanning instead of remuxing";
-				logDispatchDebug(QStringLiteral(
-				    "  tryStartJob job=%1: PREFLIGHT STALENESS — deleting job (%2) and rescanning")
-				    .arg(jobId).arg(sidecarMissing ? QStringLiteral("missing sidecar")
-				                                   : QStringLiteral("track drift")));
-				db.deleteJob(jobId);
-				emit jobFinished(jobId, false, 0);
-				rescanFile(fileId, {}, /*triggerReanalysis=*/true);
-				return false;
-			}
-		} else {
-			logDispatchDebug(QStringLiteral(
-			    "  tryStartJob job=%1: preflight ffprobe scan FAILED — proceeding anyway").arg(jobId));
-		}
-		// If the pre-flight scan itself fails (locked file, transient I/O hiccup on
-		// a network share, etc.), don't block the job on it — proceed and let the
-		// existing post-mux verification be the backstop.
-	}
-
-	// Reserve this storage-group slot and flip the job to "running" now, before
-	// the subtitle prefetch below — mirrors the tag_edit path's use of
-	// finishBusy above. Two reasons: (1) marks the group busy immediately, so a
-	// dispatchJobs() call re-entering while we're blocked waiting on the
-	// download (e.g. a different storage group's job finishing mid-wait) can't
-	// pick this same job or group again; (2) the UI's "queued → running"
-	// transition and auto-scroll fire right away instead of being delayed by
-	// however long the subtitle wait takes.
-	// Note: deliberately not holding a RunningJobSlot& across the subtitle wait
-	// below — a different storage group's job getting reentrantly dispatched
-	// during that wait can insert a new key into m_runningByGroup and rehash,
-	// invalidating any reference taken beforehand. Every access here is its own
-	// fresh operator[] lookup instead.
 	// Re-freeze the estimate (and its per-track breakdown) using the data available
 	// right now, immediately before the mux actually runs — replaces whatever was
 	// frozen at proposal time, which can be stale by the time a queued job's turn
 	// comes up. This is the number "Actual" is compared against in the job log.
 	db.updateJobEstimate(jobId, estimatedSavings, freshEstimate.streamEstimatesJson);
 
+	// Reserve this storage-group slot and flip the job to "running" now, before
+	// the pre-flight checks and the subtitle prefetch — mirrors the tag_edit
+	// path's use of finishBusy above. Two reasons: (1) marks the group busy
+	// immediately, so a dispatchJobs() call arriving while the pre-flight is out
+	// on its worker thread (or while launchRemux() is blocked in the subtitle
+	// wait) can't pick this same job or group again; (2) the UI's "queued →
+	// running" transition and auto-scroll fire right away instead of being
+	// delayed by however long the source drive takes to answer.
 	occupySlot(storageGroup, jobId, fileId, estimatedSavings);
 	m_runningByGroup[storageGroup].finishBusy = true;
-#ifdef Q_OS_WIN
-	// Capture the folder's timestamp now, before the subtitle prefetch touches
-	// it — restored once this job's mux actually finishes mutating the folder,
-	// whichever way that turns out (success, cancel, or failure). Keyed by
-	// jobId (not kept on the RunningJobSlot) so it survives cancelJob()'s
-	// releaseSlot() call, which happens before the killed process's async
-	// cleanup — and thus the restore — actually runs.
-	if (fileOpt) {
-		const QFileInfo dirFi(QFileInfo(fileOpt->path).absolutePath());
-		m_pendingDirTimestamps[jobId] = DirTimestamp{ dirFi.birthTime(), dirFi.lastModified() };
-	}
-#endif
+	const quint64 activation = m_runningByGroup[storageGroup].activation;
 	db.updateJobStatus(jobId, "running");
 	emit jobStarted(jobId);
+
+	if (!fileOpt) {
+		launchRemux(job, fileOpt, storageGroup);
+		return true;
+	}
+
+	// Pre-flight, off the UI thread. Every step here touches the source volume,
+	// and the first one to hit a spun-down NAS blocks until the drive has woken
+	// (~20s) — run inline, that froze the whole window for the duration:
+	//   - Disk space guard: need at least as much free space as the source file.
+	//     Network drives (UNC paths, mapped drives) may return isValid()=false or
+	//     report inaccurate values; the check is skipped silently in that case.
+	//   - Staleness check: ffprobe the file live so onRemuxPreflightDone() can
+	//     compare it against what the DB (and therefore this job's command line)
+	//     currently believes the track layout is. Catches a source file that
+	//     drifted out-of-band since the last scan before burning a full mkvmerge
+	//     remux only to discover the same mismatch afterward via RemuxJob's
+	//     post-mux verification. Sidecar subtitles aren't part of the ffprobe
+	//     comparison — ffprobe never sees them — so they're only checked for
+	//     continued existence on disk.
+	//   - Folder timestamp: captured before the subtitle prefetch / mux touch the
+	//     folder, restored once the job is done with it.
+	// No raw `this`: the task can outlive this object on app shutdown, so the
+	// result is marshaled through qApp with a QPointer guard checked on the
+	// main thread (same pattern as commitReview()).
+	emit phaseChanged(jobId, tr("Checking source file"));
+	const QList<StreamRecord> dbStreams = db.streamsForFile(fileId);
+	QStringList sidecarPaths;
+	for (const auto& s : dbStreams) {
+		if (s.isExternal && !s.externalPath.isEmpty())
+			sidecarPaths << s.externalPath;
+	}
+	const QString preflightFfprobePath = ExternalTools::instance().ffprobePath();
+
+	QThreadPool::globalInstance()->start(
+	    [self = QPointer<JobQueue>(this), job, file = *fileOpt, dbStreams, sidecarPaths,
+	     preflightFfprobePath, storageGroup, activation]() {
+		RemuxPreflight r;
+		const QString dirPath = QFileInfo(file.path).absolutePath();
+
+		if (file.sizeBytes > 0) {
+			const QStorageInfo storage(dirPath);
+			if (storage.isValid() && !storage.isReadOnly()) {
+				r.availableBytes = storage.bytesAvailable();
+				r.notEnoughSpace = r.availableBytes < file.sizeBytes;
+			}
+		}
+
+		if (!r.notEnoughSpace) {
+			FfprobeScanner preflightScanner(preflightFfprobePath);
+			const auto scan = preflightScanner.scanFile(file.path);
+			r.scanSucceeded = scan.success;
+			r.liveStreams   = scan.streams;
+			if (r.scanSucceeded) {
+				for (const QString& path : sidecarPaths) {
+					if (!QFile::exists(path)) {
+						r.sidecarMissing = true;
+						break;
+					}
+				}
+			}
+#ifdef Q_OS_WIN
+			const QFileInfo dirFi(dirPath);
+			r.dirCreated  = dirFi.birthTime();
+			r.dirModified = dirFi.lastModified();
+#endif
+		}
+
+		QMetaObject::invokeMethod(qApp, [self, job, file, dbStreams, storageGroup, activation, r]() {
+			if (self)
+				self->onRemuxPreflightDone(job, file, dbStreams, storageGroup, activation, r);
+		}, Qt::QueuedConnection);
+	});
+	return true;
+}
+
+void JobQueue::onRemuxPreflightDone(const JobRecord& job, const FileRecord& file,
+                                    const QList<StreamRecord>& dbStreams, int storageGroup,
+                                    quint64 activation, const RemuxPreflight& r)
+{
+	const qint64 jobId  = job.id;
+	const qint64 fileId = job.fileId;
+
+	// The UI stayed live while the checks were out, so the user may have
+	// cancelled this job (cancelJob() released the slot) or the whole queue, and
+	// a dispatch may since have handed the group's slot to another job — or to a
+	// fresh activation of this same one. In all of those cases this pre-flight
+	// no longer owns the slot and must not act on it; the cancel path already
+	// put the job back to "queued".
+	const auto slotIt = m_runningByGroup.constFind(storageGroup);
+	if (slotIt == m_runningByGroup.cend() || slotIt->activation != activation) {
+		logDispatchDebug(QStringLiteral(
+		    "  preflight job=%1: slot released/re-assigned while checks were out — dropping result")
+		    .arg(jobId));
+		return;
+	}
+
+	auto& db = DatabaseManager::instance();
+
+	if (r.notEnoughSpace) {
+		const double needed = file.sizeBytes / 1073741824.0;
+		const double avail  = r.availableBytes / 1073741824.0;
+		logDispatchDebug(QStringLiteral(
+		    "  preflight job=%1: DISK SPACE GUARD skip — need %2 GB, have %3 GB free (\"%4\")")
+		    .arg(jobId).arg(needed, 0, 'f', 2).arg(avail, 0, 'f', 2).arg(file.filename));
+
+		// Back to "queued", and skipped for the rest of this dispatch round so the
+		// continuation below moves on to the next candidate instead of picking
+		// this same job straight back up.
+		releaseSlot(storageGroup);
+		db.requeueRunningJobs({ jobId });
+		emit phaseChanged(jobId, QString());
+		emit jobRequeued(jobId);
+		emit warning(QStringLiteral(
+		    "Not enough disk space for \"%1\" — need %2 GB, have %3 GB free. Skipping for now.")
+		    .arg(file.filename)
+		    .arg(needed, 0, 'f', 2)
+		    .arg(avail,  0, 'f', 2));
+		m_preflightSkippedJobIds.insert(jobId);
+		if (m_running && !m_paused) dispatchJobs(-1, /*keepPreflightSkips=*/true);
+		return;
+	}
+
+	if (r.scanSucceeded) {
+		QList<StreamRecord> dbContainerStreams;
+		for (const auto& s : dbStreams) {
+			if (!s.isExternal)
+				dbContainerStreams.append(s);
+		}
+
+		const ActionEngine::StreamDiff preflightDiff =
+			ActionEngine::diffStreams(dbContainerStreams, r.liveStreams);
+
+		if (!preflightDiff.isEmpty() || r.sidecarMissing) {
+			qWarning() << "JobQueue: job" << jobId << "for file" << fileId
+			           << "is stale vs the current on-disk track layout"
+			           << (r.sidecarMissing ? "(missing sidecar file)" : "(track drift)")
+			           << "— dropping and rescanning instead of remuxing";
+			logDispatchDebug(QStringLiteral(
+			    "  preflight job=%1: PREFLIGHT STALENESS — deleting job (%2) and rescanning")
+			    .arg(jobId).arg(r.sidecarMissing ? QStringLiteral("missing sidecar")
+			                                     : QStringLiteral("track drift")));
+			releaseSlot(storageGroup);
+			db.deleteJob(jobId);
+			emit jobFinished(jobId, false, 0);
+			rescanFile(fileId, {}, /*triggerReanalysis=*/true);
+			if (m_running && !m_paused) dispatchJobs(-1, /*keepPreflightSkips=*/true);
+			return;
+		}
+	} else {
+		// If the pre-flight scan itself fails (locked file, transient I/O hiccup on
+		// a network share, etc.), don't block the job on it — proceed and let the
+		// existing post-mux verification be the backstop.
+		logDispatchDebug(QStringLiteral(
+		    "  preflight job=%1: preflight ffprobe scan FAILED — proceeding anyway").arg(jobId));
+	}
+
+#ifdef Q_OS_WIN
+	// Keyed by jobId (not kept on the RunningJobSlot) so it survives cancelJob()'s
+	// releaseSlot() call, which happens before the killed process's async
+	// cleanup — and thus the restore — actually runs.
+	m_pendingDirTimestamps[jobId] = DirTimestamp{ r.dirCreated, r.dirModified };
+#endif
+
+	emit phaseChanged(jobId, QString());
+	launchRemux(job, file, storageGroup);
+}
+
+// Second half of starting a remux job: the slot is already reserved and the job
+// already marked "running" by tryStartJob(), and the pre-flight checks passed.
+void JobQueue::launchRemux(const JobRecord& job, const std::optional<FileRecord>& fileOpt, int storageGroup)
+{
+	auto& db = DatabaseManager::instance();
+
+	const qint64  jobId           = job.id;
+	const qint64  fileId          = job.fileId;
+	const QString commandArgsJson = job.commandArgsJson;
+	const QString flagChangesJson = job.flagChangesJson;
+	const QString descriptionText = job.descriptionText;
+
+	// Note: deliberately not holding a RunningJobSlot& across the subtitle wait
+	// below — a different storage group's job getting reentrantly dispatched
+	// during that wait can insert a new key into m_runningByGroup and rehash,
+	// invalidating any reference taken beforehand. Every access here is its own
+	// fresh operator[] lookup instead.
 
 	// Sidecar merging is about to absorb whatever external subtitles exist right
 	// now (streams fetched just below) — give a missing one a short, bounded
@@ -719,7 +820,7 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 			if (slotIt == m_runningByGroup.cend() || slotIt->jobId != jobId)
 				m_pendingDirTimestamps.remove(jobId);
 #endif
-			return true;
+			return;
 		}
 	}
 
@@ -884,7 +985,7 @@ bool JobQueue::tryStartJob(const JobRecord& job)
 	});
 
 	slot.remux->run();
-	return true;
+	return;
 }
 
 bool JobQueue::consumeAbortedJob(qint64 jobId, int storageGroup)

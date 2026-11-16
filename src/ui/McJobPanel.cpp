@@ -1,4 +1,5 @@
 #include "ui/McJobPanel.h"
+#include "ui/McSceneNfoDialog.h"
 #include "core/AppSettings.h"
 #include "core/StorageGroupSettings.h"
 #include "ui/McBulkSummaryDialog.h"
@@ -689,41 +690,7 @@ void McJobPanel::setupUi()
 		const QString art    = DatabaseManager::instance().sceneNfoText(fileId);
 		if (art.isEmpty()) return;
 
-		auto* dlg = new QDialog(this);
-		dlg->setAttribute(Qt::WA_DeleteOnClose);
-		dlg->setWindowTitle(tr("Scene NFO — %1").arg(QFileInfo(path).completeBaseName()));
-
-		auto* layout = new QVBoxLayout(dlg);
-		auto* edit = new QTextBrowser(dlg);
-		edit->setOpenExternalLinks(true);
-		edit->setLineWrapMode(QTextEdit::NoWrap);
-		QFont mono("Courier New", 9);
-		mono.setStyleHint(QFont::Monospace);
-		edit->setFont(mono);
-		edit->setHtml(QStringLiteral("<pre>%1</pre>").arg(NfoParser::bbcodeToHtml(art)));
-		layout->addWidget(edit);
-
-		auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
-		connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
-		layout->addWidget(buttons);
-
-		// Size to the actual content, capped at the screen size minus a 50px
-		// margin on each edge — see McMainWindow's identical nfoViewRequested
-		// handler for the full rationale.
-		const QRect avail = screen()->availableGeometry();
-		const QSize maxSize = avail.size() - QSize(100, 100);
-		QTextDocument* doc = edit->document();
-		doc->setTextWidth(-1);
-		const int idealW = qRound(doc->idealWidth());
-		doc->setTextWidth(idealW);
-		const int idealH = qRound(doc->size().height());
-		const QSize dlgSize(qBound(400, idealW + 48, maxSize.width()),
-		                     qBound(200, idealH + 90, maxSize.height()));
-		dlg->resize(dlgSize);
-		const QPoint winCenter = window()->frameGeometry().center();
-		dlg->move(winCenter - QPoint(dlgSize.width() / 2, dlgSize.height() / 2));
-
-		dlg->show();
+		(new McSceneNfoDialog(path, art, this))->show();
 	});
 
 	// Stale size cache: the cache is keyed by row number. After a model reset the
@@ -1976,12 +1943,7 @@ void McJobPanel::onStartPause()
 		// (e.g. the OpenSubtitles quota ran out mid-scan) — retry them now that
 		// processing is about to start, rather than only at scan time.
 		SubtitleManager::instance().enqueueBatch(m_model->fileIdsByStatus("queued"));
-		// The disk-space check in startJob() calls QStorageInfo, which can stall
-		// for several seconds when the target drive is asleep (e.g. NAS spin-up).
-		// Show a wait cursor so the UI doesn't look frozen during that window.
-		QApplication::setOverrideCursor(Qt::WaitCursor);
 		m_queue->start();
-		QApplication::restoreOverrideCursor();
 	}
 	updateFooter();
 }
@@ -2014,11 +1976,7 @@ void McJobPanel::onStartWithGoal()
 
 	SubtitleManager::instance().enqueueBatch(m_model->fileIdsByStatus("queued"));
 
-	// Same stall risk as onStartPause() — the disk-space check calls QStorageInfo,
-	// which can block for seconds on a sleeping/NAS drive.
-	QApplication::setOverrideCursor(Qt::WaitCursor);
 	m_queue->startWithGoal(dlg.goalBytes());
-	QApplication::restoreOverrideCursor();
 
 	updateFooter();
 }

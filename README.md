@@ -1,6 +1,12 @@
 # MediaCurator
 
-**MediaCurator** is a cross-platform desktop application that helps you reclaim hard drive space by intelligently stripping unwanted audio tracks and subtitle streams from your movie collection — without re-encoding the video.
+[![Latest release](https://img.shields.io/github/v/release/bleze/MediaCurator)](https://github.com/bleze/MediaCurator/releases/latest)
+[![Build](https://github.com/bleze/MediaCurator/actions/workflows/build.yml/badge.svg)](https://github.com/bleze/MediaCurator/actions/workflows/build.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
+**MediaCurator** is a desktop application that helps you reclaim hard drive space by stripping unwanted audio tracks and subtitle streams from your video library — without re-encoding the video. Windows is the primary platform; macOS and Linux builds are available too.
+
+**[Download the latest release](https://github.com/bleze/MediaCurator/releases/latest)** · [Installation guide](docs/INSTALL.md) · [Full feature reference](docs/FEATURES.md)
 
 ## What It Does
 
@@ -8,7 +14,17 @@ Modern movie files often ship with 8–15 audio tracks covering every language u
 
 MediaCurator scans your library, identifies which tracks you actually want, and queues up lossless remux operations (via **mkvmerge**) to remove the rest. Because the video stream is never touched, there is zero quality loss and no re-encoding — processing is far faster than a transcode, though large files can still take several minutes.
 
-**Practical savings:** removing a 5.1 DTS-HD MA English track plus a Dolby Atmos track from a 4K Blu-ray rip can save 2–4 GB per file. For a library of 200 films that is 400–800 GB — the equivalent of a mid-size NAS drive.
+**Practical savings:** removing a 5.1 DTS-HD MA English track plus a Dolby Atmos track from a 4K Blu-ray rip can save 2–4 GB per file. For a library of 200 films that is 400–800 GB — at upwards of $300 for a 16 TB NAS drive, that is real money, or simply a proportionally larger library on the hardware you already own.
+
+## Is It Safe?
+
+- **Nothing is touched until you approve it.** Scanning and analysis only read your files; every proposed removal sits in the job queue for review first.
+- **Preview before you commit.** The "What If" simulation shows affected files and estimated savings without creating a single job.
+- **Lossless.** Tracks are removed by remuxing; video and the audio you keep are copied bit-for-bit.
+- **Verified before it replaces anything.** The new file is written to a temporary file and checked against the expected track layout; the original is only replaced once the remux has succeeded. If the result doesn't match, you are asked to review it instead.
+- **Stale jobs are dropped, not run.** If a file changed on disk since its job was proposed, MediaCurator re-scans it rather than remuxing against outdated information.
+
+Once a job has completed, the removed tracks are gone — keep a backup of anything you can't replace.
 
 ## Screenshots
 
@@ -22,56 +38,74 @@ For a small test library of 5 movies, here is what MediaCurator looks like in ac
 |---|---|
 | ![Job queue with pending removals](docs/screenshots/job-queue.png)<br>*Proposed track removals queued for review — nothing is touched until you approve.* | ![Completed job queue showing space saved per file](docs/screenshots/job-queue-done.png)<br>*Finished jobs show exactly how much space was reclaimed, file by file.* |
 
-After setting rules to retain only english and danish audio and subtitle tracks (no commentary), the estimate is that we can reclaim 10 GB of disk space, and the final result is exactly that — **10 GB** of irrelevant or redundant audio tracks and subtitles removed. 9% disk space reclaimed.
+After setting rules to retain only English and Danish audio and subtitle tracks (no commentary), the estimate is that we can reclaim 10 GB of disk space, and the final result is exactly that — **10 GB** of irrelevant or redundant audio tracks and subtitles removed. 9% disk space reclaimed.
 
 ## Features
 
-- **Library scanning** — Point MediaCurator at a folder and it catalogues every video file with full stream information (codec, language, channels, resolution, HDR format). Detailed HDR metadata (MaxCLL/MaxFALL light levels, mastering display primaries) is captured too and shown in the video badge's tooltip. Incremental rescans skip unchanged files.
-- **Storage groups** — Assign each watched folder to a **Storage Group** in **Manage Folders**. Group folders that share the same drive or NAS volume together; different groups can scan and remux in parallel, while folders in the same group are processed one at a time. Configure how many groups (2–4) appear in **Settings → Performance**. Before starting a remux, MediaCurator checks that the target folder (and local staging folder, if enabled) has enough free space.
-- **Smart rule engine** — Configurable rules decide which tracks to keep. Examples: keep any English audio, keep the highest-quality track regardless of language, never remove the only audio track, always keep forced subtitles.
-- **Quick Analyze** — Run the rule engine over only the files that have never been analyzed before, instead of the whole library. Files that already have a job (proposed, queued, done, or failed) are skipped, so it's fast after a scan turns up a handful of new files. Use the regular "Analyze Library" instead when you've changed a policy setting and want it applied to already-analyzed files too.
-- **File card view** — Each file is shown as a card with colour-coded badges for video, audio, and subtitle streams. Streams proposed for removal are shown with a strikethrough. Right-click any badge to manually override the rule decision.
-- **Stream flag editing** — Toggle Default, Forced, SDH, Commentary, and Original flags on any track directly from the card. Changes are applied losslessly via mkvpropedit (tag edit) or embedded into the next remux — no re-encode needed.
-- **Subtitle download** — Right-click any file and choose "Download Subtitles…" to fetch missing subtitle languages from [OpenSubtitles.com](https://www.opensubtitles.com). Searches by IMDb ID, downloads in parallel, and saves Kodi/Plex-compatible `.srt` sidecar files (e.g. `Movie.Title.2001.en.srt`). Requires a free OpenSubtitles API key. Some subtitles are served mislabeled as `.srt` when the actual content is MicroDVD (frame-based timing) — MediaCurator detects this and converts it to genuine SubRip automatically, so it still merges cleanly into the remux. Each candidate's cue timing is also cross-checked against an existing subtitle track already on the file (embedded or sidecar, any language) — since dialogue lands at the same moments regardless of language, this catches mistimed or wrong-release downloads (fixed offsets, framerate drift) that a duration-only check would miss, and files without any existing subtitle to compare against fall back to that coarser check.
-- **Sidecar subtitle support** — External `.srt`/`.ass`/`.sup` files alongside a video are detected automatically, shown as subtitle badges on the card, and absorbed into the output `.mkv` when a remux job runs. Optionally, an unlabeled sidecar's dialogue is sampled to detect its language and the file is renamed to include the correct code.
-- **ISO and non-MKV support** — Blu-ray ISO, DVD ISO, MP4, AVI, and other container formats are fully supported. The output is always a clean `.mkv`; the original file is replaced on success.
-- **Cover-art removal** — Embedded cover-art video streams (MJPEG or PNG, common in rips) are detected and can be stripped to save a few MB per file.
-- **Job queue** — Proposed removals are queued as jobs. Review them before running. Jobs in different storage groups can run in parallel (one active job per group). Right-click any queued job to start it immediately when its group is idle, retry failed jobs, or remove it. Cancel individual jobs or the whole queue. Before remuxing, MediaCurator re-checks the file's on-disk track layout against what the job expected and re-scans instead of remuxing against stale data if it drifted since the job was proposed. Hover a job's savings bar for the exact before/after size.
-- **Advanced filtering & sorting** — Quick-filter pills for 4K, Dolby Vision, HDR, Atmos, TrueHD, DTS-HD, and DTS:X. Text search covers filenames, folder names, and stream metadata. Sort by name, newest, oldest, largest, or last scanned. Status filter shows all files, only those with pending proposals, or only those missing a poster.
-- **"What If" simulation** — Run the rule engine across your entire library without creating any jobs. Preview the number of affected files, tracks to be removed, and estimated GB saved before committing to anything.
-- **Ignore files** — Right-click any card to hide a file from the library (useful for extras and bonus content). Ignored files can be revealed again with a toggle.
-- **Editions & 3D detection** — Each file's cut (Director's Cut, Theatrical, Extended, ...) and 3D packing format (Half-SBS, VSBS, MVC, ...) are detected from a Kodi-style `{edition-...}` tag or the filename, and shown as a badge on its card.
-- **Group by Movie** — Sort the library by movie instead of by file to collapse every edition of the same title (theatrical, director's cut, 3D release, ...) into a single mega card listing each version underneath. A "duplicates" filter surfaces only movies where two or more files share the same edition label, so you can spot accidental re-downloads before they eat disk space.
-- **Poster art** — Posters are fetched from TMDB automatically when an NFO/IMDb ID is available, or you can double-click the poster column to search and link a movie. Local artwork takes priority over TMDB, using the same naming conventions as Kodi and Plex: `<video-basename>-poster.<ext>`, or — for a movie in its own folder — the bare `poster`/`folder`/`cover`/`movie`/`default`.`<ext>` (`.jpg`, `.jpeg`, `.png`, or Kodi's legacy `.tbn`). Posters are cached locally. Multiple TMDB downloads run in parallel (configurable 1–12 workers in **Settings → Performance**). Select multiple cards to refresh their posters (and fanart) in one batch.
-- **Backdrop art** — Pick a backdrop for any matched movie from a TMDB thumbnail grid, or supply your own using the same Kodi/Plex conventions: `<video-basename>-fanart.<ext>`, or (movie-owns-its-folder only) `fanart`/`backdrop`/`background`/`art`.`<ext>`. It's cached locally and shown as a background behind the file card, with opacity adjustable in **Settings → Library Cards** and a live preview as you drag the slider.
-- **IMDb / TMDB integration** — Search TMDB by title, browse results with poster thumbnails, and match a movie by hand when automatic identification isn't confident enough.
-- **NFO writer** *(opt-in)* — Save each matched movie's IMDb ID, TMDB ID, title, original title, release year, and TMDB rating to a Kodi/Plex-compatible `.nfo` file next to the video, so identification survives a database wipe or a rescan even without MediaCurator's own database. The `<title>` written is the same one the library shows: the movie's original title when its original language is on your **Settings → Languages** Understood Languages list (a Danish film stays *Fasandræberne* rather than *The Absent One* if you understand Danish), otherwise the first language on that list TMDB actually has a translation for, in your chosen priority order — while `<originaltitle>` is always included too, so Kodi's own "Show original titles for movies" setting can prefer it on your machine without changing what other viewers of a shared library see. MediaCurator only ever *enriches* an NFO, never rewrites one from scratch: on an existing Kodi-style NFO, each tag it manages is individually added or updated and everything else in the file is left untouched; a scene-release NFO's free-form text has just its IMDb id corrected in place rather than being replaced; and a brand-new NFO is only created when none exists at all. Off by default (**Settings → Other**).
-- **Scene NFO viewer** — Files with a genuine scene-release `.nfo` (release-group ASCII/ANSI art and notes, as opposed to a Kodi-style metadata NFO) show a small "NFO" badge on their card; click it to view the NFO in a read-only window, sized to fit its content and centered over the app. Handles the CP437 encoding scene NFOs almost universally use for their art, so box-drawing and block-shading characters render correctly instead of as garbled text, and renders the common `[b]`/`[color=...]`/`[url]` forum markup some release templates use rather than showing the raw tags (links open in your browser; images are never fetched automatically). Detected and cached in the database at scan time, so viewing one never touches the disk — important if your library lives on a NAS drive that spins down when idle.
-- **Scene NFO download** *(opt-in)* — Right-click any file and choose "Download Scene NFO…" to fetch its original scene-release `.nfo` from [srrDB](https://www.srrdb.com/), for when a local one is missing, wrong, or corrupted beyond recovery. Tries an exact release-name match first, then falls back to a title/year search restricted to the file's own resolution when the filename has been renamed (e.g. by Radarr/Sonarr) — if more than one release could still match, you pick from a list. The result is always saved to the database so the Scene NFO viewer above picks it up immediately; it's also written to disk as a real `.nfo` file unless "Write .nfo files" is enabled, since MediaCurator would otherwise be writing its own Kodi-style XML to that same filename. Off by default (**Settings → Other**) — srrDB only archives true *scene* releases, not the wider P2P/web-dl ecosystem, so coverage is inherently spotty outside of that (UHD Remuxes especially, since remuxing itself isn't a scene practice).
-- **Play in default player** — Play any file directly from the library view, using whatever app is registered as your system's default for that file type.
-- **Dark mode support** — Uses the system colour scheme; icons and UI elements adapt automatically.
-- **Automatic updates** — MediaCurator checks GitHub for new releases and lets you install with one click — it downloads the installer, runs it silently in the background, and relaunches automatically once done. You can also skip a version or check manually.
-- **Money Saved estimate** — The status bar shows an estimated dollar value next to your reclaimed space, based on live average HDD pricing fetched periodically from [DatacenterDisk.com](https://datacenterdisk.com). By default this also includes space reclaimed by manually deleting files from within the app (e.g. clearing out flagged duplicates) — toggle this off in **Settings → Interface** if you'd rather see mkvmerge savings only.
-- **Leaderboard** *(opt-in)* — Compare total space reclaimed against other MediaCurator users on a global leaderboard. Off by default; requires a personal write key for the leaderboard backend. Only counts space saved by mkvmerge track removal — manually deleted files are never included here, regardless of the local Money Saved setting above.
-- **NZBGet / SABnzbd integration** *(opt-in)* — Configure your NZBGet and/or SABnzbd server in **Settings → Downloads** to see their combined live download queue right above the library, as a slim progress band and a full queue dialog (with the same 4K/3D/Edition badges the library cards use). Optionally, MediaCurator can automatically Quick Scan and Quick Analyze as soon as either client's post-processing (unpack, par-repair, sort/rename scripts) finishes a download, so newly downloaded movies show up ready for review without lifting a finger. Built on a provider-agnostic download-client interface, so support for other download clients can be added the same way.
+A summary — see the [feature reference](docs/FEATURES.md) for the full detail on each.
 
-## Why Disk Space Matters
+### Library & scanning
 
-Hard drives are not cheap. A 16 TB NAS drive for home media storage costs upwards of $300. Reducing each movie's size by 10–30% directly translates to a proportionally larger library on the same hardware — or a lower storage bill overall.
+- **Library scanning** — Catalogues every video file with full stream information (codec, language, channels, resolution, HDR format). Incremental rescans skip unchanged files.
+- **Storage groups** — Folders on different drives or NAS volumes scan and remux in parallel; folders sharing a volume are processed one at a time.
+- **File card view** — Each file is a card with colour-coded badges for its video, audio, and subtitle streams; tracks proposed for removal are struck through.
+- **Filtering & sorting** — Quick-filter pills (4K, Dolby Vision, HDR, Atmos, TrueHD, DTS-HD, DTS:X), text search across filenames and stream metadata, and several sort orders.
+- **Group by Movie** — Collapses every edition of a title into one card, with a "duplicates" filter to spot accidental re-downloads.
+- **Editions, 3D & categories** — Detects the cut (Director's Cut, Extended, ...), the 3D format, and whether a file is a Movie, TV, Documentary, or Misc.
+- **Dolby Vision deep scan** *(opt-in)* — Tells you whether a Dolby Vision file's enhancement layer is FEL or MEL.
+- **Ignore files & play** — Hide extras from the library, and play any file in your system's default player.
+
+### Rules & analysis
+
+- **Smart rule engine** — Configurable rules decide which tracks to keep: your languages, the highest-quality track, never the only audio track, always forced subtitles.
+- **Quick Analyze** — Runs the rules over only the files that have never been analyzed, so it's fast after a scan turns up a few new ones.
+- **"What If" simulation** — Runs the rules across the whole library without creating jobs, and shows the estimated space saved.
+- **Any container in, MKV out** — Blu-ray/DVD ISO, MP4, AVI and other formats are supported; the output is always a clean `.mkv`.
+- **Cover-art removal** — Embedded cover-art streams can be stripped too.
+
+### Job queue & track editing
+
+- **Job queue** — Review proposed removals, then run them. One job per storage group runs at a time; start, retry, cancel, or remove individual jobs.
+- **Manual overrides** — Right-click any track badge to override the rule decision for that file.
+- **Stream flag editing** — Toggle Default, Forced, SDH, Commentary, and Original flags straight from the card, applied losslessly via mkvpropedit.
+
+### Subtitles
+
+- **Subtitle download** — Fetch missing subtitle languages from [OpenSubtitles.com](https://www.opensubtitles.com), with timing cross-checked against a subtitle already on the file to catch wrong-release downloads.
+- **Sidecar subtitles** — External `.srt`/`.ass`/`.sup` files are detected, shown on the card, and merged into the `.mkv` when a job runs.
+
+### Artwork & metadata
+
+- **Posters & backdrops** — Fetched from TMDB or picked up from local artwork using Kodi/Plex naming conventions.
+- **IMDb / TMDB matching** — Automatic identification, with a search dialog to match a movie by hand.
+- **NFO writer** *(opt-in)* — Saves IDs, titles, year, and rating to a Kodi/Plex-compatible `.nfo`, enriching an existing one rather than rewriting it.
+- **Scene NFO viewer** — Shows a release's original `.nfo` with its ASCII art rendered correctly and linked screenshots displayed inline.
+- **Scene NFO download** *(opt-in)* — Fetches a missing or damaged scene `.nfo` from [srrDB](https://www.srrdb.com/).
+
+### Integrations & extras
+
+- **NZBGet / SABnzbd** *(opt-in)* — Shows the live download queue above the library and can scan and analyze new downloads automatically.
+- **Automatic updates** — Checks GitHub for new releases and installs them with one click.
+- **Money Saved estimate** — Puts a dollar value on your reclaimed space, based on live average HDD pricing.
+- **Leaderboard** *(opt-in)* — Compare total space reclaimed with other users.
+- **Dark mode** — Follows the system colour scheme.
 
 ## Requirements
 
-**The installer bundles all required tools** — no separate downloads needed.
+**The installer bundles all required tools** — no separate downloads needed. See the [installation guide](docs/INSTALL.md) for per-platform steps.
 
-| Tool | Role | Notes |
-|------|------|-------|
-| ffprobe | Stream analysis | Bundled |
-| mkvmerge | Lossless remux | Bundled |
-| mkvpropedit | Flag/tag edits without remux | Bundled |
+| Tool | Role | License |
+|------|------|---------|
+| [ffprobe](https://ffmpeg.org/) (FFmpeg) | Stream analysis | LGPL/GPL, depending on build |
+| [mkvmerge / mkvpropedit](https://mkvtoolnix.download/) (MKVToolNix) | Lossless remux, flag edits | GPL v2 |
+| [dovi_tool](https://github.com/quietvoid/dovi_tool) | Dolby Vision deep scan | MIT |
 
-For a TMDB API key (free), visit [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). Enter it in **Settings** to enable poster art and movie search. The app works without it.
+These are separate programs that MediaCurator runs as external processes; they are not linked into the application and remain under their own licenses.
 
-For subtitle download, a free OpenSubtitles API key is required. Register at [opensubtitles.com](https://www.opensubtitles.com) and enter the key in **Settings → OpenSubtitles**.
+Optional API keys, both free — the app works without them:
+
+- **TMDB** — enables poster art and movie search. Get a key at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) and enter it in **Settings**.
+- **OpenSubtitles** — enables subtitle download. Register at [opensubtitles.com](https://www.opensubtitles.com) and enter the key in **Settings → OpenSubtitles**.
 
 ### Platform support
 
@@ -83,7 +117,7 @@ For subtitle download, a free OpenSubtitles API key is required. Register at [op
 
 ## Building from Source
 
-MediaCurator is written in C++20 with Qt 6.8+. There is no external package manager — `nlohmann/json` is vendored at `third_party/`.
+MediaCurator is written in C++20 with Qt 6.8+. There is no external package manager — dependencies are vendored under `third_party/`.
 
 ```powershell
 # Windows
@@ -97,26 +131,13 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-See `docs/BUILDING.md` for detailed environment setup and CMakeUserPresets configuration.
+See [docs/BUILDING.md](docs/BUILDING.md) for detailed environment setup and CMakeUserPresets configuration.
 
-After building, place the tool binaries alongside the executable:
-
-```
-<build output>/
-  MediaCurator.exe
-  tools/
-    windows/
-      ffprobe.exe
-      mkvtoolnix/
-        mkvmerge.exe
-        mkvpropedit.exe
-```
-
-See `scripts/setup_tools.ps1` for a script that downloads and places these automatically.
+The external tools are not in the repository. Run `scripts/setup_tools.ps1` (Windows) or `scripts/setup_tools.sh` (macOS / Linux) to download them into `tools/`; the build copies that folder next to the executable. See [tools/README.md](tools/README.md) for the expected layout.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+MediaCurator itself is licensed under the [Apache License 2.0](LICENSE). The bundled external tools listed under [Requirements](#requirements) keep their own licenses.
 
 ## Donate
 
@@ -126,8 +147,3 @@ If MediaCurator saves you money on storage or just makes managing your media lib
 |----------|------|-----|
 | PayPal | [paypal.me/blezedk](https://paypal.me/blezedk) | ~3% |
 | ⚡ Lightning | `bleze@cake.cash` | ~0% |
-
-## Roadmap
-
-- **Fanart export to disk** — save the selected backdrop as `fanart.jpg` (Kodi) / `<title>-fanart.jpg` (Plex) next to the movie file, so external media centers pick it up (in-app backdrop selection and card display are already supported)
-- **Job history** — persistent log of all completed jobs, viewable in a separate History tab

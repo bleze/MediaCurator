@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <optional>
 
 namespace Mc {
@@ -85,13 +86,20 @@ public:
 	// [u] [color=...] [size=N] — into HTML, so McMainWindow's viewer can render
 	// them instead of showing the literal bracket tags as text. [font=...] tags
 	// are stripped (we force our own monospace font regardless, for art
-	// alignment); [url]/[img] become plain <a> links rather than embedded
-	// images — this stays a local file viewer, it never fetches anything over
-	// the network on its own. Everything else is HTML-escaped first, so this
-	// is always safe to feed straight into QTextBrowser::setHtml(); malformed
-	// or unrecognized tags are simply left as literal escaped text. Caller is
-	// expected to wrap the result in <pre> to preserve art alignment/whitespace.
-	static QString bbcodeToHtml(const QString& text);
+	// alignment). [url] becomes an <a> link. Images ([img], or a pasted HTML
+	// <a><img></a> embed snippet) become a plain "[image]" link unless their URL
+	// is listed in inlineImages, in which case an <img src> is emitted — this
+	// function never fetches anything itself; McSceneNfoDialog downloads the
+	// URLs from sceneNfoImageUrls() and re-renders with the ones that loaded.
+	// Everything else is HTML-escaped first, so this is always safe to feed
+	// straight into QTextBrowser::setHtml(); malformed or unrecognized tags are
+	// simply left as literal escaped text. Caller is expected to wrap the result
+	// in <pre> to preserve art alignment/whitespace.
+	static QString bbcodeToHtml(const QString& text, const QSet<QString>* inlineImages = nullptr);
+
+	// Image URLs (http/https only, de-duplicated, in document order) that
+	// bbcodeToHtml() would turn into "[image]" links for this NFO text.
+	static QStringList sceneNfoImageUrls(const QString& text);
 
 	// Write (or update) the NFO file next to videoPath. Three cases:
 	//   - Kodi-style <movie> XML already exists: only the <uniqueid type="imdb">,
@@ -131,6 +139,7 @@ public:
 	static bool checkAndClearOwnWrite(const QString& nfoPath);
 
 private:
+	static QString convertBbcode(const QString& text, const QSet<QString>* inlineImages, QStringList* foundUrls);
 	static QSet<QString>& ownWrites();
 };
 
