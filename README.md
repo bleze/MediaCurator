@@ -90,6 +90,18 @@ A summary — see the [feature reference](docs/FEATURES.md) for the full detail 
 - **Leaderboard** *(opt-in)* — Compare total space reclaimed with other users.
 - **Dark mode** — Follows the system colour scheme.
 
+## Hot DAMN NFO Viewer
+
+The scene NFO viewer is also available as a small standalone app, **Hot DAMN NFO Viewer** — a nod to the DAMN NFO Viewer of old. It opens `.nfo` files directly (double-click, drag and drop, or **File → Open**), with the same CP437 art rendering, encoding detection and inline screenshots as the viewer inside MediaCurator; both share one NFO engine (`libs/nfoview`). Its Windows installer registers it for `.nfo` and `.diz` files.
+
+It lives in `apps/hotdamn` as its own CMake project with its own version and installer, and needs only Qt — none of MediaCurator's external tools:
+
+```powershell
+cmake -S apps/hotdamn -B apps/hotdamn/build -DQt6_DIR="<path>/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6"
+cmake --build apps/hotdamn/build --config Release
+cpack --config apps/hotdamn/build/CPackConfig.cmake -C Release   # NSIS installer
+```
+
 ## Requirements
 
 **The installer bundles all required tools** — no separate downloads needed. See the [installation guide](docs/INSTALL.md) for per-platform steps.

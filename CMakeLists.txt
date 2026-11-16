@@ -147,6 +147,10 @@ endif()
 add_library(cld2::cld2 ALIAS cld2)
 
 # ── Sub-directories ────────────────────────────────────────────────────────────
+# nfoview: NFO decoding + viewer widget, shared with the standalone Hot DAMN
+# NFO Viewer. That app is its own CMake project (apps/hotdamn) with its own
+# version and installer, so it is deliberately not added here.
+add_subdirectory(libs/nfoview)
 add_subdirectory(src)
 
 # ── CPack installer config ────────────────────────────────────────────────────

@@ -66,39 +66,24 @@ public:
 	// this function.
 	static SceneNfoScan scanSceneNfo(const QString& videoPath);
 
+	// The four functions below forward to the shared nfoview library
+	// (libs/nfoview, nfoview/NfoText.h), which holds the implementation and
+	// the full documentation.
+
 	// Decodes raw NFO bytes with the same CP437/mixed-encoding detection
-	// scanSceneNfo() uses for on-disk files — shared so content fetched from
-	// elsewhere (e.g. a downloaded scene-release NFO) renders identically to a
-	// locally-scanned one. No "is this really a scene NFO" gate, unlike
-	// scanSceneNfo() — callers that already know the source is a genuine
-	// scene-release NFO (rather than an arbitrary file that happens to sit next
-	// to the video) can skip straight to decoding.
+	// scanSceneNfo() uses for on-disk files, but without its "is this really
+	// a scene NFO" gate — for content already known to be one (e.g. a
+	// downloaded scene-release NFO).
 	static QString decodeSceneNfoBytes(const QByteArray& raw);
 
 	// Corrects cached text that an older version decoded as CP437 although the
-	// file was UTF-8, without re-reading the (NAS-hosted) file: CP437 decoding
-	// is 1:1, so the original bytes can be rebuilt from the text. Returns the
-	// input unchanged in every other case.
+	// file was UTF-8, without re-reading the (NAS-hosted) file.
 	static QString redecodeCachedSceneNfoText(const QString& cached);
 
-	// Converts the modest subset of forum BBCode markup that scene/web-release
-	// NFO templates commonly wrap their "GENERAL INFO" headers etc. in — [b] [i]
-	// [u] [color=...] [size=N] — into HTML, so McMainWindow's viewer can render
-	// them instead of showing the literal bracket tags as text. [font=...] tags
-	// are stripped (we force our own monospace font regardless, for art
-	// alignment). [url] becomes an <a> link. Images ([img], or a pasted HTML
-	// <a><img></a> embed snippet) become a plain "[image]" link unless their URL
-	// is listed in inlineImages, in which case an <img src> is emitted — this
-	// function never fetches anything itself; McSceneNfoDialog downloads the
-	// URLs from sceneNfoImageUrls() and re-renders with the ones that loaded.
-	// Everything else is HTML-escaped first, so this is always safe to feed
-	// straight into QTextBrowser::setHtml(); malformed or unrecognized tags are
-	// simply left as literal escaped text. Caller is expected to wrap the result
-	// in <pre> to preserve art alignment/whitespace.
+	// NFO text (with its BBCode subset) → HTML safe for QTextBrowser::setHtml().
 	static QString bbcodeToHtml(const QString& text, const QSet<QString>* inlineImages = nullptr);
 
-	// Image URLs (http/https only, de-duplicated, in document order) that
-	// bbcodeToHtml() would turn into "[image]" links for this NFO text.
+	// Image URLs that bbcodeToHtml() would turn into "[image]" links.
 	static QStringList sceneNfoImageUrls(const QString& text);
 
 	// Write (or update) the NFO file next to videoPath. Three cases:
@@ -139,7 +124,6 @@ public:
 	static bool checkAndClearOwnWrite(const QString& nfoPath);
 
 private:
-	static QString convertBbcode(const QString& text, const QSet<QString>* inlineImages, QStringList* foundUrls);
 	static QSet<QString>& ownWrites();
 };
 

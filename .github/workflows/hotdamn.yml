@@ -1,0 +1,76 @@
+name: Hot DAMN NFO Viewer
+
+# The standalone NFO viewer (apps/hotdamn) is its own CMake project with its
+# own version and installer. Kept out of build.yml on purpose: that workflow's
+# release job attaches every artifact of the run to the MediaCurator release,
+# and this installer is not part of one. No tag trigger here for the same reason.
+on:
+  push:
+    branches: [ main, develop, hotdamn, 'hotdamn/**' ]
+    paths:
+      - 'apps/hotdamn/**'
+      - 'libs/nfoview/**'
+      - '.github/workflows/hotdamn.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'apps/hotdamn/**'
+      - 'libs/nfoview/**'
+      - '.github/workflows/hotdamn.yml'
+  workflow_dispatch:
+
+# See build.yml for why this is needed (msvc-dev-cmd has no Node.js 24 build yet).
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    name: Windows (MSVC x64)
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.3'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2022_64'
+        cache: true
+
+    - name: Set up MSVC (x64)
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Configure CMake
+      run: >
+        cmake -S apps/hotdamn -B apps/hotdamn/build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+        -DQt6_DIR="${{ env.Qt6_DIR }}"
+
+    - name: Build
+      run: cmake --build apps/hotdamn/build --parallel
+
+    - name: Cache Chocolatey NSIS package
+      uses: actions/cache@v6
+      with:
+        path: C:\Users\runneradmin\AppData\Local\Temp\chocolatey
+        key: choco-nsis
+
+    - name: Install NSIS
+      run: |
+        choco install nsis -y --no-progress
+        echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Package (NSIS installer)
+      run: cpack --config apps/hotdamn/build/CPackConfig.cmake -C Release -B apps/hotdamn/build/packages
+
+    - name: Upload installer
+      uses: actions/upload-artifact@v7
+      with:
+        name: HotDamn-Windows-Installer
+        path: apps/hotdamn/build/packages/HotDamn-Setup-*.exe
+        if-no-files-found: error

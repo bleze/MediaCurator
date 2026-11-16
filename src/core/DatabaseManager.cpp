@@ -587,7 +587,7 @@ bool DatabaseManager::initSchema()
 	// Re-decode the cache in place instead, as far as that can be done safely
 	// from the cached text alone (see NfoParser::redecodeCachedSceneNfoText).
 	{
-		static constexpr const char* kSceneNfoDecoderVersion = "2"; // "2": UTF-8 detection
+		static constexpr const char* kSceneNfoDecoderVersion = "3"; // "2": UTF-8 detection, "3": CP437 control symbols
 		QSqlQuery pv(connection());
 		pv.exec("SELECT value FROM preferences WHERE key='scene_nfo_decoder_version'");
 		const QString currentVersion = pv.next() ? pv.value(0).toString() : QString();

@@ -276,6 +276,7 @@ target_link_libraries(MediaCurator PRIVATE
     Qt6::Svg
     nlohmann_json::nlohmann_json
     cld2::cld2
+    nfoview
 )
 
 if(WIN32)
