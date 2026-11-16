@@ -87,6 +87,7 @@
 #include <QKeyEvent>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
@@ -3490,13 +3491,12 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	if (m_loadThread && m_loadThread->isRunning()) {
 		if (m_loader) m_loader->cancel();
 		m_loadThread->quit();
-		if (!m_loadThread->wait(3000)) {
-			m_loadThread->terminate();
-			m_loadThread->wait(500);
-		}
-		// Thread has stopped — safe to delete loader from main thread now.
-		delete m_loader;     m_loader     = nullptr;
-		delete m_loadThread; m_loadThread = nullptr;
+		// Only delete the loader once its thread has really stopped. It may
+		// already have deleted itself on that thread (QPointer is null then).
+		if (stopThreadForClose(m_loadThread, 3000, "library loader"))
+			delete m_loader.data();
+		m_loader     = nullptr;
+		m_loadThread = nullptr;
 	}
 
 	// Same idea for the edition backfill pass — interrupting it is always safe,
@@ -3505,12 +3505,10 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	if (m_editionBackfillThread && m_editionBackfillThread->isRunning()) {
 		if (m_editionBackfillWorker) m_editionBackfillWorker->cancel();
 		m_editionBackfillThread->quit();
-		if (!m_editionBackfillThread->wait(3000)) {
-			m_editionBackfillThread->terminate();
-			m_editionBackfillThread->wait(500);
-		}
-		delete m_editionBackfillWorker; m_editionBackfillWorker = nullptr;
-		delete m_editionBackfillThread; m_editionBackfillThread = nullptr;
+		if (stopThreadForClose(m_editionBackfillThread, 3000, "edition backfill"))
+			delete m_editionBackfillWorker.data();
+		m_editionBackfillWorker = nullptr;
+		m_editionBackfillThread = nullptr;
 	}
 
 	// Same idea for the Dolby Vision profile backfill pass — interrupting it is
@@ -3519,12 +3517,10 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	if (m_dvBackfillThread && m_dvBackfillThread->isRunning()) {
 		if (m_dvBackfillWorker) m_dvBackfillWorker->cancel();
 		m_dvBackfillThread->quit();
-		if (!m_dvBackfillThread->wait(3000)) {
-			m_dvBackfillThread->terminate();
-			m_dvBackfillThread->wait(500);
-		}
-		delete m_dvBackfillWorker; m_dvBackfillWorker = nullptr;
-		delete m_dvBackfillThread; m_dvBackfillThread = nullptr;
+		if (stopThreadForClose(m_dvBackfillThread, 3000, "Dolby Vision backfill"))
+			delete m_dvBackfillWorker.data();
+		m_dvBackfillWorker = nullptr;
+		m_dvBackfillThread = nullptr;
 	}
 
 	stopAllScanWorkers(/*waitForThreads=*/true);
@@ -3544,6 +3540,15 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 		QElapsedTimer t; t.start();
 		SceneNfoManager::instance().stop();
 		logRestartDebug(QStringLiteral("closeEvent: SceneNfoManager stopped after %1 ms").arg(t.elapsed()));
+	}
+
+	// Any other worker thread parented to this window (analyze, simulate, deep
+	// DV scan) that is still running would be deleted while running by
+	// ~McMainWindow's child cleanup — the same qFatal as above.
+	const QList<QThread*> childThreads = findChildren<QThread*>();
+	for (QThread* t : childThreads) {
+		if (t->isRunning())
+			stopThreadForClose(t, 0, "background");
 	}
 
 	if (m_jobPanel->isVisible()) {
@@ -3941,14 +3946,37 @@ void McMainWindow::stopAllScanWorkers(bool waitForThreads)
 	if (!waitForThreads)
 		return;
 
+	// One shared 8 s budget for all groups, not 8 s each.
+	QDeadlineTimer deadline(8000);
 	for (auto it = m_scanGroups.begin(); it != m_scanGroups.end(); ++it) {
 		if (!it->thread || !it->thread->isRunning())
 			continue;
-		if (!it->thread->wait(8000))
-			it->thread->terminate();
-		it->thread->wait(1000);
+		stopThreadForClose(it->thread, static_cast<int>(deadline.remainingTime()), "scan");
 	}
 	m_scanGroups.clear();
+}
+
+bool McMainWindow::stopThreadForClose(QThread* thread, int timeoutMs, const char* name)
+{
+	if (thread->wait(qMax(0, timeoutMs))) {
+		delete thread;
+		return true;
+	}
+	// Still running — typically blocked inside a file call or an ffprobe run
+	// against a NAS that is spinning up. Do NOT terminate() or delete it:
+	// Windows can't kill a thread that is inside such a call until the call
+	// returns, so terminate()+wait() just times out too, and deleting a running
+	// QThread is a qFatal ("Destroyed while thread is still running"). That
+	// abort killed the process in the middle of closeEvent(), before main()
+	// could launch a downloaded update installer. Detach the thread from this
+	// window instead (so ~McMainWindow doesn't delete it as a child either)
+	// and let main() end the process — see threadsAbandonedAtClose().
+	logRestartDebug(QStringLiteral("closeEvent: %1 thread still running after %2 ms, abandoning it")
+	                    .arg(QLatin1String(name)).arg(timeoutMs));
+	thread->disconnect(this);
+	thread->setParent(nullptr);
+	m_threadsAbandoned = true;
+	return false;
 }
 
 void McMainWindow::onRefreshView()
@@ -4072,7 +4100,7 @@ void McMainWindow::startLibraryLoader()
 
 	// Capture local aliases so the lambdas below don't capture members that
 	// may be nulled out before the queued signal is delivered.
-	auto* loader = m_loader;
+	LibraryLoader* loader = m_loader;
 	connect(loader, &LibraryLoader::metaReady, this,
 	        [this](const QHash<qint64, QString>& posters,
 	               const QHash<qint64, QString>& imdbIds,

@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QRegularExpression>
 #include <QStringDecoder>
 
@@ -77,6 +78,60 @@ QString decodeCp437(const QByteArray& raw)
 	for (unsigned char c : raw)
 		out += (c < 0x80) ? QChar(c) : QChar(kCp437High[c - 0x80]);
 	return out;
+}
+
+// Inverse of decodeCp437: false if text holds a character CP437 can't encode,
+// i.e. it was not produced by decodeCp437 in the first place.
+bool encodeCp437(const QString& text, QByteArray& out)
+{
+	static const QHash<char16_t, char> reverse = [] {
+		QHash<char16_t, char> h;
+		for (int i = 0; i < 128; ++i)
+			h.insert(kCp437High[i], static_cast<char>(0x80 + i));
+		return h;
+	}();
+	out.clear();
+	out.reserve(text.size());
+	for (const QChar ch : text) {
+		const char16_t u = ch.unicode();
+		if (u < 0x80) {
+			out.append(static_cast<char>(u));
+			continue;
+		}
+		const auto it = reverse.constFind(u);
+		if (it == reverse.constEnd()) return false;
+		out.append(*it);
+	}
+	return true;
+}
+
+// Plain-text NFOs from (mostly European) groups are often Windows-1252/Latin-1
+// rather than CP437: "Französisch" with ö as 0xF6, which the CP437 table turns
+// into "Franz÷sisch". Told apart by shape, not by byte value (0xC0-0xDF means
+// box-drawing in one codepage and accented capitals in the other): accented
+// letters sit singly or in pairs inside a word, art comes in runs. So: every
+// high byte is 0xC0+ (the Latin-1 letter range; CP437's own accented letters
+// and its shading/vertical box characters are all below that), and every run
+// of them is at most 2 long and touches an ASCII letter.
+bool looksLikeLatin1Text(const QByteArray& raw)
+{
+	auto isAsciiLetter = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+	bool any = false;
+	for (qsizetype i = 0; i < raw.size();) {
+		const unsigned char c = static_cast<unsigned char>(raw[i]);
+		if (c < 0x80) { ++i; continue; }
+		const qsizetype start = i;
+		while (i < raw.size() && static_cast<unsigned char>(raw[i]) >= 0x80) {
+			if (static_cast<unsigned char>(raw[i]) < 0xC0) return false;
+			++i;
+		}
+		if (i - start > 2) return false;
+		const bool letterBefore = start > 0 && isAsciiLetter(raw[start - 1]);
+		const bool letterAfter  = i < raw.size() && isAsciiLetter(raw[i]);
+		if (!letterBefore && !letterAfter) return false;
+		any = true;
+	}
+	return any;
 }
 
 // Heuristic: a "scene NFO" worth showing a viewer button for is anything that
@@ -283,7 +338,25 @@ QString NfoParser::decodeSceneNfoBytes(const QByteArray& raw)
 		const qsizetype bom = raw.startsWith("\xEF\xBB\xBF") ? 3 : 0;
 		return stripTrailingWhitespacePerLine(QString::fromUtf8(raw.constData() + bom, raw.size() - bom));
 	}
+	if (looksLikeLatin1Text(raw))
+		return stripTrailingWhitespacePerLine(QString::fromLatin1(raw));
 	return stripTrailingWhitespacePerLine(decodeCp437(raw));
+}
+
+QString NfoParser::redecodeCachedSceneNfoText(const QString& cached)
+{
+	QByteArray raw;
+	if (!encodeCp437(cached, raw)) return cached;
+	// Only the UTF-8 correction is applied here, because only that one is
+	// unambiguous: mis-decoded UTF-8 leaves multi-byte sequences no correctly
+	// decoded text re-encodes to. The Latin-1 detection is NOT safe on rebuilt
+	// bytes — already-correct text containing e.g. "ß" re-encodes to CP437
+	// 0xE1, which that heuristic would then read as Latin-1 "á". Latin-1 NFOs
+	// are corrected from their real bytes the next time they are scanned.
+	const bool hasHighByte = std::any_of(raw.begin(), raw.end(),
+	                                     [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
+	if (!hasHighByte || !raw.isValidUtf8()) return cached;
+	return decodeSceneNfoBytes(raw);
 }
 
 QString NfoParser::bbcodeToHtml(const QString& text)

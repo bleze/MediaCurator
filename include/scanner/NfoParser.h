@@ -74,6 +74,12 @@ public:
 	// to the video) can skip straight to decoding.
 	static QString decodeSceneNfoBytes(const QByteArray& raw);
 
+	// Corrects cached text that an older version decoded as CP437 although the
+	// file was UTF-8, without re-reading the (NAS-hosted) file: CP437 decoding
+	// is 1:1, so the original bytes can be rebuilt from the text. Returns the
+	// input unchanged in every other case.
+	static QString redecodeCachedSceneNfoText(const QString& cached);
+
 	// Converts the modest subset of forum BBCode markup that scene/web-release
 	// NFO templates commonly wrap their "GENERAL INFO" headers etc. in — [b] [i]
 	// [u] [color=...] [size=N] — into HTML, so McMainWindow's viewer can render

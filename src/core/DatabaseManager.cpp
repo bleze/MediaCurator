@@ -1,5 +1,6 @@
 ﻿#include "core/DatabaseManager.h"
 #include "engine/TrackDecision.h"
+#include "scanner/NfoParser.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -577,6 +578,44 @@ bool DatabaseManager::initSchema()
 	{
 		QSqlQuery m(connection());
 		m.exec("ALTER TABLE files ADD COLUMN scene_nfo_text TEXT NOT NULL DEFAULT ''");
+	}
+
+	// One-time migration: scene_nfo_text holds *decoded* text, so a fix to
+	// NfoParser::decodeSceneNfoBytes() never reached NFOs cached before it —
+	// they kept showing the old mis-decode until their folder happened to be
+	// rescanned (which a Quick Scan never does for an unchanged folder).
+	// Re-decode the cache in place instead, as far as that can be done safely
+	// from the cached text alone (see NfoParser::redecodeCachedSceneNfoText).
+	{
+		static constexpr const char* kSceneNfoDecoderVersion = "2"; // "2": UTF-8 detection
+		QSqlQuery pv(connection());
+		pv.exec("SELECT value FROM preferences WHERE key='scene_nfo_decoder_version'");
+		const QString currentVersion = pv.next() ? pv.value(0).toString() : QString();
+		if (currentVersion != QLatin1String(kSceneNfoDecoderVersion)) {
+			QList<QPair<qint64, QString>> changed;
+			QSqlQuery sel(connection());
+			sel.exec("SELECT id, scene_nfo_text FROM files WHERE scene_nfo_text != ''");
+			while (sel.next()) {
+				const QString oldText = sel.value(1).toString();
+				const QString newText = NfoParser::redecodeCachedSceneNfoText(oldText);
+				if (newText != oldText)
+					changed.append({ sel.value(0).toLongLong(), newText });
+			}
+			sel.finish();
+			connection().transaction();
+			QSqlQuery upd(connection());
+			upd.prepare("UPDATE files SET scene_nfo_text=? WHERE id=?");
+			for (const auto& c : changed) {
+				upd.addBindValue(c.second);
+				upd.addBindValue(c.first);
+				upd.exec();
+			}
+			QSqlQuery setv(connection());
+			setv.prepare("INSERT OR REPLACE INTO preferences(key,value) VALUES('scene_nfo_decoder_version',?)");
+			setv.addBindValue(QString::fromLatin1(kSceneNfoDecoderVersion));
+			setv.exec();
+			connection().commit();
+		}
 	}
 
 	// Migration: last scene-NFO-download-attempt timestamp, so a file srrDB has

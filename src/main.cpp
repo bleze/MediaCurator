@@ -4,6 +4,7 @@
 #include "scanner/ScanWorker.h"
 #include "core/UpdateChecker.h"
 
+#include <cstdlib>
 #include <QHash>
 #include <QMetaType>
 #include "core/Version.h"
@@ -435,6 +436,7 @@ int main(int argc, char* argv[])
 	int  rc               = 0;
 	bool shutdownRequested = false;
 	QString pendingInstallerPath;
+	bool threadsAbandoned = false;
 	{
 		Mc::McMainWindow window;
 		activeMainWindow = &window;
@@ -448,6 +450,7 @@ int main(int argc, char* argv[])
 		rc = app.exec();
 		shutdownRequested    = window.shutdownRequested();
 		pendingInstallerPath = window.pendingInstallerPath();
+		threadsAbandoned     = window.threadsAbandonedAtClose();
 		logRestartDebug(QStringLiteral("event loop exited rc=%1 shutdownRequested=%2 pendingInstaller=%3")
 		                    .arg(rc).arg(shutdownRequested ? "yes" : "no")
 		                    .arg(pendingInstallerPath.isEmpty() ? "no" : "yes"));
@@ -476,6 +479,25 @@ int main(int argc, char* argv[])
 		QProcess::startDetached("osascript", {"-e", "tell app \"System Events\" to shut down"});
 #else
 		QProcess::startDetached("systemctl", {"poweroff"});
+#endif
+	}
+	// End the process right here, skipping static destruction, when either:
+	//  - an installer was just launched: it needs this process (and its lock on
+	//    MediaCurator.exe) gone, and nothing after this point may be allowed to
+	//    hang or crash and get in its way; or
+	//  - closeEvent() had to leave a stuck worker thread running: tearing down
+	//    the singletons it is still using (DatabaseManager etc.) underneath it
+	//    would crash on the way out.
+	// Everything persistent (settings, geometry, DB) was already written in
+	// closeEvent().
+	if (!pendingInstallerPath.isEmpty() || threadsAbandoned) {
+		logRestartDebug(QStringLiteral("hard exit (pendingInstaller=%1 threadsAbandoned=%2)")
+		                    .arg(pendingInstallerPath.isEmpty() ? "no" : "yes")
+		                    .arg(threadsAbandoned ? "yes" : "no"));
+#ifdef Q_OS_WIN
+		TerminateProcess(GetCurrentProcess(), static_cast<UINT>(rc));
+#else
+		std::_Exit(rc);
 #endif
 	}
 	return rc;

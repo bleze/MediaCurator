@@ -9,6 +9,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QStringList>
+#include <QPointer>
 #include <QThread>
 #include <QTimer>
 
@@ -85,6 +86,12 @@ public:
 	// installer any earlier races this process's own file locks on
 	// MediaCurator.exe/its DLLs.
 	QString pendingInstallerPath() const { return m_pendingInstallerPath; }
+
+	// True when closeEvent() gave up waiting on a background thread (e.g. a scan
+	// blocked in a file call against a sleeping NAS) and left it running rather
+	// than deleting it. main() must then end the process without running normal
+	// static destruction underneath that thread.
+	bool threadsAbandonedAtClose() const { return m_threadsAbandoned; }
 
 	// Restores the window after minimizeToTray() hid it — also called by
 	// main()'s single-instance handler when a second launch arrives while this
@@ -276,12 +283,17 @@ private:
 	int              m_updatedSoFar = 0;
 	int              m_removedSoFar = 0;
 	QTimer*          m_analyzeRefreshTimer = nullptr;
+	// The three workers below are QPointers on purpose: each deletes itself
+	// (finished -> deleteLater) on its own thread as that thread winds down,
+	// and the queued destroyed -> "= nullptr" hook can't run while closeEvent()
+	// is blocking the main thread in wait(). A raw pointer was left dangling
+	// there and closeEvent() double-deleted it.
 	QThread*         m_loadThread      = nullptr;
-	LibraryLoader*   m_loader          = nullptr;
+	QPointer<LibraryLoader>  m_loader;
 	QThread*                 m_editionBackfillThread = nullptr;
-	EditionBackfillWorker*   m_editionBackfillWorker = nullptr;
+	QPointer<EditionBackfillWorker>   m_editionBackfillWorker;
 	QThread*                 m_dvBackfillThread = nullptr;
-	DvProfileBackfillWorker* m_dvBackfillWorker = nullptr;
+	QPointer<DvProfileBackfillWorker> m_dvBackfillWorker;
 	QThread*         m_analyzeThread   = nullptr;
 	AnalyzeWorker*   m_analyzeWorker   = nullptr;
 	QThread*             m_copyThread      = nullptr;
@@ -300,6 +312,10 @@ private:
 	bool             m_jobPanelPinned     = false;
 	bool             m_shutdownOnClose    = false;   // set by the "Quit && Shut Down" job-wait path
 	QString          m_pendingInstallerPath;          // set by onUpdateInstallerReady(); see pendingInstallerPath()
+	bool             m_threadsAbandoned   = false;   // see threadsAbandonedAtClose()
+	// Shared by every thread closeEvent() stops: deletes it if it stopped within
+	// timeoutMs, otherwise detaches it and sets m_threadsAbandoned.
+	bool             stopThreadForClose(QThread* thread, int timeoutMs, const char* name);
 	bool             m_closeOnJobFinishPending = false; // guards against stacking duplicate jobFinished->close() hooks
 	bool             m_closeHandled       = false;   // true once closeEvent() has run its teardown once
 	std::function<void()> m_releaseSingleInstanceLock;   // see setSingleInstanceLockReleaser()
