@@ -1,6 +1,7 @@
 #include "engine/JobQueue.h"
 #include "engine/ActionEngine.h"
 #include "engine/RemuxJob.h"
+#include "engine/RemuxSafety.h"
 #include "engine/SubtitleManager.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
@@ -281,6 +282,7 @@ void JobQueue::start()
 {
 	m_paused  = false;
 	m_running = true;
+	m_consecutiveFailures = 0;
 	dispatchJobs();
 }
 
@@ -1302,10 +1304,31 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 	const QString finalOutput   = remux->finalOutputPath();
 	const QString originalInput = remux->inputFilePath();
 
+	// Don't carry on through the rest of the queue after a failure that is about
+	// the environment rather than this one file — a dropped NAS connection or a
+	// full disk fails every job after it too, and each attempt is another chance
+	// for things to go wrong on a flaky share. Two failures in a row of any kind
+	// also stop it. Paused before jobFinished so the UI reads the new state.
+	QString pauseReason;
+	if (ok) {
+		m_consecutiveFailures = 0;
+	} else {
+		++m_consecutiveFailures;
+		if (m_running && !m_paused) {
+			pauseReason = RemuxSafety::environmentalFailureReason(log);
+			if (pauseReason.isEmpty() && m_consecutiveFailures >= 2)
+				pauseReason = tr("%1 jobs in a row have failed.").arg(m_consecutiveFailures);
+			if (!pauseReason.isEmpty())
+				pause();
+		}
+	}
+
 	remux->deleteLater();
 	releaseSlot(storageGroup);
 
 	emit jobFinished(jobId, ok, savedBytes);
+	if (!pauseReason.isEmpty())
+		emit pausedAfterFailure(QFileInfo(originalInput).fileName(), pauseReason);
 
 	// Re-scan the file so the card reflects the new track layout.
 	// For non-MKV / ISO jobs the output path differs from the input — update the
@@ -1406,6 +1429,8 @@ void JobQueue::commitReview(qint64 jobId)
 	const int storageGroup = StorageGroupSettings::groupForFileId(fileId);
 	occupySlot(storageGroup, jobId, fileId, 0);
 	m_runningByGroup[storageGroup].finishBusy = true;
+	const QString mkvmergePath = ExternalTools::instance().mkvmergePath();
+	const QString ffprobePath  = ExternalTools::instance().ffprobePath();
 
 	// Rename/delete + the DB status update are filesystem/SQL work with no bearing
 	// on this object's own state — run them off the UI thread, same pattern as the
@@ -1414,8 +1439,40 @@ void JobQueue::commitReview(qint64 jobId)
 	// marshaled through qApp with a QPointer guard checked on the main thread.
 	QThreadPool::globalInstance()->start(
 	    [self = QPointer<JobQueue>(this), jobId, fileId, tmpPath, finalPath, srcPath,
-	     origSize, exitCode, wasStaged, storageGroup]() {
+	     origSize, exitCode, wasStaged, storageGroup, mkvmergePath, ffprobePath]() {
 		auto& db = DatabaseManager::instance();
+
+		// Accepting a track-layout mismatch says nothing about whether the output
+		// holds the whole film. Same completeness gate as RemuxJob's own finish
+		// path, before anything is replaced (see engine/RemuxSafety.h).
+		{
+			const RemuxSafety::Identify outInfo = RemuxSafety::identify(mkvmergePath, tmpPath);
+			const RemuxSafety::Identify srcInfo = RemuxSafety::identify(mkvmergePath, srcPath);
+			double fallbackSourceSec = -1.0;
+			if (!srcInfo.ok && !ffprobePath.isEmpty()) {
+				FfprobeScanner scanner(ffprobePath);
+				const auto srcScan = scanner.scanFile(srcPath);
+				if (srcScan.success) fallbackSourceSec = srcScan.file.durationSec;
+			}
+			const bool sourceIsDiscImage = srcPath.endsWith(QLatin1String(".iso"), Qt::CaseInsensitive)
+			                               || QFileInfo(srcPath).isDir();
+			const QString incomplete = RemuxSafety::incompleteOutputReason(srcInfo, outInfo, fallbackSourceSec,
+			                                                               sourceIsDiscImage);
+			if (!incomplete.isEmpty()) {
+				QFile::remove(tmpPath);
+				const auto job = db.jobById(jobId);
+				db.updateJobStatus(jobId, "failed", -2,
+				                   (job ? job->outputLog : QString())
+				                       + QStringLiteral("\nCompleteness check failed: %1 The output was discarded; "
+				                                        "the original file is untouched.").arg(incomplete));
+				QMetaObject::invokeMethod(qApp, [self, storageGroup, jobId] {
+					if (!self) return;
+					self->releaseSlot(storageGroup);
+					emit self->jobFinished(jobId, false, 0);
+				}, Qt::QueuedConnection);
+				return;
+			}
+		}
 
 		const bool isInPlace = (finalPath == srcPath);
 		const QFileInfo origFi(srcPath);

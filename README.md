@@ -23,7 +23,8 @@ MediaCurator scans your library, identifies which tracks you actually want, and 
 - **Nothing is touched until you approve it.** Scanning and analysis only read your files; every proposed removal sits in the job queue for review first.
 - **Preview before you commit.** The "What If" simulation shows affected files and estimated savings without creating a single job.
 - **Lossless.** Tracks are removed by remuxing; video and the audio you keep are copied bit-for-bit.
-- **Verified before it replaces anything.** The new file is written to a temporary file and checked against the expected track layout; the original is only replaced once the remux has succeeded. If the result doesn't match, you are asked to review it instead.
+- **Verified before it replaces anything.** The new file is written to a temporary file and checked against the expected track layout, and its video is checked to run as long as the original's, so an output cut short by a dropped network connection is thrown away; the original is only replaced once both checks pass. If the result doesn't match, you are asked to review it instead.
+- **Stops when something is wrong.** If a job fails because the NAS or disk is unavailable, or two jobs fail in a row, the queue pauses and tells you why instead of carrying on.
 - **Stale jobs are dropped, not run.** If a file changed on disk since its job was proposed, MediaCurator re-scans it rather than remuxing against outdated information.
 
 Once a job has completed, the removed tracks are gone — keep a backup of anything you can't replace.

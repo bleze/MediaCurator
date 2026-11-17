@@ -70,6 +70,7 @@ set(MC_SOURCES
     engine/JobQueue.cpp
     engine/TrackFlagService.cpp
     engine/RemuxJob.cpp
+    engine/RemuxSafety.cpp
     engine/DeepDvScanWorker.cpp
     engine/PosterManager.cpp
     engine/SubtitleManager.cpp
@@ -127,6 +128,7 @@ set(MC_HEADERS
     ../include/engine/JobQueue.h
     ../include/engine/TrackFlagService.h
     ../include/engine/RemuxJob.h
+    ../include/engine/RemuxSafety.h
     ../include/engine/DeepDvScanWorker.h
     ../include/engine/TrackDecision.h
     ../include/engine/PosterManager.h

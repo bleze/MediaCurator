@@ -706,6 +706,25 @@ McMainWindow::McMainWindow(QWidget* parent)
 	connect(m_jobQueue, &JobQueue::warning,
 	        this, [this](const QString& msg) { m_statusLabel->setText(msg); });
 
+	// A failed job used to show only in the status bar while the queue moved on.
+	// When the queue pauses itself over one, say so properly — also as a tray
+	// notification when the window is hidden there.
+	connect(m_jobQueue, &JobQueue::pausedAfterFailure, this, [this](const QString& fileName, const QString& reason) {
+		m_statusLabel->setText(tr("Queue paused after a failed job"));
+		if (m_trayIcon && m_trayIcon->isVisible() && !isVisible())
+			m_trayIcon->showMessage(tr("MediaCurator: queue paused"),
+			                        tr("The job for '%1' failed. %2").arg(fileName, reason), QSystemTrayIcon::Warning);
+		auto* box = new QMessageBox(QMessageBox::Warning, tr("Job Queue Paused"),
+		                            tr("The job for '%1' failed, so the queue has been paused instead of moving on "
+		                               "to the next file.").arg(fileName),
+		                            QMessageBox::Ok, this);
+		box->setInformativeText(tr("%1\n\nThe original file was not changed: a file is only replaced once its "
+		                           "job has succeeded. The job's log in the Job Queue has the details. Press "
+		                           "Resume once the problem is fixed.").arg(reason));
+		box->setAttribute(Qt::WA_DeleteOnClose);
+		box->open();
+	});
+
 	// ── Poster manager ────────────────────────────────────────────────────────
 	auto& pm = PosterManager::instance();
 	pm.start(m_profile->tmdbApiKey());

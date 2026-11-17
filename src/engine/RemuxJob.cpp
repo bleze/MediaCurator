@@ -3,6 +3,7 @@
 #include "core/ExternalTools.h"
 #include "core/StorageGroupSettings.h"
 #include "engine/ActionEngine.h"
+#include "engine/RemuxSafety.h"
 #include "scanner/FfprobeScanner.h"
 
 #include <QCoreApplication>
@@ -270,6 +271,17 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 		QRegularExpression::CaseInsensitiveOption);
 	const bool regexMismatch = mismatchRe.match(m_log).hasMatch();
 
+	// mkvmerge reports a source it could not read to the end — a dropped network
+	// share, a damaged file — as a *warning* (exit code 1) and still finishes the
+	// output, which then lacks everything after that point. That must never count
+	// as success: it is how a NAS hiccup once replaced a 24 GB movie with a 140 KB
+	// file (see engine/RemuxSafety.h). Failing here also deletes the .tmp below.
+	if (exitCode == 1 && RemuxSafety::hasIncompleteReadWarning(m_log)) {
+		m_log += QStringLiteral("\nmkvmerge could not read the whole source file (see the warning above). "
+		                        "The output is incomplete and was discarded; the original file is untouched.\n");
+		exitCode = 2;
+	}
+
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
 	if ((exitCode == 0 || exitCode == 1) && !m_outputPath.isEmpty() && !m_inputPath.isEmpty()) {
 		// Renaming/deleting the file and writing the log are pure filesystem work —
@@ -291,6 +303,10 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 		const QString     descriptionText = m_descriptionText;
 		const QString     ffprobePath     = m_ffprobePath;
 		const QList<StreamRecord> expectedStreams = m_expectedStreams;
+		// Disc images may not be readable by mkvmerge -J or ffprobe, so the
+		// completeness check below can't insist on comparing against them.
+		const bool sourceIsDiscImage = m_inputPath.endsWith(QLatin1String(".iso"), Qt::CaseInsensitive)
+		                               || QFileInfo(m_inputPath).isDir();
 
 		// No raw `this` in the task: it can outlive this object (app shutdown mid
 		// NAS copy-back). Results are marshaled through qApp with a QPointer guard
@@ -300,7 +316,7 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 		    [self = QPointer<RemuxJob>(this), cancelToken = m_cancelRequested,
 		     outputPath, finalOutputPath, inputPath, originalSize, log,
 		     writeLog, stagedLocally, mkvmergePath, args, descriptionText, exitCode,
-		     regexMismatch, ffprobePath, expectedStreams]() mutable {
+		     regexMismatch, ffprobePath, expectedStreams, sourceIsDiscImage]() mutable {
 
 			DriveActivityMonitor::touchPath(inputPath);
 
@@ -350,6 +366,36 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 					emit self->finished(exitCode, finishLog, 0);
 				}, Qt::QueuedConnection);
 				return;
+			}
+
+			// ── Completeness: must pass before the source is touched ───────────
+			// The track-layout check above only proves the expected tracks exist,
+			// not that they hold the whole film, and the container duration can
+			// still read full length when one track (a merged subtitle) ran to
+			// the end. So compare the kept video (or audio) track's own length,
+			// from mkvmerge's statistics, with the source's.
+			{
+				const RemuxSafety::Identify outInfo = RemuxSafety::identify(mkvmergePath, outputPath);
+				const RemuxSafety::Identify srcInfo = RemuxSafety::identify(mkvmergePath, inputPath);
+				double fallbackSourceSec = -1.0;
+				if (!srcInfo.ok && !ffprobePath.isEmpty()) {
+					FfprobeScanner scanner(ffprobePath);
+					const auto srcScan = scanner.scanFile(inputPath);
+					if (srcScan.success) fallbackSourceSec = srcScan.file.durationSec;
+				}
+				const QString incomplete = RemuxSafety::incompleteOutputReason(srcInfo, outInfo, fallbackSourceSec,
+				                                                               sourceIsDiscImage);
+				if (!incomplete.isEmpty()) {
+					QFile::remove(outputPath);
+					finishLog += QStringLiteral("\nCompleteness check failed: %1 The output was discarded; "
+					                            "the original file is untouched.").arg(incomplete);
+					QMetaObject::invokeMethod(qApp, [self, finishLog] {
+						if (self) emit self->finished(2, finishLog, 0);
+					}, Qt::QueuedConnection);
+					return;
+				}
+				finishLog += QStringLiteral("\nCompleteness check: the output's %1 is as long as the source's.")
+				                 .arg(outInfo.mainType);
 			}
 
 			qint64  savedBytes = 0;

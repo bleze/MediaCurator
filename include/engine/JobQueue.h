@@ -63,6 +63,10 @@ signals:
 	void outputSizeChanged(qint64 jobId, qint64 bytes);
 	void phaseChanged(qint64 jobId, const QString& label);
 	void warning(const QString& message);
+	// The queue paused itself after a failed job instead of moving on: the
+	// failure points at the share or disk (later jobs would fail the same way),
+	// or several jobs failed in a row. reason is a short user-facing sentence.
+	void pausedAfterFailure(const QString& fileName, const QString& reason);
 	void reviewRequested(qint64 jobId, const QString& filename,
 	                     const QString& warningText,
 	                     const QString& commandArgsJson,
@@ -153,6 +157,7 @@ private:
 	QSet<qint64>   m_preflightSkippedJobIds;
 	bool           m_running      = false;
 	bool           m_paused       = false;
+	int            m_consecutiveFailures = 0;
 	bool           m_writeJobLog  = false;
 	bool           m_mergeSidecarSubtitles = true;
 	bool           m_detectSubtitleLanguage = false;
