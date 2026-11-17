@@ -81,7 +81,7 @@ A summary — see the [feature reference](docs/FEATURES.md) for the full detail 
 - **Posters & backdrops** — Fetched from TMDB or picked up from local artwork using Kodi/Plex naming conventions.
 - **IMDb / TMDB matching** — Automatic identification, with a search dialog to match a movie by hand.
 - **NFO writer** *(opt-in)* — Saves IDs, titles, year, and rating to a Kodi/Plex-compatible `.nfo`, enriching an existing one rather than rewriting it.
-- **Scene NFO viewer** — Shows a release's original `.nfo` with its ASCII art rendered correctly and linked screenshots displayed inline.
+- **Scene NFO viewer** — Shows a release's original `.nfo` with its ASCII art rendered seamlessly and linked screenshots displayed inline; zoom, font and night colours on right-click. Damaged NFOs show whatever art survived. Also available standalone as [Hot DAMN NFO Viewer](#hot-damn-nfo-viewer).
 - **Scene NFO download** *(opt-in)* — Fetches a missing or damaged scene `.nfo` from [srrDB](https://www.srrdb.com/).
 
 ### Integrations & extras
