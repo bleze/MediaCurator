@@ -435,7 +435,24 @@ void RemuxJob::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 					}, Qt::QueuedConnection);
 				    }, cancelToken.get());
 
+				// Last line of defence before the original is replaced: a network
+				// write can come up short without QFile reporting an error, and the
+				// rename below would then swap an incomplete file over the original.
+				qint64 remoteSize = -1;
 				if (copyOk) {
+					QFileInfo remoteFi(remoteTmp);
+					remoteFi.setCaching(false);
+					remoteSize = remoteFi.exists() ? remoteFi.size() : -1;
+				}
+				const bool sizeOk = copyOk && remoteSize == outputSize;
+				if (copyOk && !sizeOk) {
+					QFile::remove(remoteTmp);
+					finishLog += QStringLiteral(
+					    "\nCopy to %1 is incomplete (%2 of %3 bytes on the NAS). The original file is untouched; "
+					    "muxed output retained locally at %4.")
+					    .arg(remoteTmp).arg(remoteSize).arg(outputSize).arg(outputPath);
+					exitCode = -2;
+				} else if (copyOk) {
 					try {
 						std::filesystem::rename(remoteTmp.toStdWString(),
 						                        finalOutputPath.toStdWString());
