@@ -65,6 +65,11 @@ public:
 	// Call before exec().
 	void setShowLogos(bool show);
 
+	// The file's current TMDB match and its cached clear logo (local path, empty
+	// if none). The result row with this TMDB id is preselected and its mini card
+	// shows the poster/fanart/logo currently in use. Call before exec().
+	void setExistingTmdb(int tmdbId, const QString& logoPath);
+
 	// Adds "Skip" and "Cancel all" buttons and shows progress in the title.
 	// Call before exec(). current/total are 1-based (e.g. "3 of 10").
 	void setBatchMode(int current, int total);
@@ -146,6 +151,14 @@ private:
 	void populateGallery();
 	void populateFanartGallery();
 	void populateLogoGallery();
+	// Pushes the picked clear logo onto the current result row's mini card
+	// (replacing its title), and clears it from every other row.
+	void updateResultLogo();
+	// True for the result row that represents the file's current match: same TMDB
+	// id when known, otherwise the sole result.
+	[[nodiscard]] bool isExistingRow(int row) const;
+	// Puts the current poster/fanart onto the existing-match row's mini card.
+	void applyExistingArtwork();
 
 	QStringList            m_understoodLanguages;
 	QString                m_selectedTitle;
@@ -155,6 +168,8 @@ private:
 	QString                m_existingImdbId;
 	QString                m_existingPosterPath;
 	QString                m_existingFanartPath;
+	QString                m_existingLogoPath;
+	int     m_existingTmdbId      = 0;
 	int     m_selectedYear        = 0;
 	bool    m_acceptAfterFetch    = false;
 	bool    m_autoSelectSingle    = false;

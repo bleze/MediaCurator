@@ -638,7 +638,21 @@ QPixmap McCardDelegate::clearLogoPixmap(const QString& path, const QSize& box,
 		if (!raw.isNull()) raw = raw.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 		it = s_raw.insert(path, raw);
 	}
-	if (it->isNull()) return {};
+	return clearLogoPixmapFromImage(path, *it, box, background, dpr);
+}
+
+QPixmap McCardDelegate::clearLogoPixmapFromImage(const QString& cacheId, const QImage& raw, const QSize& box,
+                                                 const QColor& background, qreal dpr)
+{
+	if (raw.isNull() || box.width() < 8 || box.height() < 8) return {};
+	const bool darkBg = background.lightnessF() < 0.5;
+	const QString key = QStringLiteral("clearlogo:%1:%2x%3:%4:%5")
+	                        .arg(cacheId).arg(box.width()).arg(box.height()).arg(dpr).arg(darkBg);
+	QPixmap pm;
+	if (QPixmapCache::find(key, &pm)) return pm;
+	const QImage img = raw.format() == QImage::Format_ARGB32_Premultiplied
+	                       ? raw : raw.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+	const QImage* it = &img;
 
 	// Halo only when the logo would otherwise vanish: a light logo on a light
 	// card, or a dark one on a dark card.

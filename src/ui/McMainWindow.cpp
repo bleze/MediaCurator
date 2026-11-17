@@ -405,6 +405,15 @@ static void flushWidgetRepaints(QWidget* root)
 	}
 }
 
+// Hands the metadata dialog the file's current TMDB match and its clear logo, so
+// the mini card shows the poster/fanart/logo actually in use. The logo only
+// counts when it was resolved for the current match (same rule as the card list).
+static void applyExistingTmdb(Mc::ImdbSearchDialog& dlg, qint64 fileId)
+{
+	const Mc::TmdbExtrasState st = Mc::DatabaseManager::instance().tmdbExtrasState(fileId);
+	dlg.setExistingTmdb(st.tmdbId, st.logoTmdbId == st.tmdbId ? st.logoPath : QString{});
+}
+
 } // anonymous namespace
 
 namespace Mc {
@@ -1068,6 +1077,7 @@ void McMainWindow::setupUi()
 		ImdbSearchDialog dlg(file.path, suggested, existing, m_profile->tmdbApiKey(), this, exPoster, exFanart);
 		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 		dlg.setShowLogos(m_profile->showClearLogos());
+		applyExistingTmdb(dlg, file.id);
 		if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
@@ -1510,6 +1520,7 @@ void McMainWindow::setupUi()
 					                     exPoster, exFanart);
 					dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 					dlg.setShowLogos(m_profile->showClearLogos());
+					applyExistingTmdb(dlg, repFile.id);
 					if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 					if (dlg.exec() != QDialog::Accepted) return;
 					const QString imdbId = dlg.selectedImdbId();
@@ -1873,6 +1884,7 @@ void McMainWindow::setupUi()
 				ImdbSearchDialog dlg(f.path, suggested, existing, m_profile->tmdbApiKey(), this, exPoster, exFanart);
 				dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 				dlg.setShowLogos(m_profile->showClearLogos());
+				applyExistingTmdb(dlg, f.id);
 				if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 				if (total > 1) dlg.setBatchMode(i + 1, total);
 				const int result = dlg.exec();
@@ -2274,6 +2286,7 @@ void McMainWindow::setupUi()
 		                     m_profile->tmdbApiKey(), this, exPoster, exFanart);
 		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 		dlg.setShowLogos(m_profile->showClearLogos());
+		applyExistingTmdb(dlg, fileId);
 		if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
@@ -2347,6 +2360,7 @@ void McMainWindow::setupUi()
 			                     m_profile->tmdbApiKey(), this, exPoster, exFanart);
 			dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 			dlg.setShowLogos(m_profile->showClearLogos());
+			applyExistingTmdb(dlg, fileId);
 			if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 			dlg.setBatchMode(i + 1, total);
 

@@ -5,6 +5,7 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QHash>
+#include <QImage>
 #include <QMap>
 #include <QPersistentModelIndex>
 #include <QRect>
@@ -132,6 +133,11 @@ public slots:
 	// Draw each movie's clear logo (when it has one) in a taller title band
 	// instead of the plain-text title. See UserProfile::showClearLogos.
 	void setClearLogosEnabled(bool enabled);
+
+	// clearLogoPixmap for an already-decoded logo (e.g. the metadata dialog's
+	// TMDB thumbnail). cacheId identifies the image in the pixmap cache.
+	static QPixmap clearLogoPixmapFromImage(const QString& cacheId, const QImage& raw, const QSize& box,
+	                                        const QColor& background, qreal dpr);
 
 	// Whether the per-card storage-group disk-icon chip should render at all.
 	// Gated on StorageGroupSettings::multipleGroupsInUse() — single-storage-group

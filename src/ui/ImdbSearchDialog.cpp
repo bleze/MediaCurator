@@ -1,6 +1,7 @@
 #include "ui/ImdbSearchDialog.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "ui/McCardDelegate.h"
 #include "ui/McLanguageFlags.h"
 #include "ui/McWindowGeometry.h"
 
@@ -25,6 +26,7 @@
 #include <QAbstractItemView>
 #include <QDesktopServices>
 #include <QHelpEvent>
+#include <QImage>
 #include <QPainter>
 #include <QPixmap>
 #include <QPixmapCache>
@@ -37,6 +39,7 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
+#include <QtMath>
 
 // ── Per-result IMDb shortcut button ──────────────────────────────────────────
 namespace {
@@ -146,13 +149,38 @@ public:
 		// Optional type tag (Movie / TV / Doc) from UserRole + 12.
 		const QString typeTag = index.data(Qt::UserRole + 12).toString();
 		QString titleText = index.data(Qt::DisplayRole).toString();
-		if (!typeTag.isEmpty())
-			titleText = QStringLiteral("%1  ·  %2").arg(titleText, typeTag);
-		p->save();
-		p->setPen(textColor);
-		p->setFont(option.font);
-		p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, titleText);
-		p->restore();
+		// Picked clear logo (UserRole + 15 image, + 16 TMDB path) replaces the
+		// title, mirroring the library card; the year/type stay as text after it.
+		const QImage logoImg = index.data(Qt::UserRole + 15).value<QImage>();
+		const QPixmap clearLogo = (logoImg.isNull() || textRect.width() < 40) ? QPixmap()
+			: Mc::McCardDelegate::clearLogoPixmapFromImage(
+			      QStringLiteral("dlg:") + index.data(Qt::UserRole + 16).toString(), logoImg,
+			      QSize(qMin(textRect.width() * 3 / 5, 220), option.rect.height() - 16), bg,
+			      p->device()->devicePixelRatioF());
+		if (!clearLogo.isNull()) {
+			const QSizeF ls = clearLogo.deviceIndependentSize();
+			p->drawPixmap(QPointF(textRect.left(), textRect.top() + (textRect.height() - ls.height()) / 2), clearLogo);
+			// Keep the year and the type tag visible.
+			QStringList bits;
+			if (const int year = index.data(Qt::UserRole + 2).toInt(); year > 0) bits << QString::number(year);
+			if (!typeTag.isEmpty()) bits << typeTag;
+			if (!bits.isEmpty()) {
+				p->save();
+				p->setPen(textColor);
+				p->setFont(option.font);
+				p->drawText(textRect.adjusted(qCeil(ls.width()) + 10, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
+				            bits.join(QStringLiteral("  ·  ")));
+				p->restore();
+			}
+		} else {
+			if (!typeTag.isEmpty())
+				titleText = QStringLiteral("%1  ·  %2").arg(titleText, typeTag);
+			p->save();
+			p->setPen(textColor);
+			p->setFont(option.font);
+			p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, titleText);
+			p->restore();
+		}
 
 		if (id.isEmpty()) return;
 
@@ -483,6 +511,7 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 		if (!item) return;  // gallery clearing
 		m_selectedLogoPath = item->data(Qt::UserRole).toString();
 		m_userSelectedLogo = true;
+		updateResultLogo();
 	});
 	connect(m_fanartGallery, &QListWidget::currentItemChanged,
 	        this, [this](QListWidgetItem* item) {
@@ -653,6 +682,11 @@ void ImdbSearchDialog::setShowLogos(bool show)
 {
 	m_showLogos = show;
 	m_logoSide->setVisible(show);
+}
+void ImdbSearchDialog::setExistingTmdb(int tmdbId, const QString& logoPath)
+{
+	m_existingTmdbId   = tmdbId;
+	m_existingLogoPath = logoPath;
 }
 QByteArray ImdbSearchDialog::selectedImageData()  const
 {
@@ -947,9 +981,9 @@ void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QR
 					QPixmap px;
 					if (px.loadFromData(bytes) && row < m_resultsList->count()) {
 						m_thumbDataByRow[row] = bytes;
-						// Don't overwrite the pre-loaded existing poster icon in the
-						// single-result case — the gallery selection lambda handles updates.
-						if (m_resultsList->count() > 1 || m_existingPosterPath.isEmpty()) {
+						// Don't overwrite the pre-loaded existing poster icon on the
+						// current match's row — the gallery selection lambda handles updates.
+						if (!isExistingRow(row) || m_existingPosterPath.isEmpty()) {
 							m_resultsList->item(row)->setIcon(
 								QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
 								                Qt::SmoothTransformation)));
@@ -975,9 +1009,9 @@ void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QR
 				if (r->error() == QNetworkReply::NoError) {
 					QPixmap px;
 					if (px.loadFromData(r->readAll()) && row < m_resultsList->count()) {
-						// Don't overwrite the pre-loaded existing fanart backdrop in the
-						// single-result case — the gallery selection lambda handles updates.
-						if (m_resultsList->count() > 1 || m_existingFanartPath.isEmpty()) {
+						// Don't overwrite the pre-loaded existing fanart backdrop on the
+						// current match's row — the gallery selection lambda handles updates.
+						if (!isExistingRow(row) || m_existingFanartPath.isEmpty()) {
 							m_resultsList->item(row)->setData(Qt::UserRole + 9,
 							                                  QVariant::fromValue(px));
 						}
@@ -1048,34 +1082,14 @@ void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QR
 				if (diff < bestDiff) { bestDiff = diff; bestRow = i; }
 			}
 		}
+		// The file's current match wins over the year heuristic.
+		for (int i = 0; i < m_resultsList->count(); ++i)
+			if (m_existingTmdbId > 0 && isExistingRow(i)) { bestRow = i; break; }
 		m_resultsList->setCurrentRow(bestRow);
 
-		// When there is exactly one result, pre-populate the mini card with the
-		// current library poster/backdrop so the user sees what they already have
-		// before any TMDB thumbnail arrives (Issue 7).
-		if (m_resultsList->count() == 1
-		    && (!m_existingPosterPath.isEmpty() || !m_existingFanartPath.isEmpty())) {
-			auto* firstItem = m_resultsList->item(0);
-			if (firstItem) {
-				if (!m_existingPosterPath.isEmpty()) {
-					QPixmap px(m_existingPosterPath);
-					if (!px.isNull())
-						firstItem->setIcon(QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
-						                                   Qt::SmoothTransformation)));
-				}
-				if (!m_existingFanartPath.isEmpty()) {
-					QPixmap px(m_existingFanartPath);
-					if (!px.isNull()) {
-						if (px.height() > 300) {
-							const int y = (px.height() - 300) / 2;
-							px = px.copy(0, y, px.width(), 300);
-						}
-						firstItem->setData(Qt::UserRole + 8, m_existingFanartPath);
-						firstItem->setData(Qt::UserRole + 9, QVariant::fromValue(px));
-					}
-				}
-			}
-		}
+		// Pre-populate the current match's mini card with the poster/backdrop/logo
+		// the library uses, before any TMDB thumbnail arrives (Issue 7).
+		applyExistingArtwork();
 
 		if (m_autoSelectSingle && m_resultsList->count() == 1) {
 			// Exactly one result — auto-accept once the IMDb ID arrives.
@@ -1272,6 +1286,7 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang, co
 	m_logoGallery->clear();
 	m_selectedLogoPath.clear();
 	m_userSelectedLogo = false;
+	updateResultLogo();  // the logo belonged to the previously selected result
 	m_langFilter->blockSignals(true);
 	m_langFilter->clear();
 	m_langFilter->addItem(tr("All"), QString{});
@@ -1374,6 +1389,66 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang, co
 	});
 }
 
+bool ImdbSearchDialog::isExistingRow(int row) const
+{
+	if (row < 0 || row >= m_resultsList->count()) return false;
+	if (m_existingTmdbId > 0)
+		return m_resultsList->item(row)->data(Qt::UserRole).toInt() == m_existingTmdbId;
+	return m_resultsList->count() == 1;
+}
+
+void ImdbSearchDialog::applyExistingArtwork()
+{
+	for (int i = 0; i < m_resultsList->count(); ++i) {
+		if (!isExistingRow(i)) continue;
+		QListWidgetItem* item = m_resultsList->item(i);
+		if (!m_existingPosterPath.isEmpty()) {
+			QPixmap px(m_existingPosterPath);
+			if (!px.isNull())
+				item->setIcon(QIcon(px.scaled(54, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+		}
+		if (!m_existingFanartPath.isEmpty()) {
+			QPixmap px(m_existingFanartPath);
+			if (!px.isNull()) {
+				if (px.height() > 300) {
+					const int y = (px.height() - 300) / 2;
+					px = px.copy(0, y, px.width(), 300);
+				}
+				item->setData(Qt::UserRole + 8, m_existingFanartPath);
+				item->setData(Qt::UserRole + 9, QVariant::fromValue(px));
+			}
+		}
+	}
+	updateResultLogo();
+}
+
+void ImdbSearchDialog::updateResultLogo()
+{
+	// The current row shows the logo picked in the gallery; the current match's
+	// row otherwise keeps the logo the library uses. Every other row: none.
+	const int cur = m_resultsList->currentRow();
+	QImage picked;
+	if (m_showLogos && m_userSelectedLogo && !m_selectedLogoPath.isEmpty())
+		picked.loadFromData(m_logoThumbData.value(m_selectedLogoPath));
+	QImage existing;
+	if (m_showLogos && !m_existingLogoPath.isEmpty())
+		existing.load(m_existingLogoPath);
+	for (int i = 0; i < m_resultsList->count(); ++i) {
+		QListWidgetItem* it = m_resultsList->item(i);
+		if (i == cur && !picked.isNull()) {
+			it->setData(Qt::UserRole + 15, picked);
+			it->setData(Qt::UserRole + 16, m_selectedLogoPath);
+		} else if (isExistingRow(i) && !existing.isNull()) {
+			it->setData(Qt::UserRole + 15, existing);
+			it->setData(Qt::UserRole + 16, m_existingLogoPath);
+		} else if (it->data(Qt::UserRole + 15).isValid()) {
+			it->setData(Qt::UserRole + 15, QVariant());
+			it->setData(Qt::UserRole + 16, QVariant());
+		}
+	}
+	m_resultsList->viewport()->update();
+}
+
 void ImdbSearchDialog::populateLogoGallery()
 {
 	m_logoGallery->blockSignals(true);
@@ -1410,6 +1485,8 @@ void ImdbSearchDialog::populateLogoGallery()
 			if (r->error() != QNetworkReply::NoError) return;
 			const QByteArray bytes = r->readAll();
 			m_logoThumbData[path] = bytes;
+			if (m_userSelectedLogo && path == m_selectedLogoPath)
+				updateResultLogo();  // picked before its thumbnail arrived
 			QPixmap px;
 			if (!px.loadFromData(bytes)) return;
 			const QIcon icon(px.scaled(150, 56, Qt::KeepAspectRatio, Qt::SmoothTransformation));
