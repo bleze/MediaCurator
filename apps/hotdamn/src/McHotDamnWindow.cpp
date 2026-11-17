@@ -1,4 +1,5 @@
 #include "McHotDamnWindow.h"
+#include "McHotDamnUpdater.h"
 #include "HotDamnSettings.h"
 #include "nfoview/McNfoView.h"
 #include "nfoview/NfoText.h"
@@ -17,6 +18,9 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProgressDialog>
+#include <QPushButton>
+#include <QTimer>
 #include <QMimeData>
 #include <QProcess>
 #include <QScreen>
@@ -92,6 +96,9 @@ McHotDamnWindow::McHotDamnWindow(QWidget* parent)
 
 	buildMenus();
 	buildStatusBar();
+	connectUpdater();
+	// Once the window is up; at most once a day (see McHotDamnUpdater::check).
+	QTimer::singleShot(2000, this, []() { McHotDamnUpdater::instance().check(/*silent=*/true); });
 	connect(m_view, &McNfoView::contentGrew, this, [this]() { fit(/*growOnly=*/true); });
 	connect(m_view, &McNfoView::cellSizeChanged, this, [this]() { fit(/*growOnly=*/false); });
 	m_view->browser()->setFocus();
@@ -150,6 +157,8 @@ void McHotDamnWindow::buildMenus()
 #endif
 
 	QMenu* help = menuBar()->addMenu(tr("&Help"));
+	m_checkUpdatesAct = help->addAction(tr("Check for &Updates..."), this, &McHotDamnWindow::checkForUpdates);
+	help->addSeparator();
 	help->addAction(tr("&About Hot DAMN NFO Viewer"), this, &McHotDamnWindow::showAbout);
 }
 
@@ -304,6 +313,93 @@ void McHotDamnWindow::revealInFolder()
 #else
 	QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(m_path).absolutePath()));
 #endif
+}
+
+void McHotDamnWindow::connectUpdater()
+{
+	McHotDamnUpdater& updater = McHotDamnUpdater::instance();
+	connect(&updater, &McHotDamnUpdater::updateAvailable, this,
+	        [this](QString version, QString htmlUrl, QString notes, QString installerUrl, bool) {
+		m_checkUpdatesAct->setEnabled(true);
+		onUpdateAvailable(version, htmlUrl, notes, installerUrl);
+	});
+	connect(&updater, &McHotDamnUpdater::upToDate, this, [this](bool silent) {
+		m_checkUpdatesAct->setEnabled(true);
+		if (silent) return;
+		QMessageBox::information(this, tr("Check for Updates"),
+		                         tr("You're running the latest version (%1).").arg(QCoreApplication::applicationVersion()));
+	});
+	connect(&updater, &McHotDamnUpdater::checkFailed, this, [this](QString error, bool silent) {
+		m_checkUpdatesAct->setEnabled(true);
+		if (silent) return;
+		QMessageBox::warning(this, tr("Check for Updates"), tr("Could not check for updates:\n%1").arg(error));
+	});
+	connect(&updater, &McHotDamnUpdater::downloadProgress, this, [this](qint64 received, qint64 total) {
+		if (!m_updateProgress || total <= 0) return;
+		m_updateProgress->setMaximum(static_cast<int>(total / 1024));
+		m_updateProgress->setValue(static_cast<int>(received / 1024));
+	});
+	auto closeProgress = [this]() {
+		if (!m_updateProgress) return;
+		m_updateProgress->close();
+		m_updateProgress->deleteLater();
+		m_updateProgress = nullptr;
+	};
+	connect(&updater, &McHotDamnUpdater::downloadFailed, this, [this, closeProgress](QString error) {
+		closeProgress();
+		QMessageBox::warning(this, tr("Update Failed"), error);
+	});
+	connect(&updater, &McHotDamnUpdater::installerReady, this, [this, closeProgress](QString path) {
+		closeProgress();
+		// Not launched here: this process still has HotDamn.exe and its DLLs
+		// open. main() starts it once the window has been destroyed.
+		m_pendingInstallerPath = path;
+		close();
+	});
+}
+
+void McHotDamnWindow::checkForUpdates()
+{
+	m_checkUpdatesAct->setEnabled(false);
+	McHotDamnUpdater::instance().check(/*silent=*/false);
+}
+
+void McHotDamnWindow::onUpdateAvailable(const QString& version, const QString& htmlUrl, const QString& releaseNotes,
+                                        const QString& installerUrl)
+{
+	QMessageBox box(this);
+	box.setIcon(QMessageBox::Information);
+	box.setWindowTitle(tr("Update Available"));
+	box.setText(tr("Hot DAMN NFO Viewer %1 is available (you have %2).")
+	                .arg(version, QCoreApplication::applicationVersion()));
+	if (!releaseNotes.isEmpty())
+		box.setDetailedText(releaseNotes);
+	QAbstractButton* updateBtn = nullptr;
+#ifdef Q_OS_WIN
+	if (!installerUrl.isEmpty())
+		updateBtn = box.addButton(tr("Update Now"), QMessageBox::AcceptRole);
+#endif
+	QAbstractButton* viewBtn = box.addButton(tr("View Release"), QMessageBox::ActionRole);
+	QAbstractButton* skipBtn = box.addButton(tr("Skip This Version"), QMessageBox::DestructiveRole);
+	box.addButton(tr("Remind Me Later"), QMessageBox::RejectRole);
+	box.exec();
+
+	if (updateBtn && box.clickedButton() == updateBtn) {
+		m_updateProgress = new QProgressDialog(tr("Downloading Hot DAMN NFO Viewer %1...").arg(version), tr("Cancel"),
+		                                       0, 100, this);
+		m_updateProgress->setWindowModality(Qt::WindowModal);
+		m_updateProgress->setMinimumDuration(0);
+		m_updateProgress->setAutoClose(false);
+		m_updateProgress->setAutoReset(false);
+		connect(m_updateProgress, &QProgressDialog::canceled, this,
+		        []() { McHotDamnUpdater::instance().cancelDownload(); });
+		m_updateProgress->show();
+		McHotDamnUpdater::instance().download(installerUrl);
+	} else if (box.clickedButton() == viewBtn) {
+		QDesktopServices::openUrl(QUrl(htmlUrl));
+	} else if (box.clickedButton() == skipBtn) {
+		McHotDamnUpdater::instance().skipVersion(version);
+	}
 }
 
 void McHotDamnWindow::showAbout()

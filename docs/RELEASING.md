@@ -103,8 +103,10 @@ ensure "Read and write permissions" is selected.
 Hot DAMN (`apps/hotdamn`) is released separately from MediaCurator: its own version,
 its own tag prefix and its own workflow (`.github/workflows/hotdamn.yml`).
 
-1. Bump `project(HotDamn VERSION x.y.z)` in `apps/hotdamn/CMakeLists.txt`, commit and
-   push to `main`.
+1. Bump `project(HotDamn VERSION x.y.z)` in `apps/hotdamn/CMakeLists.txt` and add a
+   `## x.y.z` section to `apps/hotdamn/CHANGELOG.md` saying what changed for users. That
+   section becomes the GitHub release notes and is what Hot DAMN's update prompt shows;
+   the release fails without it. Commit and push to `main`.
 2. Tag that commit `hotdamn-vx.y.z` — the version must match — and push the tag:
 
    ```powershell
@@ -122,3 +124,13 @@ its own tag prefix and its own workflow (`.github/workflows/hotdamn.yml`).
 > would be offered to every MediaCurator user as their update. The workflow sets
 > `make_latest: false`; keep it that way, and untick "Set as the latest release" if you
 > ever create or edit one by hand.
+
+---
+
+## Release titles and notes after the fact
+
+MediaCurator releases are titled "MediaCurator X.Y.Z" and Hot DAMN releases "Hot DAMN NFO
+Viewer X.Y.Z" by their workflows. To bring releases that are already published in line
+(older titles, or Hot DAMN notes after a changelog edit), run the **Release names and
+notes** workflow from the Actions tab (`.github/workflows/release-metadata.yml`). It only
+changes titles and notes.

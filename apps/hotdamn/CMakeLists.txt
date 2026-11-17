@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.25)
 # engine in libs/nfoview with MediaCurator. Configure from this directory:
 #   cmake -S apps/hotdamn -B apps/hotdamn/build -DQt6_DIR=<Qt>/lib/cmake/Qt6
 project(HotDamn
-    VERSION 0.1.2
+    VERSION 0.2.0
     DESCRIPTION "Hot DAMN NFO Viewer — scene .nfo files with their ASCII art rendered right"
     HOMEPAGE_URL "https://github.com/bleze/MediaCurator"
     LANGUAGES CXX
@@ -34,7 +34,9 @@ add_subdirectory("${HOTDAMN_REPO_ROOT}/libs/nfoview" "${CMAKE_BINARY_DIR}/nfovie
 set(HOTDAMN_SOURCES
     src/main.cpp
     src/McHotDamnWindow.cpp
+    src/McHotDamnUpdater.cpp
     include/McHotDamnWindow.h
+    include/McHotDamnUpdater.h
     include/HotDamnSettings.h
 )
 if(WIN32)
@@ -136,11 +138,16 @@ if(WIN32)
     # RegisteredApplications does not resolve. Set back to 32 afterwards for
     # CPack's own registry writes.
     #
+    # The question is only asked on a first install: an update finds the
+    # Capabilities key from the previous install and leaves the choice alone.
+    #
     # The machine-wide .nfo default is still pointed at the ProgID (it applies
     # where no other viewer is registered), with the previous value kept for
     # the uninstaller to restore.
     set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [[
       SetRegView 64
+      Push $1
+      ReadRegStr $1 HKLM 'Software\HotDamn\Capabilities' 'ApplicationName'
       WriteRegStr HKLM 'Software\Classes\HotDamn.nfo' '' 'NFO File'
       WriteRegStr HKLM 'Software\Classes\HotDamn.nfo\DefaultIcon' '' '$INSTDIR\HotDamn.exe,0'
       WriteRegStr HKLM 'Software\Classes\HotDamn.nfo\shell\open\command' '' '"$INSTDIR\HotDamn.exe" "%1"'
@@ -155,6 +162,7 @@ if(WIN32)
       WriteRegStr HKLM 'Software\HotDamn\Capabilities\FileAssociations' '.nfo' 'HotDamn.nfo'
       WriteRegStr HKLM 'Software\HotDamn\Capabilities\FileAssociations' '.diz' 'HotDamn.nfo'
       WriteRegStr HKLM 'Software\RegisteredApplications' 'HotDamn' 'Software\HotDamn\Capabilities'
+      StrCmp $1 '' 0 hotdamn_assoc_skip
       MessageBox MB_YESNO|MB_ICONQUESTION 'Make Hot DAMN NFO Viewer the default app for .nfo files?$\r$\n$\r$\nWindows only accepts a default app that you pick yourself, so Setup will open the Default apps settings for Hot DAMN NFO Viewer: choose it for .nfo there.' /SD IDNO IDNO hotdamn_assoc_skip
         Push $0
         ReadRegStr $0 HKLM 'Software\Classes\.nfo' ''
@@ -165,6 +173,7 @@ if(WIN32)
         Pop $0
         ExecShell 'open' 'ms-settings:defaultapps?registeredAppMachine=HotDamn'
       hotdamn_assoc_skip:
+      Pop $1
       SetRegView 32
       System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
     ]])

@@ -107,6 +107,7 @@ A summary — see the [feature reference](docs/FEATURES.md) for the full detail 
 - **Links and images** — BBCode and links are rendered, and linked screenshots can be shown inline.
 - **Everyday conveniences** — drag and drop, zoom, a choice of fonts, copy on select, always on top, reuse of the open window, and a status bar with the file's date, size and columns × rows.
 - **File association** — the installer registers it for `.nfo` and `.diz`; Windows asks you to confirm it as the default.
+- **Automatic updates** — checks GitHub for a new version once a day (or on demand under **Help → Check for Updates**) and installs it with one click.
 
 MediaCurator's own NFO dialog uses the same engine (`libs/nfoview`), so both render identically.
 

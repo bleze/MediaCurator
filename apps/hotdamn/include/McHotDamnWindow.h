@@ -4,6 +4,7 @@
 
 class QAction;
 class QLabel;
+class QProgressDialog;
 
 namespace Mc {
 
@@ -28,6 +29,10 @@ public:
 	// the front. An empty path just brings the window forward.
 	void openFromOtherInstance(const QString& path);
 
+	// Set when the user chose to install an update: main() starts this
+	// installer once the window is gone and its files are no longer in use.
+	QString pendingInstallerPath() const { return m_pendingInstallerPath; }
+
 protected:
 	void dragEnterEvent(QDragEnterEvent* event) override;
 	void dropEvent(QDropEvent* event) override;
@@ -45,6 +50,10 @@ private:
 	void updateStatus(const QString& modified, const QString& bytes);
 	void elideStatusPath();
 	void openDefaultAppsSettings();
+	void connectUpdater();
+	void checkForUpdates();
+	void onUpdateAvailable(const QString& version, const QString& htmlUrl, const QString& releaseNotes,
+	                       const QString& installerUrl);
 
 	McNfoView* m_view       = nullptr;
 	QAction*   m_reloadAct  = nullptr;
@@ -55,6 +64,9 @@ private:
 	QLabel*    m_statusBytes = nullptr;
 	QLabel*    m_statusGrid  = nullptr;
 	QString    m_path;
+	QString    m_pendingInstallerPath;
+	QAction*   m_checkUpdatesAct = nullptr;
+	QProgressDialog* m_updateProgress = nullptr;
 	bool       m_copyOnSelect = false;
 };
 

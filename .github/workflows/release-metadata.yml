@@ -1,0 +1,46 @@
+name: Release names and notes
+
+# Run by hand (Actions tab -> "Release names and notes" -> Run workflow) to bring
+# releases that are already published in line with what the release workflows
+# now produce:
+#   vX.Y.Z          -> titled "MediaCurator X.Y.Z" (notes untouched)
+#   hotdamn-vX.Y.Z  -> titled "Hot DAMN NFO Viewer X.Y.Z", notes from apps/hotdamn/CHANGELOG.md
+# Only titles and notes change; assets, tags and the "latest" mark stay as they are.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Update titles and notes
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release list --limit 1000 --json tagName,name --jq '.[] | [.tagName, .name] | @tsv' |
+        while IFS=$'\t' read -r tag name; do
+          case "$tag" in
+            hotdamn-v*)
+              version="${tag#hotdamn-v}"
+              if bash .github/scripts/hotdamn-release-notes.sh "$version" > notes.md; then
+                gh release edit "$tag" --title "Hot DAMN NFO Viewer ${version}" --notes-file notes.md
+                echo "updated $tag"
+              else
+                echo "skipped $tag (no changelog section)"
+              fi
+              ;;
+            v*)
+              want="MediaCurator ${tag#v}"
+              if [ "$name" != "$want" ]; then
+                gh release edit "$tag" --title "$want"
+                echo "renamed $tag: '$name' -> '$want'"
+              fi
+              ;;
+          esac
+        done

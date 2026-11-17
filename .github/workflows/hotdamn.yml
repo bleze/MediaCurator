@@ -90,6 +90,9 @@ jobs:
       contents: write
 
     steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
     - name: Download installer
       uses: actions/download-artifact@v8
       with:
@@ -108,6 +111,12 @@ jobs:
         fi
         echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+    # The release notes are this version's section of apps/hotdamn/CHANGELOG.md
+    # (also what Hot DAMN's update prompt shows), so a release without one fails
+    # here rather than going out with no notes.
+    - name: Release notes from the changelog
+      run: bash .github/scripts/hotdamn-release-notes.sh "${{ steps.version.outputs.version }}" | tee notes.md
+
     # make_latest must stay false. MediaCurator's in-app updater and the
     # README download link both use this repository's "latest release" and take
     # its first .exe; a Hot DAMN release marked latest would be offered to
@@ -119,10 +128,4 @@ jobs:
         files: artifacts/HotDamn-Setup-*.exe
         make_latest: 'false'
         fail_on_unmatched_files: true
-        body: |
-          Standalone viewer for scene-release `.nfo` files, sharing its NFO engine with MediaCurator.
-
-          Download `HotDamn-Setup-${{ steps.version.outputs.version }}.exe` below and run it (Windows 10/11, 64-bit).
-          The installer is not code-signed, so Windows SmartScreen may ask you to confirm: **More info → Run anyway**.
-
-          This is not a MediaCurator release; MediaCurator's own downloads are under [Latest release](https://github.com/bleze/MediaCurator/releases/latest).
+        body_path: notes.md

@@ -1,4 +1,5 @@
 #include "HotDamnSettings.h"
+#include "McHotDamnUpdater.h"
 #include "McHotDamnWindow.h"
 
 #include <QApplication>
@@ -64,23 +65,35 @@ int main(int argc, char* argv[])
 	    && sendToRunningInstance(file))
 		return 0;
 
-	Mc::McHotDamnWindow window;
-	if (file.isEmpty() || !window.openFile(file))
-		window.showWelcome();
-	window.show();
+	int rc = 0;
+	QString pendingInstaller;
+	{
+		Mc::McHotDamnWindow window;
+		if (file.isEmpty() || !window.openFile(file))
+			window.showWelcome();
+		window.show();
 
-	// Listens whatever the setting says: the setting is read by the instance
-	// being started, so turning it on later still finds this window.
-	QLocalServer server;
-	server.listen(HotDamn::kInstanceServerName);
-	QObject::connect(&server, &QLocalServer::newConnection, &window, [&server, &window]() {
-		while (QLocalSocket* socket = server.nextPendingConnection()) {
-			QObject::connect(socket, &QLocalSocket::disconnected, &window, [socket, &window]() {
-				window.openFromOtherInstance(QString::fromUtf8(socket->readAll()));
-				socket->deleteLater();
-			});
-		}
-	});
+		// Listens whatever the setting says: the setting is read by the instance
+		// being started, so turning it on later still finds this window.
+		QLocalServer server;
+		server.listen(HotDamn::kInstanceServerName);
+		QObject::connect(&server, &QLocalServer::newConnection, &window, [&server, &window]() {
+			while (QLocalSocket* socket = server.nextPendingConnection()) {
+				QObject::connect(socket, &QLocalSocket::disconnected, &window, [socket, &window]() {
+					window.openFromOtherInstance(QString::fromUtf8(socket->readAll()));
+					socket->deleteLater();
+				});
+			}
+		});
 
-	return app.exec();
+		rc = app.exec();
+		pendingInstaller = window.pendingInstallerPath();
+	}
+
+	// Only now, with the window destroyed, is the update installer started
+	// (same order as MediaCurator's main.cpp). Its wizard shows its license
+	// page before copying anything, by which time this process has exited.
+	if (!pendingInstaller.isEmpty())
+		Mc::McHotDamnUpdater::instance().launchInstaller(pendingInstaller);
+	return rc;
 }
