@@ -102,6 +102,7 @@ A summary — see the [feature reference](docs/FEATURES.md) for the full detail 
 
 - **Art rendered as drawn** — block, shade and line-drawing characters are painted as exact cells rather than font glyphs, so there are no seams between rows or columns, at any zoom. Cells keep the 5:12 shape of DOS text mode.
 - **Encoding detection** — CP437, UTF-8 and Latin-1 are told apart automatically, and DOS symbol characters are shown instead of empty boxes.
+- **Damaged files recovered** — an NFO that some tool once re-saved in the wrong encoding gets its surviving art back in place; characters that were lost show as grey cells, and the status bar says how many.
 - **Black on white, whatever your theme** — the way the art was drawn; night colours are one click away.
 - **Links and images** — BBCode and links are rendered, and linked screenshots can be shown inline.
 - **Everyday conveniences** — drag and drop, zoom, a choice of fonts, copy on select, always on top, reuse of the open window, and a status bar with the file's date, size and columns × rows.

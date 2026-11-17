@@ -78,7 +78,7 @@ public:
 
 	// Corrects cached text that an older version decoded as CP437 although the
 	// file was UTF-8, without re-reading the (NAS-hosted) file.
-	static QString redecodeCachedSceneNfoText(const QString& cached);
+	static QString redecodeCachedSceneNfoText(const QString& cached, bool mayHoldUnrecoveredDamage);
 
 	// NFO text (with its BBCode subset) → HTML safe for QTextBrowser::setHtml().
 	static QString bbcodeToHtml(const QString& text, const QSet<QString>* inlineImages = nullptr);

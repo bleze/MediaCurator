@@ -68,9 +68,9 @@ QString decodeCp437(const QByteArray& raw)
 	return out;
 }
 
-// Inverse of decodeCp437: false if text holds a character CP437 can't encode,
-// i.e. it was not produced by decodeCp437 in the first place.
-bool encodeCp437(const QString& text, QByteArray& out)
+// Unicode character → the CP437 byte that decodes to it (bytes 0x80 and up,
+// plus the control-range symbols).
+const QHash<char16_t, char>& cp437Reverse()
 {
 	static const QHash<char16_t, char> reverse = [] {
 		QHash<char16_t, char> h;
@@ -79,9 +79,59 @@ bool encodeCp437(const QString& text, QByteArray& out)
 		for (int i = 0; i < 32; ++i) {
 			if (kCp437Low[i]) h.insert(kCp437Low[i], static_cast<char>(i));
 		}
-		h.insert(kCp437Del, '');
+		h.insert(kCp437Del, '\x7F');
 		return h;
 	}();
+	return reverse;
+}
+
+// A common way NFOs get destroyed (older MediaCurator versions did it too):
+// the CP437 file was read as UTF-8 and saved again. Qt's decoder turns each
+// byte that isn't part of a valid UTF-8 sequence — nearly all the art — into
+// one U+FFFD, so that byte is gone for good. Bytes that happened to form a
+// valid sequence (two art bytes such as DB B2 make U+06F2) came through
+// unchanged. The damaged file is valid UTF-8, and decoded as such it shows
+// replacement characters with stray Arabic or Syriac letters in between.
+bool looksUtf8Damaged(const QString& text)
+{
+	qsizetype lost = 0, other = 0;
+	for (const QChar ch : text) {
+		if (ch.unicode() == 0xFFFD) ++lost;
+		else if (ch.unicode() >= 0x80) ++other;
+	}
+	return lost >= 16 && lost >= 2 * other;
+}
+
+// Decodes such a file from its bytes: each EF BF BD is one lost cell (U+FFFD),
+// and every other multi-byte sequence is the original CP437 bytes, one cell
+// each. Since Qt replaced invalid bytes one for one, the cells keep their
+// columns. raw must be valid UTF-8 without a byte-order mark.
+QString recoverUtf8Damage(const QByteArray& raw)
+{
+	QString out;
+	out.reserve(raw.size());
+	for (qsizetype i = 0; i < raw.size();) {
+		const auto c = static_cast<unsigned char>(raw[i]);
+		if (c < 0x80) {
+			out += QChar(c);
+			++i;
+		} else if (raw.size() - i >= 3 && std::memcmp(raw.constData() + i, "\xEF\xBF\xBD", 3) == 0) {
+			out += QChar(0xFFFD);
+			i += 3;
+		} else {
+			const qsizetype len = qMin(raw.size() - i, qsizetype(c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : 2));
+			out += decodeCp437(raw.mid(i, len));
+			i += len;
+		}
+	}
+	return out;
+}
+
+// Inverse of decodeCp437: false if text holds a character CP437 can't encode,
+// i.e. it was not produced by decodeCp437 in the first place.
+bool encodeCp437(const QString& text, QByteArray& out)
+{
+	const QHash<char16_t, char>& reverse = cp437Reverse();
 	out.clear();
 	out.reserve(text.size());
 	for (const QChar ch : text) {
@@ -232,15 +282,28 @@ static QString decodeByEncoding(const QByteArray& raw)
 	                                     [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
 	if (hasHighByte && raw.isValidUtf8()) {
 		const qsizetype bom = raw.startsWith("\xEF\xBB\xBF") ? 3 : 0;
-		return stripTrailingWhitespacePerLine(QString::fromUtf8(raw.constData() + bom, raw.size() - bom));
+		const QString text = QString::fromUtf8(raw.constData() + bom, raw.size() - bom);
+		return stripTrailingWhitespacePerLine(looksUtf8Damaged(text) ? recoverUtf8Damage(raw.mid(bom)) : text);
 	}
 	if (looksLikeLatin1Text(raw))
 		return stripTrailingWhitespacePerLine(QString::fromLatin1(raw));
 	return stripTrailingWhitespacePerLine(decodeCp437(raw));
 }
 
-QString redecodeCachedText(const QString& cached)
+qsizetype lostCharacterCount(const QString& text)
 {
+	return text.count(QChar(0xFFFD));
+}
+
+QString redecodeCachedText(const QString& cached, bool mayHoldUnrecoveredDamage)
+{
+	// An older decoder cached a damaged file as its plain UTF-8 text, which
+	// re-encodes to the file's exact bytes (trailing blanks aside). Recovered
+	// text must not go through this again — its CP437 characters would be
+	// taken for surviving byte sequences — which is why the caller has to say.
+	if (mayHoldUnrecoveredDamage && looksUtf8Damaged(cached))
+		return decodeBytes(cached.toUtf8());
+
 	// Text cached before control characters were mapped to their symbols still
 	// holds them raw; that part needs no bytes, so it applies in every case.
 	const QString mapped = mapControlSymbols(cached);

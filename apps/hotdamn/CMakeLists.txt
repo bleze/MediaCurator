@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.25)
 # engine in libs/nfoview with MediaCurator. Configure from this directory:
 #   cmake -S apps/hotdamn -B apps/hotdamn/build -DQt6_DIR=<Qt>/lib/cmake/Qt6
 project(HotDamn
-    VERSION 0.1.1
+    VERSION 0.1.2
     DESCRIPTION "Hot DAMN NFO Viewer — scene .nfo files with their ASCII art rendered right"
     HOMEPAGE_URL "https://github.com/bleze/MediaCurator"
     LANGUAGES CXX

@@ -50,6 +50,7 @@ private:
 	QAction*   m_reloadAct  = nullptr;
 	QAction*   m_revealAct  = nullptr;
 	QLabel*    m_statusPath  = nullptr;
+	QLabel*    m_statusDamage = nullptr;
 	QLabel*    m_statusDate  = nullptr;
 	QLabel*    m_statusBytes = nullptr;
 	QLabel*    m_statusGrid  = nullptr;

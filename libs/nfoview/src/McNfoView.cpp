@@ -54,6 +54,10 @@ constexpr char16_t kLastBlockElement  = 0x259F;
 // cell with a small dot, so that is what is painted here. Left to the font it
 // is a boxed symbol that fits neither.
 constexpr char16_t kInverseBullet = 0x25D8;
+// A character the file no longer holds (see NfoText::decodeBytes). Nearly
+// always it was art, so it is painted as a flat grey cell: the outline of
+// the picture stays readable, without pretending to know what was there.
+constexpr char16_t kLostCharacter = 0xFFFD;
 
 // One Unicode block element (U+2580-259F) as geometry: up to two rectangles in
 // eighths of the cell, or a shade (coverage in quarters, whole cell).
@@ -281,7 +285,9 @@ protected:
 				for (int i = line.textStart(); i < end; ++i) {
 					const char16_t ch = text[i].unicode();
 					const quint8 box = boxArms(ch);
-					if (!box && ch != kInverseBullet && (ch < kFirstBlockElement || ch > kLastBlockElement)) continue;
+					if (!box && ch != kInverseBullet && ch != kLostCharacter
+					    && (ch < kFirstBlockElement || ch > kLastBlockElement))
+						continue;
 
 					const int x0 = qRound(origin.x() + line.cursorToX(i));
 					const int x1 = qRound(origin.x() + line.cursorToX(i + 1));
@@ -292,6 +298,10 @@ protected:
 
 					if (box) {
 						paintBox(painter, x0, y0, x1, y1, box, fg, bg, lineWidth);
+						continue;
+					}
+					if (ch == kLostCharacter) {
+						painter.fillRect(QRect(x0, y0, x1 - x0, y1 - y0), mix(bg, fg, 2));
 						continue;
 					}
 					if (ch == kInverseBullet) {
@@ -561,7 +571,8 @@ void McNfoView::applyCellFormats()
 			const QChar ch = text[i];
 			const char16_t u = ch.unicode();
 			if (u < 0x80 || ch.isSurrogate()) { ++i; continue; }
-			const bool  painted = boxArms(u) || u == kInverseBullet || (u >= kFirstBlockElement && u <= kLastBlockElement);
+			const bool  painted = boxArms(u) || u == kInverseBullet || u == kLostCharacter
+			                      || (u >= kFirstBlockElement && u <= kLastBlockElement);
 			const qreal spacing = metrics.inFont(ch) ? 0.0 : cell - metrics.horizontalAdvance(ch);
 			if (!painted && qFuzzyIsNull(spacing)) { ++i; continue; }
 

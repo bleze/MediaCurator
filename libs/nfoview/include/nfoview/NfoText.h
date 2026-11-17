@@ -14,12 +14,21 @@ namespace Mc::NfoText {
 // and block-shading art above 0x7F); UTF-8, Latin-1/Windows-1252 and one
 // known corrupted mixed UTF-16BE shape are detected and decoded as such.
 // Trailing whitespace is stripped per line; line breaks come back as '\n'.
+// A file that some tool re-saved as UTF-8 has lost most of its art for good;
+// what survived is restored, and each lost character comes back as U+FFFD.
 QString decodeBytes(const QByteArray& raw);
 
-// Corrects text that an older decoder version read as CP437 although the file
-// was UTF-8, without the original file: CP437 decoding is 1:1, so the bytes
-// can be rebuilt from the text. Returns the input unchanged in every other case.
-QString redecodeCachedText(const QString& cached);
+// Number of characters in decoded text whose content was lost (see decodeBytes).
+qsizetype lostCharacterCount(const QString& text);
+
+// Brings text decoded by an older version of decodeBytes up to date without
+// the original file, as far as that can be done exactly: CP437 decoding is
+// 1:1, so the bytes can be rebuilt from the text (text read as CP437 although
+// the file was UTF-8 is corrected), and so can a damaged file's bytes from its
+// text as decoded before recovery existed. mayHoldUnrecoveredDamage says the
+// text comes from such a decoder; text that has been through recovery must
+// pass false. Returns the input unchanged when nothing applies.
+QString redecodeCachedText(const QString& cached, bool mayHoldUnrecoveredDamage);
 
 // Converts the subset of forum BBCode that NFO templates use — [b] [i] [u]
 // [color=...] [url] — into HTML; [font=...] is dropped. Images ([img], or a

@@ -187,15 +187,20 @@ void McHotDamnWindow::buildStatusBar()
 	m_statusPath = new QLabel(this);
 	m_statusPath->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 	statusBar()->addWidget(m_statusPath, 1);
-	for (QLabel** label : { &m_statusDate, &m_statusBytes, &m_statusGrid }) {
+	for (QLabel** label : { &m_statusDamage, &m_statusDate, &m_statusBytes, &m_statusGrid }) {
 		*label = new QLabel(this);
 		statusBar()->addPermanentWidget(*label);
 	}
 	m_statusGrid->setToolTip(tr("Columns × rows"));
+	m_statusDamage->setToolTip(tr("This file was re-saved in the wrong encoding at some point, which destroyed these "
+	                              "characters. They are shown as grey cells; the original file is the only fix."));
 }
 
 void McHotDamnWindow::updateStatus(const QString& modified, const QString& bytes)
 {
+	const qsizetype lost = m_path.isEmpty() ? 0 : NfoText::lostCharacterCount(m_view->text());
+	m_statusDamage->setText(lost > 0 ? tr("Damaged file: %1 characters lost").arg(QLocale().toString(lost)) : QString());
+	m_statusDamage->setVisible(lost > 0);
 	m_statusDate->setText(modified);
 	m_statusBytes->setText(bytes);
 	if (m_path.isEmpty()) {

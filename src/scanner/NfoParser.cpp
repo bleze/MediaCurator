@@ -158,9 +158,9 @@ QString NfoParser::decodeSceneNfoBytes(const QByteArray& raw)
 	return NfoText::decodeBytes(raw);
 }
 
-QString NfoParser::redecodeCachedSceneNfoText(const QString& cached)
+QString NfoParser::redecodeCachedSceneNfoText(const QString& cached, bool mayHoldUnrecoveredDamage)
 {
-	return NfoText::redecodeCachedText(cached);
+	return NfoText::redecodeCachedText(cached, mayHoldUnrecoveredDamage);
 }
 
 QStringList NfoParser::sceneNfoImageUrls(const QString& text)

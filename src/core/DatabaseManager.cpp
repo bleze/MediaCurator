@@ -587,17 +587,22 @@ bool DatabaseManager::initSchema()
 	// Re-decode the cache in place instead, as far as that can be done safely
 	// from the cached text alone (see NfoParser::redecodeCachedSceneNfoText).
 	{
-		static constexpr const char* kSceneNfoDecoderVersion = "3"; // "2": UTF-8 detection, "3": CP437 control symbols
+		// "2": UTF-8 detection, "3": CP437 control symbols, "4": recovery of UTF-8-damaged files
+		static constexpr const char* kSceneNfoDecoderVersion = "4";
+		// Text cached by a decoder older than this holds damaged NFOs unrecovered.
+		static constexpr int kFirstRecoveringDecoderVersion = 4;
 		QSqlQuery pv(connection());
 		pv.exec("SELECT value FROM preferences WHERE key='scene_nfo_decoder_version'");
 		const QString currentVersion = pv.next() ? pv.value(0).toString() : QString();
 		if (currentVersion != QLatin1String(kSceneNfoDecoderVersion)) {
+			// No stored version at all means a cache from before versioning (0).
+			const bool mayHoldUnrecoveredDamage = currentVersion.toInt() < kFirstRecoveringDecoderVersion;
 			QList<QPair<qint64, QString>> changed;
 			QSqlQuery sel(connection());
 			sel.exec("SELECT id, scene_nfo_text FROM files WHERE scene_nfo_text != ''");
 			while (sel.next()) {
 				const QString oldText = sel.value(1).toString();
-				const QString newText = NfoParser::redecodeCachedSceneNfoText(oldText);
+				const QString newText = NfoParser::redecodeCachedSceneNfoText(oldText, mayHoldUnrecoveredDamage);
 				if (newText != oldText)
 					changed.append({ sel.value(0).toLongLong(), newText });
 			}
