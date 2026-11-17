@@ -711,9 +711,11 @@ McMainWindow::McMainWindow(QWidget* parent)
 	// notification when the window is hidden there.
 	connect(m_jobQueue, &JobQueue::pausedAfterFailure, this, [this](const QString& fileName, const QString& reason) {
 		m_statusLabel->setText(tr("Queue paused after a failed job"));
+#ifdef Q_OS_WIN
 		if (m_trayIcon && m_trayIcon->isVisible() && !isVisible())
 			m_trayIcon->showMessage(tr("MediaCurator: queue paused"),
 			                        tr("The job for '%1' failed. %2").arg(fileName, reason), QSystemTrayIcon::Warning);
+#endif
 		auto* box = new QMessageBox(QMessageBox::Warning, tr("Job Queue Paused"),
 		                            tr("The job for '%1' failed, so the queue has been paused instead of moving on "
 		                               "to the next file.").arg(fileName),

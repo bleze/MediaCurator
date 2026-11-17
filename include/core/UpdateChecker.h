@@ -15,11 +15,11 @@ namespace Mc {
  * (drafts and pre-releases are never returned by this endpoint)
  *
  * Two call modes:
- *   check(/*silent=* /true)  — startup path. Always hits the network, but
+ *   check(silent=true)   — startup path. Always hits the network, but
  *   stays quiet if the latest release has been explicitly skipped by the
  *   user (skipVersion()) — so once dismissed, a given release won't be
  *   re-prompted on every launch, while the *next* release still will be.
- *   check(/*silent=* /false) — "Check for Updates…" menu path. Always hits the
+ *   check(silent=false) — "Check for Updates…" menu path. Always hits the
  *   network and always reports a result, skip list notwithstanding.
  *
  * Every signal carries back the `silent` flag from the triggering call so a
