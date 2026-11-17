@@ -220,7 +220,7 @@ private:
 	bool        m_downloadSceneNfoEnabled  = false;
 	bool        m_autoDownloadSceneNfo    = false;
 	bool        m_deepDolbyVisionScanEnabled = false;
-	bool        m_showClearLogos           = false;
+	bool        m_showClearLogos           = true;
 	bool        m_useLocalStaging          = false;
 	QString     m_localStagingDir;
 	QString     m_tmdbApiKey;

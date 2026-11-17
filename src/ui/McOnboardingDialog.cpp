@@ -155,6 +155,46 @@ QLabel* stackedCardsIcon(QWidget* parent, int size)
 	return lbl;
 }
 
+// Row of three poster silhouettes — echoes the Group by Collection banner's member
+// poster strip (McCardDelegate::paintCollectionBanner). Hand-drawn for the same reason
+// as stackedCardsIcon: link.svg already means hyperlink elsewhere.
+QLabel* posterRowIcon(QWidget* parent, int size)
+{
+	const qreal dpr = parent->devicePixelRatioF();
+	QPixmap pm(qCeil(size * dpr), qCeil(size * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing);
+	const QColor color = parent->palette().color(QPalette::Highlight);
+	const int posterW = qRound(size * 0.26);
+	const int posterH = qRound(posterW * 1.5);
+	const int gap     = qRound(size * 0.06);
+	const int x0      = (size - (3 * posterW + 2 * gap)) / 2;
+	const int y       = (size - posterH) / 2;
+	p.setPen(Qt::NoPen);
+	p.setBrush(color);
+	for (int i = 0; i < 3; ++i)
+		p.drawRoundedRect(QRect(x0 + i * (posterW + gap), y, posterW, posterH), 3, 3);
+	p.end();
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
+	lbl->setAlignment(Qt::AlignHCenter);
+	return lbl;
+}
+
+// The real "N collections" filter pill (McFilterPanel::m_collectionChip), shown
+// checked/disabled like duplicatesChipSample.
+QWidget* collectionsChipSample(QWidget* parent)
+{
+	auto* chip = makeFilterPill(QObject::tr("3 collections"), QColor(0x2e, 0x6d, 0xb4), parent);
+	chip->setChecked(true);
+	chip->setEnabled(false);
+	return chip;
+}
+
 // The real "N duplicates" filter pill (McFilterPanel::m_redundantChip), shown checked/
 // disabled so it reads as a static preview of the "on" state rather than an inert control.
 QWidget* duplicatesChipSample(QWidget* parent)
@@ -257,12 +297,23 @@ McOnboardingDialog::McOnboardingDialog(QWidget* parent)
 		{ editionBadgesSample(m_stack, QStringLiteral("Theatrical & Theatrical")),
 		  duplicatesChipSample(m_stack) }));
 
+	m_stack->addWidget(buildPage(m_stack, posterRowIcon(m_stack, 56),
+		tr("Group by Collection"),
+		tr("Pick <b>Group by Collection</b> in the same sort dropdown and the films of a TMDB "
+		   "collection — Star Wars, Indiana Jones, James Bond — line up together in release "
+		   "order under a banner showing the collection's posters, how many films you own, "
+		   "and their total size. The <b>collections</b> chip narrows the library to just the "
+		   "collections you own two or more films of. Needs a TMDB API key (next page)."),
+		{ collectionsChipSample(m_stack) }));
+
 	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/refresh.svg"), 56),
-		tr("Posters, fanart, and NFOs"),
+		tr("Posters, fanart, logos, and NFOs"),
 		tr("Add a free TMDB API key in <b>Tools → Settings → Other</b> and MediaCurator will "
-		   "match your movies automatically, download posters and fanart, and — if you turn it "
-		   "on — write Kodi-style .nfo files with the correct title, original title, year, and "
-		   "rating. Got the wrong match? Right-click a card to search and pick manually.")));
+		   "match your movies automatically, download posters, fanart, and clear logos — the "
+		   "movie's title artwork, shown on each library card in place of the plain-text "
+		   "title — and, if you turn it on, write Kodi-style .nfo files with the correct "
+		   "title, original title, year, and rating. Got the wrong match? Right-click a card "
+		   "to search and pick manually, or choose a different poster, fanart, or logo there.")));
 
 	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/translate.svg"), 56),
 		tr("Missing subtitles? Downloaded"),

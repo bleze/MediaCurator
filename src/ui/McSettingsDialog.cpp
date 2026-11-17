@@ -1054,7 +1054,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 		"Logos are picked by your Understood Languages, the same way titles are. You can\n"
 		"choose a different one under Edit Movie Metadata, next to posters and fanart.\n\n"
 		"Turning this on downloads one small image per matched movie in the background.\n\n"
-		"Off by default."));
+		"On by default; does nothing until a TMDB API key is set."));
 	m_chkClearLogos->setChecked(profile->showClearLogos());
 	enrichLayout->addWidget(m_chkClearLogos);
 

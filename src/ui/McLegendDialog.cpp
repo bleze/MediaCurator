@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QVBoxLayout>
+#include <QtMath>
 
 namespace Mc {
 
@@ -67,6 +68,39 @@ QLabel* plainBadgeLabel(QWidget* parent, const QString& text,
 
 	auto* lbl = new QLabel(parent);
 	lbl->setPixmap(pm);
+	return lbl;
+}
+
+// Renders the TMDB collection chip the way McCardDelegate::paint draws it on a
+// library card's title row: collection-accent fill, bold 80% font, white text.
+QLabel* collectionChipLabel(QWidget* parent, const QString& name)
+{
+	const qreal dpr = parent->devicePixelRatioF();
+	QFont font = parent->font();
+	font.setPointSizeF(font.pointSizeF() * 0.80);
+	font.setBold(true);
+	const QFontMetrics fm(font);
+	constexpr int padX = 5;
+	constexpr int padY = 1;
+	const int w = fm.horizontalAdvance(name) + 2 * padX;
+	const int h = fm.height() + 2 * padY;
+
+	QPixmap pm(qCeil(w * dpr), qCeil(h * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing, true);
+	p.setPen(Qt::NoPen);
+	p.setBrush(QColor(0x2e, 0x6d, 0xb4));  // McCardDelegate::kCollectionAccent (private)
+	p.drawRoundedRect(QRect(0, 0, w, h), 3, 3);
+	p.setPen(Qt::white);
+	p.setFont(font);
+	p.drawText(padX, padY + fm.ascent(), name);
+	p.end();
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
+	lbl->setFixedSize(w, h);
 	return lbl;
 }
 
@@ -261,6 +295,10 @@ McLegendDialog::McLegendDialog(QWidget* parent)
 	       tr("Storage group — shown when library spans more than one"));
 	addRow(g, { plainBadgeLabel(this, tr("Director's Cut")), plainBadgeLabel(this, tr("Theatrical")) },
 	       tr("Edition/cut, detected from filename or container tag"));
+	addRow(g, { collectionChipLabel(this, QStringLiteral("Star Wars")),
+	            collectionChipLabel(this, QStringLiteral("James Bond")) },
+	       tr("TMDB collection — shown when you own two or more of its films; "
+	          "<b>Group by Collection</b> lines them up together"));
 	addRow(g, { plainBadgeLabel(this, QStringLiteral("NFO")) },
 	       tr("Scene release NFO available — click to view its release notes/art"));
 	const QColor videoBadgeColor = McCardDelegate::badgeColor(QStringLiteral("video"));

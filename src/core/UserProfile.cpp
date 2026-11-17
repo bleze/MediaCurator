@@ -436,7 +436,7 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_downloadSceneNfoEnabled    = json["download_scene_nfo_enabled"].toBool(false);
 	m_autoDownloadSceneNfo       = json["auto_download_scene_nfo"].toBool(false);
 	m_deepDolbyVisionScanEnabled = json["deep_dolby_vision_scan_enabled"].toBool(false);
-	m_showClearLogos             = json["show_clear_logos"].toBool(false);
+	m_showClearLogos             = json["show_clear_logos"].toBool(true);
 	m_useLocalStaging            = json["use_local_staging"].toBool(false);
 	m_localStagingDir            = json["local_staging_dir"].toString();
 	m_tmdbApiKey                 = json["tmdb_api_key"].toString();
