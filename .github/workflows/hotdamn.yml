@@ -3,10 +3,14 @@ name: Hot DAMN NFO Viewer
 # The standalone NFO viewer (apps/hotdamn) is its own CMake project with its
 # own version and installer. Kept out of build.yml on purpose: that workflow's
 # release job attaches every artifact of the run to the MediaCurator release,
-# and this installer is not part of one. No tag trigger here for the same reason.
+# and this installer is not part of one.
+#
+# Releases use their own tag prefix, hotdamn-vX.Y.Z, which build.yml's 'v*'
+# trigger does not match. (Path filters below are not applied to tag pushes.)
 on:
   push:
     branches: [ main, develop, hotdamn, 'hotdamn/**' ]
+    tags: [ 'hotdamn-v*' ]
     paths:
       - 'apps/hotdamn/**'
       - 'libs/nfoview/**'
@@ -74,3 +78,51 @@ jobs:
         name: HotDamn-Windows-Installer
         path: apps/hotdamn/build/packages/HotDamn-Setup-*.exe
         if-no-files-found: error
+
+  # Runs only on hotdamn-vX.Y.Z tag pushes: publishes the installer as a GitHub
+  # Release in this repository.
+  release:
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/hotdamn-v')
+    runs-on: ubuntu-latest
+    name: Publish release
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download installer
+      uses: actions/download-artifact@v8
+      with:
+        name: HotDamn-Windows-Installer
+        path: artifacts
+
+    # The installer's version comes from project(VERSION) in
+    # apps/hotdamn/CMakeLists.txt; a tag that disagrees with it would publish
+    # a release whose name and contents don't match.
+    - name: Check tag matches the built version
+      id: version
+      run: |
+        version="${GITHUB_REF_NAME#hotdamn-v}"
+        if [ ! -f "artifacts/HotDamn-Setup-${version}.exe" ]; then
+          echo "Tag ${GITHUB_REF_NAME} does not match the built installer:"; ls artifacts; exit 1
+        fi
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+    # make_latest must stay false. MediaCurator's in-app updater and the
+    # README download link both use this repository's "latest release" and take
+    # its first .exe; a Hot DAMN release marked latest would be offered to
+    # every MediaCurator user as their update.
+    - name: Create release
+      uses: softprops/action-gh-release@v3
+      with:
+        name: Hot DAMN NFO Viewer ${{ steps.version.outputs.version }}
+        files: artifacts/HotDamn-Setup-*.exe
+        make_latest: 'false'
+        fail_on_unmatched_files: true
+        body: |
+          Standalone viewer for scene-release `.nfo` files, sharing its NFO engine with MediaCurator.
+
+          Download `HotDamn-Setup-${{ steps.version.outputs.version }}.exe` below and run it (Windows 10/11, 64-bit).
+          The installer is not code-signed, so Windows SmartScreen may ask you to confirm: **More info → Run anyway**.
+
+          This is not a MediaCurator release; MediaCurator's own downloads are under [Latest release](https://github.com/bleze/MediaCurator/releases/latest).

@@ -201,7 +201,15 @@ void McHotDamnWindow::updateStatus(const QString& modified, const QString& bytes
 	if (m_path.isEmpty()) {
 		m_statusGrid->clear();
 	} else {
-		const QStringList lines = m_view->text().split(QLatin1Char('\n'));
+		// Rows are lines of text: an empty file has none, and a final line
+		// break ends the last line rather than starting another.
+		const QString text = m_view->text();
+		QStringList lines;
+		if (!text.isEmpty()) {
+			lines = text.split(QLatin1Char('\n'));
+			if (text.endsWith(QLatin1Char('\n')))
+				lines.removeLast();
+		}
 		qsizetype columns = 0;
 		for (const QString& line : lines)
 			columns = qMax(columns, line.size());

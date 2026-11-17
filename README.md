@@ -8,6 +8,8 @@
 
 **[Download the latest release](https://github.com/bleze/MediaCurator/releases/latest)** · [Installation guide](docs/INSTALL.md) · [Full feature reference](docs/FEATURES.md)
 
+> Just want to read `.nfo` files? MediaCurator's NFO viewer is also available on its own as **[Hot DAMN NFO Viewer](#hot-damn-nfo-viewer)**.
+
 ## What It Does
 
 Modern movie files often ship with 8–15 audio tracks covering every language used in distribution, plus multiple subtitle streams, commentary tracks, and secondary mixes. If you only watch films in one or two languages, all of those extra streams are dead weight. A typical Blu-ray rip can carry 2–3 GB of audio tracks you will never use.
@@ -92,9 +94,22 @@ A summary — see the [feature reference](docs/FEATURES.md) for the full detail 
 
 ## Hot DAMN NFO Viewer
 
-The scene NFO viewer is also available as a small standalone app, **Hot DAMN NFO Viewer** — a nod to the DAMN NFO Viewer of old. It opens `.nfo` files directly (double-click, drag and drop, or **File → Open**), with the same CP437 art rendering, encoding detection and inline screenshots as the viewer inside MediaCurator; both share one NFO engine (`libs/nfoview`). Its Windows installer registers it for `.nfo` and `.diz` files.
+**Hot DAMN NFO Viewer** is MediaCurator's scene NFO viewer as a small standalone Windows app — a nod to the DAMN NFO Viewer of old. Double-click an `.nfo` and it opens.
 
-It lives in `apps/hotdamn` as its own CMake project with its own version and installer, and needs only Qt — none of MediaCurator's external tools:
+**[Download Hot DAMN NFO Viewer](https://github.com/bleze/MediaCurator/releases?q=%22Hot+DAMN+NFO+Viewer%22)** — pick the newest `HotDamn-Setup-x.y.z.exe` (Windows 10/11, 64-bit). It is released separately from MediaCurator, so it is not under "Latest release".
+
+![Hot DAMN NFO Viewer showing block art](docs/screenshots/hotdamn.png)
+
+- **Art rendered as drawn** — block, shade and line-drawing characters are painted as exact cells rather than font glyphs, so there are no seams between rows or columns, at any zoom. Cells keep the 5:12 shape of DOS text mode.
+- **Encoding detection** — CP437, UTF-8 and Latin-1 are told apart automatically, and DOS symbol characters are shown instead of empty boxes.
+- **Black on white, whatever your theme** — the way the art was drawn; night colours are one click away.
+- **Links and images** — BBCode and links are rendered, and linked screenshots can be shown inline.
+- **Everyday conveniences** — drag and drop, zoom, a choice of fonts, copy on select, always on top, reuse of the open window, and a status bar with the file's date, size and columns × rows.
+- **File association** — the installer registers it for `.nfo` and `.diz`; Windows asks you to confirm it as the default.
+
+MediaCurator's own NFO dialog uses the same engine (`libs/nfoview`), so both render identically.
+
+Hot DAMN lives in `apps/hotdamn` as its own CMake project with its own version and installer, and needs only Qt — none of MediaCurator's external tools. To build it:
 
 ```powershell
 cmake -S apps/hotdamn -B apps/hotdamn/build -DQt6_DIR="<path>/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6"

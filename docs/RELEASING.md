@@ -95,3 +95,30 @@ rather than re-pushing the tag.
 `release` needs write access to create the GitHub Release. If it fails with a
 permissions error, check **Settings → Actions → General → Workflow permissions** and
 ensure "Read and write permissions" is selected.
+
+---
+
+## Releasing Hot DAMN NFO Viewer
+
+Hot DAMN (`apps/hotdamn`) is released separately from MediaCurator: its own version,
+its own tag prefix and its own workflow (`.github/workflows/hotdamn.yml`).
+
+1. Bump `project(HotDamn VERSION x.y.z)` in `apps/hotdamn/CMakeLists.txt`, commit and
+   push to `main`.
+2. Tag that commit `hotdamn-vx.y.z` — the version must match — and push the tag:
+
+   ```powershell
+   git tag hotdamn-v0.1.1
+   git push origin hotdamn-v0.1.1
+   ```
+
+3. The workflow builds the NSIS installer and publishes a GitHub Release named
+   "Hot DAMN NFO Viewer x.y.z" with `HotDamn-Setup-x.y.z.exe` attached. It fails rather
+   than publish if the tag and the built version disagree.
+
+> **Never mark a Hot DAMN release as "latest".** MediaCurator's in-app updater
+> (`UpdateChecker.cpp`) and the README download link use this repository's
+> `/releases/latest` and take its first `.exe` asset — a Hot DAMN release marked latest
+> would be offered to every MediaCurator user as their update. The workflow sets
+> `make_latest: false`; keep it that way, and untick "Set as the latest release" if you
+> ever create or edit one by hand.

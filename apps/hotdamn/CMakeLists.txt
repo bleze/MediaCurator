@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.25)
 # engine in libs/nfoview with MediaCurator. Configure from this directory:
 #   cmake -S apps/hotdamn -B apps/hotdamn/build -DQt6_DIR=<Qt>/lib/cmake/Qt6
 project(HotDamn
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "Hot DAMN NFO Viewer — scene .nfo files with their ASCII art rendered right"
     HOMEPAGE_URL "https://github.com/bleze/MediaCurator"
     LANGUAGES CXX
@@ -120,13 +120,27 @@ if(WIN32)
     set(CPACK_NSIS_MUI_FINISHPAGE_RUN  "HotDamn.exe")
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 
-    # File association. HotDamn.nfo is the ProgID; .nfo and .diz list it under
-    # OpenWithProgids and the app registers Capabilities, so it shows up in
-    # "Open with" and in Settings > Default apps. The machine-wide default for
-    # .nfo (normally System Information's MSInfo.Document) is pointed at the
-    # ProgID too, with the previous value kept for the uninstaller to restore.
-    # A per-user choice the user already made in Windows still wins over this.
+    # File association.
+    #
+    # What an installer can and cannot do here: it registers the app as able to
+    # open .nfo/.diz (ProgID HotDamn.nfo, OpenWithProgids, Capabilities), which
+    # puts it in "Open with" and in Settings > Default apps. It cannot make the
+    # app the default. Windows 10/11 only accept a default the user picked:
+    # with a second viewer registered and no choice made yet, Explorer asks
+    # "How do you want to open this file?" on the next double-click instead of
+    # using the machine-wide default written below. So the installer asks, and
+    # on yes opens the Default apps page at this app's entry to finish the job.
+    #
+    # SetRegView 64: the NSIS installer is a 32-bit program and would otherwise
+    # write Software\HotDamn under WOW6432Node, where the Capabilities path in
+    # RegisteredApplications does not resolve. Set back to 32 afterwards for
+    # CPack's own registry writes.
+    #
+    # The machine-wide .nfo default is still pointed at the ProgID (it applies
+    # where no other viewer is registered), with the previous value kept for
+    # the uninstaller to restore.
     set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [[
+      SetRegView 64
       WriteRegStr HKLM 'Software\Classes\HotDamn.nfo' '' 'NFO File'
       WriteRegStr HKLM 'Software\Classes\HotDamn.nfo\DefaultIcon' '' '$INSTDIR\HotDamn.exe,0'
       WriteRegStr HKLM 'Software\Classes\HotDamn.nfo\shell\open\command' '' '"$INSTDIR\HotDamn.exe" "%1"'
@@ -141,16 +155,22 @@ if(WIN32)
       WriteRegStr HKLM 'Software\HotDamn\Capabilities\FileAssociations' '.nfo' 'HotDamn.nfo'
       WriteRegStr HKLM 'Software\HotDamn\Capabilities\FileAssociations' '.diz' 'HotDamn.nfo'
       WriteRegStr HKLM 'Software\RegisteredApplications' 'HotDamn' 'Software\HotDamn\Capabilities'
-      Push $0
-      ReadRegStr $0 HKLM 'Software\Classes\.nfo' ''
-      StrCmp $0 'HotDamn.nfo' hotdamn_assoc_done
-        WriteRegStr HKLM 'Software\Classes\.nfo' 'HotDamn.backup' '$0'
-        WriteRegStr HKLM 'Software\Classes\.nfo' '' 'HotDamn.nfo'
-      hotdamn_assoc_done:
-      Pop $0
+      MessageBox MB_YESNO|MB_ICONQUESTION 'Make Hot DAMN NFO Viewer the default app for .nfo files?$\r$\n$\r$\nWindows only accepts a default app that you pick yourself, so Setup will open the Default apps settings for Hot DAMN NFO Viewer: choose it for .nfo there.' /SD IDNO IDNO hotdamn_assoc_skip
+        Push $0
+        ReadRegStr $0 HKLM 'Software\Classes\.nfo' ''
+        StrCmp $0 'HotDamn.nfo' hotdamn_assoc_default_done
+          WriteRegStr HKLM 'Software\Classes\.nfo' 'HotDamn.backup' '$0'
+          WriteRegStr HKLM 'Software\Classes\.nfo' '' 'HotDamn.nfo'
+        hotdamn_assoc_default_done:
+        Pop $0
+        ExecShell 'open' 'ms-settings:defaultapps?registeredAppMachine=HotDamn'
+      hotdamn_assoc_skip:
+      SetRegView 32
       System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
     ]])
+    # The SetRegView 32 deletes clean up what 0.1.0 wrote into the 32-bit view.
     set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [[
+      SetRegView 64
       Push $0
       Push $1
       ReadRegStr $0 HKLM 'Software\Classes\.nfo' ''
@@ -165,6 +185,9 @@ if(WIN32)
       DeleteRegValue HKLM 'Software\Classes\.diz\OpenWithProgids' 'HotDamn.nfo'
       DeleteRegKey HKLM 'Software\Classes\HotDamn.nfo'
       DeleteRegKey HKLM 'Software\Classes\Applications\HotDamn.exe'
+      DeleteRegKey HKLM 'Software\HotDamn'
+      DeleteRegValue HKLM 'Software\RegisteredApplications' 'HotDamn'
+      SetRegView 32
       DeleteRegKey HKLM 'Software\HotDamn'
       DeleteRegValue HKLM 'Software\RegisteredApplications' 'HotDamn'
       System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
