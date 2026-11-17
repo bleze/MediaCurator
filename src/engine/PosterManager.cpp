@@ -30,6 +30,9 @@
 #include <QTextStream>
 #include <QThread>
 #include <QDebug>
+#include <QUrlQuery>
+#include <atomic>
+#include <climits>
 
 namespace {
 
@@ -120,6 +123,54 @@ static QStringList iso1Languages(const QStringList& iso6392Codes)
 	return out;
 }
 
+// Mirrors UserProfile::showClearLogos(). Process-wide rather than per-worker so
+// PosterWorkQueue::loadPendingFromDb() can see it too.
+static std::atomic<bool> s_clearLogosEnabled{false};
+
+// Language order for picking a clear logo — follows the card title's rule: the
+// original language first when it's understood (the card shows the original
+// title then), then the understood languages in order, then English. Textless
+// ("null") logos rank after all of these.
+static QStringList logoLanguagePreference(const QString& originalLanguageIso1,
+                                          const QStringList& understoodLanguages)
+{
+	const QStringList preferred = iso1Languages(understoodLanguages);
+	QStringList out;
+	if (!originalLanguageIso1.isEmpty() && preferred.contains(originalLanguageIso1))
+		out << originalLanguageIso1;
+	for (const QString& l : preferred)
+		if (!out.contains(l)) out << l;
+	if (!out.contains(QStringLiteral("en")))
+		out << QStringLiteral("en");
+	return out;
+}
+
+// TMDB logo file paths, best first: language rank, then PNG over SVG, then votes.
+static QStringList rankedLogoPaths(const QJsonArray& logos, const QStringList& langs)
+{
+	struct Cand { QString path; int langRank; bool png; double vote; };
+	QList<Cand> cands;
+	for (const QJsonValue& v : logos) {
+		const QJsonObject o = v.toObject();
+		const QString path = o[QStringLiteral("file_path")].toString();
+		if (path.isEmpty()) continue;
+		const QJsonValue langVal = o[QStringLiteral("iso_639_1")];
+		const int idx  = langVal.isNull() ? -1 : langs.indexOf(langVal.toString());
+		const int rank = idx >= 0 ? idx : (langVal.isNull() ? langs.size() : INT_MAX);
+		if (rank == INT_MAX) continue;   // a language the user didn't ask for
+		cands.append({ path, rank, path.endsWith(QLatin1String(".png"), Qt::CaseInsensitive),
+		               o[QStringLiteral("vote_average")].toDouble() });
+	}
+	std::stable_sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+		if (a.langRank != b.langRank) return a.langRank < b.langRank;
+		if (a.png != b.png) return a.png;
+		return a.vote > b.vote;
+	});
+	QStringList out;
+	for (const Cand& c : cands) out << c.path;
+	return out;
+}
+
 // True when an already-titled file still needs a TMDB round-trip to show its
 // original title: its original language is understood, and the title on record
 // isn't known to be the original one.
@@ -178,7 +229,8 @@ public:
 	void loadPendingFromDb()
 	{
 		QMutexLocker lock(&m_mutex);
-		for (qint64 id : DatabaseManager::instance().fileIdsNeedingPosters()) {
+		for (qint64 id : DatabaseManager::instance().fileIdsNeedingPosters(
+		         s_clearLogosEnabled.load(std::memory_order_relaxed))) {
 			if (!m_queue.contains(id))
 				m_queue.append(id);
 		}
@@ -237,8 +289,10 @@ public:
 		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 		m_cacheDir  = dataDir + "/posters";
 		m_fanartDir = dataDir + "/fanart";
+		m_logoDir   = dataDir + "/logos";
 		QDir().mkpath(m_cacheDir);
 		QDir().mkpath(m_fanartDir);
+		QDir().mkpath(m_logoDir);
 	}
 
 public slots:
@@ -288,6 +342,10 @@ signals:
 	void releaseDatesReady(qint64 fileId, QString premiereDate, QString digitalDate, QString physicalDate);
 	// Fired whenever a TMDB trailer (YouTube key) is resolved and persisted.
 	void trailerReady(qint64 fileId, QString trailerKey);
+	// Fired after a collection lookup; collectionId 0 = not part of a collection.
+	void collectionReady(qint64 fileId, int collectionId, QString collectionName);
+	// Fired after a clear logo lookup; empty path = TMDB has no usable logo.
+	void logoReady(qint64 fileId, QString logoPath);
 	// Fired once per file after processFile() returns, regardless of outcome —
 	// drives PosterManager's batch-refresh progress tracking.
 	void fileProcessed(qint64 fileId);
@@ -432,6 +490,7 @@ private:
 					emit trailerReady(fileId, trailerKey);
 				}
 			}
+			resolveExtras(fileId, info, resolvedImdbId);
 		};
 
 		// Skip files that are already fully done (poster + rating + title).
@@ -471,7 +530,15 @@ private:
 				}
 			}
 
-			if (!needsRating && !needsTitle && !needsMediaType && !needsNfo && !needsFanart) return;
+			// Collection / clear logo not yet looked up for the current match.
+			const TmdbExtrasState extras = DatabaseManager::instance().tmdbExtrasState(fileId);
+			const bool needsExtras = extras.tmdbId <= 0
+			    || extras.extrasTmdbId != extras.tmdbId
+			    || (s_clearLogosEnabled.load(std::memory_order_relaxed)
+			        && extras.logoTmdbId != extras.tmdbId);
+
+			if (!needsRating && !needsTitle && !needsMediaType && !needsNfo && !needsFanart
+			    && !needsExtras) return;
 
 			// Something is still missing — only now fall back to the NFO file
 			// for an imdbId the DB doesn't already have.
@@ -1184,6 +1251,74 @@ private:
 		return ok;
 	}
 
+	// ── TMDB collection + clear logo ─────────────────────────────────────────
+
+	// One /movie|tv/{id} call (plus images when a logo is needed) covers both.
+	// Skips whatever is already resolved for this tmdb id; a user-picked logo
+	// stays until the file is matched to a different movie. A network failure
+	// leaves the state untouched so a later pass retries.
+	void resolveExtras(qint64 fileId, const TmdbInfo& info, const QString& imdbId)
+	{
+		if (info.tmdbId <= 0 || m_tmdbApiKey.isEmpty()) return;
+		const TmdbExtrasState st = DatabaseManager::instance().tmdbExtrasState(fileId);
+		const bool needCollection = st.extrasTmdbId != info.tmdbId;
+		const bool needLogo = s_clearLogosEnabled.load(std::memory_order_relaxed)
+		                   && st.logoTmdbId != info.tmdbId;
+		if (!needCollection && !needLogo) return;
+
+		const QString kind = info.isTv ? QStringLiteral("tv") : QStringLiteral("movie");
+		const QStringList langs = logoLanguagePreference(info.originalLanguage, m_understoodLanguages);
+		QUrlQuery params;
+		params.addQueryItem(QStringLiteral("api_key"), m_tmdbApiKey);
+		if (needLogo) {
+			params.addQueryItem(QStringLiteral("append_to_response"), QStringLiteral("images"));
+			params.addQueryItem(QStringLiteral("include_image_language"),
+			                    (langs + QStringList{ QStringLiteral("null") }).join(u','));
+		}
+		QUrl url(QStringLiteral("https://api.themoviedb.org/3/%1/%2").arg(kind).arg(info.tmdbId));
+		url.setQuery(params);
+		QByteArray data;
+		if (!fetchHttp(url, data)) return;
+		const QJsonObject root = QJsonDocument::fromJson(data).object();
+		if (root.isEmpty()) return;
+
+		if (needCollection) {
+			// TV has no belongs_to_collection — recorded as "no collection".
+			const QJsonObject coll = root[QStringLiteral("belongs_to_collection")].toObject();
+			const int     collectionId   = coll[QStringLiteral("id")].toInt();
+			const QString collectionName = coll[QStringLiteral("name")].toString();
+			DatabaseManager::instance().updateCollection(fileId, info.tmdbId, collectionId, collectionName);
+			emit collectionReady(fileId, collectionId, collectionName);
+		}
+
+		if (needLogo) {
+			const QStringList ranked = rankedLogoPaths(
+			    root[QStringLiteral("images")].toObject()[QStringLiteral("logos")].toArray(), langs);
+			const QString stem = !imdbId.isEmpty()
+			    ? imdbId : QStringLiteral("tmdb_%1_%2").arg(kind).arg(info.tmdbId);
+			QString saved;
+			// A couple of fallbacks — an SVG Qt can't decode just moves on to the next.
+			for (int i = 0; i < ranked.size() && i < 3 && saved.isEmpty(); ++i) {
+				QByteArray bytes;
+				if (!fetchHttp(QUrl(QStringLiteral("https://image.tmdb.org/t/p/w500%1").arg(ranked[i])), bytes))
+					return;   // network trouble — retry on a later pass
+				// The user may have picked a logo in the dialog while this was in
+				// flight — it shares the cache file, so don't write over it.
+				const TmdbExtrasState now = DatabaseManager::instance().tmdbExtrasState(fileId);
+				if (now.logoUserPicked && now.logoTmdbId == info.tmdbId) return;
+				// Named per TMDB image so a different pick never reuses a path the
+				// card delegate already has decoded in its cache.
+				const QString outPath = m_logoDir + "/" + stem + "_"
+				                      + QFileInfo(ranked[i]).completeBaseName() + ".png";
+				QImage img;
+				if (img.loadFromData(bytes) && img.save(outPath, "PNG"))
+					saved = outPath;
+			}
+			DatabaseManager::instance().updateLogo(fileId, info.tmdbId, saved, false);
+			emit logoReady(fileId, saved);
+		}
+	}
+
 	bool downloadImage(const QString& url, const QString& outputPath,
 	                   QByteArray* outBytes = nullptr)
 	{
@@ -1206,6 +1341,7 @@ private:
 	QString                m_posterTmdbSize;   // see tmdbPosterSizeForDpr()
 	QString                m_cacheDir;
 	QString                m_fanartDir;
+	QString                m_logoDir;
 	bool                   m_stopping   = false;
 	bool                   m_processing = false;
 };
@@ -1279,6 +1415,10 @@ void PosterManager::startWorkerPool()
 		        this,     &PosterManager::releaseDatesReady);
 		connect(worker, &PosterWorker::trailerReady,
 		        this,     &PosterManager::trailerReady);
+		connect(worker, &PosterWorker::collectionReady,
+		        this,     &PosterManager::collectionReady);
+		connect(worker, &PosterWorker::logoReady,
+		        this,     &PosterManager::logoReady);
 		connect(worker, &PosterWorker::fileProcessed,
 		        this, [this](qint64 fileId) {
 			if (!m_batchActive || !m_batchIds.remove(fileId)) return;
@@ -1421,6 +1561,49 @@ void PosterManager::enqueueOriginalTitleBackfill()
 	m_queue->enqueueBatch(ids);
 }
 
+void PosterManager::setClearLogosEnabled(bool enabled)
+{
+	if (s_clearLogosEnabled.exchange(enabled) == enabled) return;
+	// Turning it on: every matched file still lacking a logo lookup is now
+	// pending (see fileIdsNeedingPosters(includeLogos)) — reload the queue.
+	if (enabled && m_queue && !m_tmdbApiKey.isEmpty())
+		m_queue->enqueueFile(-1);
+}
+
+void PosterManager::setUserLogo(qint64 fileId, int tmdbId, const QString& imdbId,
+                                const QString& logoTmdbPath)
+{
+	if (tmdbId <= 0 || logoTmdbPath.isEmpty() || !m_nam) return;
+	const QString logoDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+	                        + "/logos";
+	QDir().mkpath(logoDir);
+	const QString stem    = imdbId.isEmpty() ? QStringLiteral("tmdb_%1").arg(tmdbId) : imdbId;
+	// Named per TMDB image — see resolveExtras() for why.
+	const QString outPath = logoDir + "/" + stem + "_" + QFileInfo(logoTmdbPath).completeBaseName() + ".png";
+	QNetworkRequest req(QUrl(QStringLiteral("https://image.tmdb.org/t/p/w500%1").arg(logoTmdbPath)));
+	req.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+	req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+	                 QNetworkRequest::NoLessSafeRedirectPolicy);
+	QNetworkReply* r = m_nam->get(req);
+	connect(r, &QNetworkReply::finished, this, [this, r, fileId, tmdbId, outPath]() {
+		r->deleteLater();
+		if (r->error() != QNetworkReply::NoError) {
+			qWarning() << "PosterManager: logo download failed:" << r->errorString();
+			return;
+		}
+		QImage img;
+		if (!img.loadFromData(r->readAll()) || !img.save(outPath, "PNG")) return;
+		// Every file of the same movie shares the cached image, so they all get
+		// the pick — otherwise a sibling's later auto lookup could overwrite it.
+		QList<qint64> ids = DatabaseManager::instance().fileIdsForTmdbId(tmdbId);
+		if (!ids.contains(fileId)) ids << fileId;
+		for (qint64 id : ids) {
+			DatabaseManager::instance().updateLogo(id, tmdbId, outPath, true);
+			emit logoReady(id, outPath);
+		}
+	});
+}
+
 void PosterManager::setRetryCooldownDays(int days)
 {
 	days = qMax(0, days);
@@ -1510,6 +1693,11 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 				img = img.copy(0, y, img.width(), 300);
 			}
 			emit fanartReady(fileId, fanartOut, img);
+			// Poster and backdrop are both in place now — safe to let the worker
+			// fill in whatever else the (possibly new) match needs, e.g. its
+			// collection, without it re-downloading the user's picks.
+			if (m_queue)
+				m_queue->enqueueFile(fileId);
 		});
 	};
 

@@ -69,6 +69,9 @@ struct FileEntry {
 	GroupMemberList groupMembers;
 	bool            isGroupCard      = false;
 	bool            isGroupRedundant = false;   // 2+ members share the same edition label
+	// GroupedByCollection only: this movie's TMDB collection has 2+ movies in the
+	// library (a collection you own one film of isn't treated as a collection).
+	bool            inOwnedCollection = false;
 };
 
 class McFileListModel : public QAbstractListModel
@@ -103,6 +106,16 @@ public:
 		DigitalDateRole    = Qt::UserRole + 24,
 		PhysicalDateRole   = Qt::UserRole + 25,
 		TrailerKeyRole     = Qt::UserRole + 26,  // QString — TMDB YouTube trailer key, empty = none
+		// Short collection name ("Lethal Weapon", without TMDB's " Collection" suffix),
+		// only for collections with 2+ movies in the library; empty otherwise.
+		CollectionNameRole = Qt::UserRole + 27,
+		LogoPathRole       = Qt::UserRole + 28,  // QString — cached clear logo PNG, empty = none
+		// GroupedByCollection only: set on the first visible movie of an owned
+		// collection — the card draws a banner above itself. Empty = no banner.
+		CollectionBannerRole     = Qt::UserRole + 29,  // QString — short collection name
+		CollectionBannerInfoRole = Qt::UserRole + 30,  // QString — "4 films · 1987–1998 · 186 GB"
+		CollectionMemberRole     = Qt::UserRole + 31,  // bool — GroupedByCollection and part of an owned collection
+		CollectionBannerPostersRole = Qt::UserRole + 32, // QStringList — banner row only: member posters, release order
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -134,6 +147,9 @@ public:
 		SortByPremiereNewest = 10,
 		SortByDigitalNewest  = 11,
 		SortByPhysicalNewest = 12,
+		// Same mega cards as GroupedByEdition, ordered so the movies of a TMDB
+		// collection sit together (by release year) under the collection's name.
+		GroupedByCollection  = 13,
 	};
 
 	explicit McFileListModel(QObject* parent = nullptr);
@@ -187,6 +203,8 @@ signals:
 	// Fired whenever the grouped view is (re)built — lets the filter bar's redundant-
 	// versions chip show a live count without polling the model.
 	void redundantGroupCountChanged(int count);
+	// Same idea for the "N collections" chip — collections with 2+ movies owned.
+	void collectionCountChanged(int count);
 	// Fired whenever the checked set changes — McMainWindow repaints the list
 	// (a checked file's checkbox may be drawn either as its own row or nested
 	// inside a mega card) rather than tracking which visual rows are affected.
@@ -206,6 +224,7 @@ public slots:
 	void setAudioFormatFilter(const QSet<QString>& labels);   // empty = show all; see AudioFormatInfo::filterLabels()
 	void setSortOrder(int order);
 	void setRedundantOnlyFilter(bool on);   // GroupedByEdition only — hide non-redundant groups
+	void setCollectionOnlyFilter(bool on);  // GroupedByCollection only — hide movies outside an owned collection
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void setDisplayTitleForFile(qint64 fileId, const QString& title, int year);
@@ -223,9 +242,16 @@ public slots:
 	void onReleaseDatesReady(qint64 fileId, const QString& premiereDate,
 	                         const QString& digitalDate, const QString& physicalDate);
 	void onTrailerReady(qint64 fileId, const QString& trailerKey);
+	void onCollectionReady(qint64 fileId, int collectionId, const QString& collectionName);
+	void onLogoReady(qint64 fileId, const QString& logoPath);
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
 
 private:
+	// Both "Group by" views share the mega-card entry list (m_groupedAllEntries).
+	[[nodiscard]] bool isGroupedMode() const
+	{
+		return m_sortOrder == GroupedByEdition || m_sortOrder == GroupedByCollection;
+	}
 	bool entryPassesFilter(const FileEntry& e) const;
 	bool entryLessThan(const FileEntry& a, const FileEntry& b) const;
 	// forceFullReset: tear down and rebuild the view (sort-order changes). Filter-only
@@ -266,6 +292,20 @@ private:
 	QHash<qint64, QString>    m_digitalDates;
 	QHash<qint64, QString>    m_physicalDates;
 	QHash<qint64, QString>    m_trailerKeys;     // fileId → TMDB YouTube trailer key
+	QHash<qint64, CollectionRef> m_collections;  // fileId → TMDB collection (absent = none / not looked up)
+	QHash<qint64, QString>    m_logoPaths;       // fileId → cached clear logo PNG
+	bool                      m_collectionMetaLoaded = false;
+	// collection id → number of distinct movies in the library; see recomputeCollectionCounts().
+	QHash<int, int>           m_moviesPerCollection;
+	struct CollectionStats { int films = 0; int minYear = 0; int maxYear = 0; qint64 bytes = 0; };
+	QHash<int, CollectionStats> m_collectionStats;   // owned collections only, for the banner
+	QHash<int, QStringList>   m_collectionPosters;   // owned collection id → member poster paths, display order
+	void recomputeCollectionCounts();
+	[[nodiscard]] bool isOwnedCollection(int collectionId) const
+	{
+		return collectionId > 0 && m_moviesPerCollection.value(collectionId) >= 2;
+	}
+	[[nodiscard]] static QString shortCollectionName(const QString& name);
 	QHash<qint64, int>        m_folderCounts;    // fileId → count of files sharing the same parent folder
 	QHash<qint64, QSet<int>>  m_forcedRemovals;  // fileId → stream indices user wants removed
 	QSet<qint64>              m_checkedFileIds;  // fileId → checked for "Copy to Folder"; see isChecked()
@@ -284,6 +324,7 @@ private:
 	double                    m_ratingMax          = 10.0;
 	bool                      m_hadClassifiedMedia = false;
 	bool                      m_redundantOnlyFilter = false;
+	bool                      m_collectionOnlyFilter = false;
 
 	void notifyMediaCategoriesAvailability();
 };

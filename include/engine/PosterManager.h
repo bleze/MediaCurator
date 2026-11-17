@@ -63,6 +63,15 @@ public:
 	// Mirrors UserProfile::subtitleRetryCooldownDays().
 	void setRetryCooldownDays(int days);
 
+	// Mirrors UserProfile::showClearLogos(). Turning it on queues a logo lookup
+	// for every matched file that hasn't had one yet.
+	void setClearLogosEnabled(bool enabled);
+
+	// Downloads the clear logo the user picked in the metadata dialog (TMDB
+	// file_path) and pins it for every file matched to tmdbId — automatic
+	// lookups never replace it unless the file is re-matched to another movie.
+	void setUserLogo(qint64 fileId, int tmdbId, const QString& imdbId, const QString& logoTmdbPath);
+
 	// Enqueue a newly-scanned file for poster lookup without resetting existing data.
 	// No-op if the file already has a poster or the TMDB key is not set.
 	void enqueue(qint64 fileId);
@@ -106,6 +115,10 @@ signals:
 	void releaseDatesReady(qint64 fileId, QString premiereDate, QString digitalDate, QString physicalDate);
 	// Fired whenever a TMDB trailer (YouTube key) is resolved and persisted.
 	void trailerReady(qint64 fileId, QString trailerKey);
+	// Fired after a TMDB collection lookup; collectionId 0 = not in a collection.
+	void collectionReady(qint64 fileId, int collectionId, QString collectionName);
+	// Fired whenever a clear logo is resolved; empty path = none available.
+	void logoReady(qint64 fileId, QString logoPath);
 
 	// Batch refresh progress — driven by refreshBatch()/cancelBatch().
 	void batchProgressChanged(int done, int total);

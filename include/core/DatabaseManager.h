@@ -203,6 +203,22 @@ struct FileTitleState {
 	QString displayTitle;
 };
 
+// TMDB collection + clear logo state for one file (poster_cache columns). Both
+// are keyed to the TMDB id they were resolved for, so re-matching a file to a
+// different movie makes them stale automatically.
+struct TmdbExtrasState {
+	int     tmdbId         = 0;
+	int     extrasTmdbId   = 0;     // tmdb id the collection lookup ran for; 0 = never
+	int     logoTmdbId     = 0;     // tmdb id the logo lookup ran for; 0 = never
+	bool    logoUserPicked = false; // chosen in the metadata dialog — never auto-replaced
+	QString logoPath;
+};
+
+struct CollectionRef {
+	int     id = 0;
+	QString name;
+};
+
 struct JobDisplayRecord {
 	qint64  jobId      = -1;
 	qint64  fileId     = -1;
@@ -442,7 +458,19 @@ public:
 	// never needs to stat the file's own (possibly NAS-hosted) folder to find out.
 	// Safe to call whether or not a poster_cache row exists yet for fileId.
 	void                        markNfoWritten(qint64 fileId);
-	QList<qint64>               fileIdsNeedingPosters() const;
+	// includeLogos: also select matched files whose clear logo hasn't been
+	// looked up yet (only while the clear-logo setting is on).
+	QList<qint64>               fileIdsNeedingPosters(bool includeLogos = false) const;
+	TmdbExtrasState             tmdbExtrasState(qint64 fileId) const;
+	// Records the collection lookup for tmdbId (collectionId 0 = not in a collection).
+	void                        updateCollection(qint64 fileId, int tmdbId, int collectionId,
+	                                             const QString& collectionName);
+	// Records the logo lookup for tmdbId (empty logoPath = TMDB has no logo).
+	void                        updateLogo(qint64 fileId, int tmdbId, const QString& logoPath,
+	                                       bool userPicked);
+	QList<qint64>               fileIdsForTmdbId(int tmdbId) const;
+	void                        loadCollectionMeta(QHash<qint64, CollectionRef>& collections,
+	                                               QHash<qint64, QString>& logoPaths) const;
 	// Every file with a resolved poster record, an IMDb id and a known original language.
 	QList<FileTitleState>       identifiedFileTitleStates() const;
 	QHash<qint64, QString>      allDonePosterPaths() const;

@@ -683,6 +683,19 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE poster_cache ADD COLUMN trailer_key TEXT NOT NULL DEFAULT ''");
 	}
 
+	// Migration: TMDB collection (belongs_to_collection) and clear logo. Each is
+	// stamped with the tmdb id it was resolved for (extras_tmdb_id / logo_tmdb_id),
+	// so a re-match to a different movie is detected as stale without a reset.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE poster_cache ADD COLUMN collection_id INTEGER NOT NULL DEFAULT 0");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN collection_name TEXT NOT NULL DEFAULT ''");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN extras_tmdb_id INTEGER NOT NULL DEFAULT 0");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN logo_path TEXT NOT NULL DEFAULT ''");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN logo_tmdb_id INTEGER NOT NULL DEFAULT 0");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN logo_user_picked INTEGER NOT NULL DEFAULT 0");
+	}
+
 	return true;
 }
 
@@ -2633,13 +2646,13 @@ std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 	return r;
 }
 
-QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
+QList<qint64> DatabaseManager::fileIdsNeedingPosters(bool includeLogos) const
 {
 	// Rows with status='unresolvable' (permanently given up — see
 	// kMaxPosterResolveAttempts in PosterManager.cpp) deliberately match none of
 	// the clauses below, so they drop out of this list for good.
 	QSqlQuery q(connection());
-	q.exec(R"(
+	q.prepare(R"(
 		SELECT f.id FROM files f
 		LEFT JOIN poster_cache pc ON pc.file_id = f.id
 		WHERE pc.file_id IS NULL
@@ -2653,6 +2666,9 @@ QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 		        OR f.media_type IS NULL
 		        OR f.media_type = ''
 		        OR f.media_type = 'unknown'
+		        OR pc.extras_tmdb_id = 0
+		        OR pc.extras_tmdb_id != pc.tmdb_id
+		        OR (:logos = 1 AND pc.logo_tmdb_id != pc.tmdb_id)
 		   ))
 		   OR (pc.status = 'no_poster' AND (
 		           f.display_title = ''
@@ -2662,9 +2678,108 @@ QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 		   ))
 		ORDER BY f.filename COLLATE NOCASE
 	)");
+	q.bindValue(QStringLiteral(":logos"), includeLogos ? 1 : 0);
 	QList<qint64> ids;
+	if (!q.exec()) {
+		qWarning() << "fileIdsNeedingPosters failed:" << q.lastError().text();
+		return ids;
+	}
 	while (q.next()) ids << q.value(0).toLongLong();
 	return ids;
+}
+
+TmdbExtrasState DatabaseManager::tmdbExtrasState(qint64 fileId) const
+{
+	TmdbExtrasState st;
+	QSqlQuery q(connection());
+	q.prepare("SELECT tmdb_id, extras_tmdb_id, logo_tmdb_id, logo_user_picked, logo_path "
+	          "FROM poster_cache WHERE file_id=?");
+	q.addBindValue(fileId);
+	if (q.exec() && q.next()) {
+		st.tmdbId         = q.value(0).toInt();
+		st.extrasTmdbId   = q.value(1).toInt();
+		st.logoTmdbId     = q.value(2).toInt();
+		st.logoUserPicked = q.value(3).toInt() != 0;
+		st.logoPath       = q.value(4).toString();
+	}
+	return st;
+}
+
+void DatabaseManager::updateCollection(qint64 fileId, int tmdbId, int collectionId,
+                                       const QString& collectionName)
+{
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, fetched_at,
+		                         collection_id, collection_name, extras_tmdb_id)
+		VALUES(?, '', 'pending', '', 0, ?, ?, ?)
+		ON CONFLICT(file_id) DO UPDATE SET
+			collection_id   = excluded.collection_id,
+			collection_name = excluded.collection_name,
+			extras_tmdb_id  = excluded.extras_tmdb_id
+	)");
+	q.addBindValue(fileId);
+	q.addBindValue(collectionId);
+	q.addBindValue(collectionName.isNull() ? QString("") : collectionName);
+	q.addBindValue(tmdbId);
+	if (!q.exec())
+		qWarning() << "updateCollection failed:" << q.lastError().text();
+}
+
+void DatabaseManager::updateLogo(qint64 fileId, int tmdbId, const QString& logoPath, bool userPicked)
+{
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, fetched_at,
+		                         logo_path, logo_tmdb_id, logo_user_picked)
+		VALUES(?, '', 'pending', '', 0, ?, ?, ?)
+		ON CONFLICT(file_id) DO UPDATE SET
+			logo_path        = excluded.logo_path,
+			logo_tmdb_id     = excluded.logo_tmdb_id,
+			logo_user_picked = excluded.logo_user_picked
+		-- An automatic lookup never replaces the user's pick for the same movie.
+		WHERE excluded.logo_user_picked = 1
+		   OR NOT (poster_cache.logo_user_picked = 1
+		           AND poster_cache.logo_tmdb_id = excluded.logo_tmdb_id)
+	)");
+	q.addBindValue(fileId);
+	q.addBindValue(logoPath.isNull() ? QString("") : logoPath);
+	q.addBindValue(tmdbId);
+	q.addBindValue(userPicked ? 1 : 0);
+	if (!q.exec())
+		qWarning() << "updateLogo failed:" << q.lastError().text();
+}
+
+QList<qint64> DatabaseManager::fileIdsForTmdbId(int tmdbId) const
+{
+	QList<qint64> ids;
+	QSqlQuery q(connection());
+	q.prepare("SELECT file_id FROM poster_cache WHERE tmdb_id=?");
+	q.addBindValue(tmdbId);
+	if (q.exec())
+		while (q.next()) ids << q.value(0).toLongLong();
+	return ids;
+}
+
+void DatabaseManager::loadCollectionMeta(QHash<qint64, CollectionRef>& collections,
+                                         QHash<qint64, QString>& logoPaths) const
+{
+	QSqlQuery q(connection());
+	// Only values still matching the file's current tmdb id — a stale entry from
+	// before a re-match would otherwise group the file under the wrong collection.
+	q.exec("SELECT file_id, collection_id, collection_name, logo_path, "
+	       "extras_tmdb_id = tmdb_id, logo_tmdb_id = tmdb_id FROM poster_cache "
+	       "WHERE (collection_id > 0 AND extras_tmdb_id = tmdb_id) "
+	       "   OR (logo_path != '' AND logo_tmdb_id = tmdb_id)");
+	while (q.next()) {
+		const qint64 id = q.value(0).toLongLong();
+		const int collectionId = q.value(1).toInt();
+		if (collectionId > 0 && q.value(4).toBool())
+			collections.insert(id, CollectionRef{ collectionId, q.value(2).toString() });
+		const QString logo = q.value(3).toString();
+		if (!logo.isEmpty() && q.value(5).toBool())
+			logoPaths.insert(id, logo);
+	}
 }
 
 QList<FileTitleState> DatabaseManager::identifiedFileTitleStates() const

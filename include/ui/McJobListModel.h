@@ -57,6 +57,7 @@ public:
 		IgnoredRole           = Qt::UserRole + 31,  // bool — hidden from normal filters; see setIgnoredBatch()
 		HasSceneNfoRole       = Qt::UserRole + 32,  // bool — from files.has_scene_nfo, see FileRecord::hasSceneNfo
 		TrailerKeyRole        = Qt::UserRole + 33,  // QString — TMDB YouTube trailer key, empty = none
+		LogoPathRole          = Qt::UserRole + 34,  // QString — cached clear logo PNG, empty = none
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -153,6 +154,7 @@ public slots:
 	void updatePhase(qint64 jobId, const QString& label);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
+	void onLogoReady(qint64 fileId, const QString& logoPath);
 	void updateImdbId(qint64 fileId, const QString& imdbId);
 	void updateTmdbId(qint64 fileId, int tmdbId);
 
@@ -193,6 +195,8 @@ private:
 	QHash<qint64, QString> m_posterPaths;    // fileId → local poster image path
 	QHash<qint64, int>     m_posterVersions; // fileId → version counter (increments on update)
 	QHash<qint64, QString> m_fanartPaths;    // fileId → local fanart (backdrop) path
+	QHash<qint64, QString> m_logoPaths;      // fileId → cached clear logo PNG
+	void loadLogoPaths();
 	QHash<qint64, QString> m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer
 	QTimer                 m_fanartBatchTimer;
 	QString                m_filterText;

@@ -184,6 +184,7 @@ void McJobListModel::reload()
 	m_allCheckStates.clear();
 	m_posterPaths = DatabaseManager::instance().allDonePosterPaths();
 	m_fanartPaths = DatabaseManager::instance().allDoneFanartPaths();
+	loadLogoPaths();
 
 	auto& db = DatabaseManager::instance();
 	const auto displayJobs = db.allJobsForPanel(m_sortMode);
@@ -255,6 +256,7 @@ void McJobListModel::reloadPaged(int limit)
 	auto& db = DatabaseManager::instance();
 	m_posterPaths = db.allDonePosterPaths();
 	m_fanartPaths = db.allDoneFanartPaths();
+	loadLogoPaths();
 	QList<JobDisplayRecord> displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode, m_filterIgnoredOnly);
 	QSet<qint64> seenJobIds;
 	seenJobIds.reserve(displayJobs.size());
@@ -536,6 +538,25 @@ void McJobListModel::onPosterReady(qint64 fileId, const QString& imagePath)
 		if (m_entries[i].job.fileId == fileId) {
 			const QModelIndex idx = index(i);
 			emit dataChanged(idx, idx);
+		}
+	}
+}
+
+void McJobListModel::loadLogoPaths()
+{
+	QHash<qint64, CollectionRef> unusedCollections;
+	m_logoPaths.clear();
+	DatabaseManager::instance().loadCollectionMeta(unusedCollections, m_logoPaths);
+}
+
+void McJobListModel::onLogoReady(qint64 fileId, const QString& logoPath)
+{
+	if (logoPath.isEmpty()) m_logoPaths.remove(fileId);
+	else                    m_logoPaths.insert(fileId, logoPath);
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId == fileId) {
+			const QModelIndex idx = index(i);
+			emit dataChanged(idx, idx, { LogoPathRole });
 		}
 	}
 }
@@ -887,6 +908,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case PosterRole:        return m_posterPaths.value(e.job.fileId);
 	case PosterVersionRole: return m_posterVersions.value(e.job.fileId, 0);
 	case FanartRole:        return m_fanartPaths.value(e.job.fileId);
+	case LogoPathRole:      return m_logoPaths.value(e.job.fileId);
 	case FileSizeRole:      return e.job.sizeBytes;
 	case FilePathRole:      return e.job.filePath;
 	case ImdbIdRole:        return e.job.imdbId;

@@ -100,6 +100,11 @@ public:
 	bool deepDolbyVisionScanEnabled() const { return m_deepDolbyVisionScanEnabled; }
 	void setDeepDolbyVisionScanEnabled(bool v);
 
+	// Library cards show the movie's TMDB clear logo (title artwork) in place of
+	// the plain-text title. Off by default — it downloads one more image per movie.
+	bool showClearLogos() const { return m_showClearLogos; }
+	void setShowClearLogos(bool v);
+
 	// Mux to a local folder first, then copy the finished file back to its real
 	// destination — avoids reading and writing the same NAS share at once.
 	bool useLocalStaging() const { return m_useLocalStaging; }
@@ -215,6 +220,7 @@ private:
 	bool        m_downloadSceneNfoEnabled  = false;
 	bool        m_autoDownloadSceneNfo    = false;
 	bool        m_deepDolbyVisionScanEnabled = false;
+	bool        m_showClearLogos           = false;
 	bool        m_useLocalStaging          = false;
 	QString     m_localStagingDir;
 	QString     m_tmdbApiKey;

@@ -36,6 +36,8 @@ public:
 
 	// Forwarded to the card delegate — see McCardDelegate::setTmdbConfigured.
 	void setTmdbConfigured(bool configured);
+	// Forwarded to the card delegate — see McCardDelegate::setClearLogosEnabled.
+	void setClearLogosEnabled(bool enabled);
 
 	// Forwarded to the card delegate — see McCardDelegate::setMultiGroupBadgeEnabled.
 	void setMultiGroupBadgeEnabled(bool enabled);

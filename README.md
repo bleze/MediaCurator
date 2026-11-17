@@ -54,6 +54,8 @@ A summary — see the [feature reference](docs/FEATURES.md) for the full detail 
 - **File card view** — Each file is a card with colour-coded badges for its video, audio, and subtitle streams; tracks proposed for removal are struck through.
 - **Filtering & sorting** — Quick-filter pills (4K, Dolby Vision, HDR, Atmos, TrueHD, DTS-HD, DTS:X), text search across filenames and stream metadata, and several sort orders.
 - **Group by Movie** — Collapses every edition of a title into one card, with a "duplicates" filter to spot accidental re-downloads.
+- **Group by Collection** — Puts the films of a TMDB collection (Star Wars, Indiana Jones, James Bond…) together in release order, with a filter that shows only the collections you own two or more films of.
+- **Clear logos** *(optional)* — Shows each movie's TMDB title artwork on its library card instead of plain text. Pick a different logo in Edit Movie Metadata, next to posters and fanart.
 - **Editions, 3D & categories** — Detects the cut (Director's Cut, Extended, ...), the 3D format, and whether a file is a Movie, TV, Documentary, or Misc.
 - **Dolby Vision deep scan** *(opt-in)* — Tells you whether a Dolby Vision file's enhancement layer is FEL or MEL.
 - **Ignore files & play** — Hide extras from the library, and play any file in your system's default player.

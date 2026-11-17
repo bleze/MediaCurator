@@ -129,6 +129,10 @@ public slots:
 	// cards stay aligned with the rest of the list.
 	void setTmdbConfigured(bool configured);
 
+	// Draw each movie's clear logo (when it has one) in a taller title band
+	// instead of the plain-text title. See UserProfile::showClearLogos.
+	void setClearLogosEnabled(bool enabled);
+
 	// Whether the per-card storage-group disk-icon chip should render at all.
 	// Gated on StorageGroupSettings::multipleGroupsInUse() — single-storage-group
 	// users see no new UI. Pushed once by McMainWindow whenever roots/groups
@@ -175,7 +179,8 @@ public:
 	                        const QList<StreamRecord>& tracks,
 	                        const QFont& baseFont,
 	                        bool hasImdb,
-	                        bool hasTmdb = false) const;
+	                        bool hasTmdb = false,
+	                        const QModelIndex& index = {}) const;
 
 	// Mega card only: returns the fileId of the specific edition row under pos, or
 	// -1 if pos is elsewhere on the card (a card-level click). Used both for the
@@ -222,6 +227,12 @@ private:
 		QString             originalLanguage;       // ISO 639-2 original audio language (both modes)
 		int                 storageGroup   = 1;     // 1-4; see StorageGroupSettings (both modes)
 		QString             fanartPath;             // w780 backdrop; empty if not yet fetched
+		QString             logoPath;               // cached clear logo PNG (Library only); empty = none
+		QString             collectionName;         // short TMDB collection name, owned collections only (Library)
+		bool                collectionMember = false; // Group by Collection: part of an owned collection
+		QString             collectionBanner;       // non-empty: draw the collection banner above this card
+		QString             collectionBannerInfo;   // banner subtitle ("4 films · 1987–1998 · 186 GB")
+		QStringList         collectionBannerPosters; // member posters for the banner strip, release order
 		QList<StreamRecord> allStreams;
 		QList<StreamRecord> videoStreams;
 		QList<StreamRecord> audioStreams;
@@ -363,8 +374,59 @@ private:
 	// never arrive. See setTmdbConfigured.
 	int leftContentInset() const;
 
+	// Clear logo scaled to fit box (logical px), with a soft contrast halo when the
+	// logo's own brightness is close to the card background's. Cached.
+	static QPixmap clearLogoPixmap(const QString& path, const QSize& box,
+	                               const QColor& background, qreal dpr);
+
+	// Group by Collection banner: fanart backdrop + gradient, member poster
+	// strip, collection name and stats. Drawn into the top kCollectionBannerH px.
+	void paintCollectionBanner(QPainter* painter, const QRect& banner, const CardData& d,
+	                           const QStyleOptionViewItem& option) const;
+
+	// Clear logos never change a card's height. A card with a logo takes the
+	// slack between its own content and minRowH() (up to kLogoBandMaxExtra) as
+	// extra top padding — logoExtra(), computed in sizeHint() and cached — so
+	// everything below the title row shifts down into space that was empty
+	// anyway, keeping all the static row-geometry helpers unchanged. The title
+	// row sits vertically centred in the resulting logo band (titleShift()
+	// above content.top()); titleRow() gives the rect the static title-row
+	// button helpers (imdbButtonRect etc.) must be handed so drawing and
+	// hit-testing agree. A card with no slack draws its logo in the plain
+	// title row. A GroupedByCollection banner adds to the top padding too.
+	static inline const QColor kCollectionAccent{0x2e, 0x6d, 0xb4};
+	static constexpr int kLogoBandMaxExtra  = 30;
+	static constexpr int kCollectionBannerH = 56;
+	[[nodiscard]] bool logoBandActive() const { return m_clearLogos; }
+	[[nodiscard]] int  collectionBannerH(const QModelIndex& index) const;
+	// Minimum card height: tall enough for the whole poster (2:3 at column width)
+	// whenever there's a poster column, so a normal card never crops or leaves a
+	// gap under it. Only cards with extra badge rows grow past it.
+	[[nodiscard]] int  minRowH() const
+	{
+		return posterColumnWidth() > 0 ? qMax(kMinRowH, kPosterW * 3 / 2) : kMinRowH;
+	}
+	[[nodiscard]] int  logoExtra(const QModelIndex& index) const;
+	[[nodiscard]] static int logoExtraFor(int cardH, int naturalH);
+	// Part of logoExtra() kept clear between the logo and the filename row.
+	[[nodiscard]] static int logoGap(int extra) { return qMin(8, extra / 3); }
+	[[nodiscard]] int  topPad(const QModelIndex& index) const
+	{
+		return kPadV + logoExtra(index) + collectionBannerH(index);
+	}
+	[[nodiscard]] int   titleShift(const QModelIndex& index) const
+	{
+		const int e = logoExtra(index);
+		return (e + logoGap(e)) / 2;
+	}
+	[[nodiscard]] QRect titleRow(const QRect& content, const QModelIndex& index) const
+	{
+		return content.translated(0, -titleShift(index));
+	}
+
 	Mode                  m_mode;
 	bool                  m_tmdbConfigured   = true;
+	bool                  m_clearLogos       = false;
 	int                   m_activeDateSortOrder = -1;  // McFileListModel::SortOrder; -1 = none active
 	bool                  m_showGroupBadge   = false;
 	double                m_fanartOpacity    = 0.05;
@@ -402,6 +464,7 @@ private:
 	// false), which is what previously made resizing/restoring stall for
 	// several seconds.
 	mutable QHash<qint64, QSize> m_sizeCache;
+	mutable QHash<qint64, int>   m_logoExtraCache;   // itemId → logoExtra(); filled by sizeHint()
 	mutable QFont             m_badgeFont;
 	mutable QFontMetrics      m_badgeFm      { QFont{} };
 

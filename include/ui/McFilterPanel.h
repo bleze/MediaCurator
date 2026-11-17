@@ -44,6 +44,8 @@ public:
 	// Updates the redundant-versions chip's count label. The chip itself is only
 	// shown while GroupedByEdition is the active sort mode.
 	void setRedundantGroupCount(int count);
+	// Same for the "N collections" chip, shown while GroupedByCollection is active.
+	void setCollectionCount(int count);
 
 	// Resets every filter (search, status, pills, storage groups, edition/HDR/audio,
 	// rating, duplicates-only) so a specific file can be revealed. Sort order is kept.
@@ -80,6 +82,7 @@ public:
 		SortByPremiereNewest = 10,
 		SortByDigitalNewest  = 11,
 		SortByPhysicalNewest = 12,
+		GroupedByCollection  = 13,  // "Group by Collection" — mega cards ordered by TMDB collection
 	};
 
 signals:
@@ -90,6 +93,7 @@ signals:
 	void ratingFilterChanged(double minRating, double maxRating);
 	void storageGroupFilterChanged(quint32 groupMask);   // bit (1<<group); 0 = show all
 	void redundantOnlyFilterChanged(bool on);   // GroupedByEdition only
+	void collectionOnlyFilterChanged(bool on);  // GroupedByCollection only
 	void editionFilterChanged(const QSet<QString>& editions);   // empty = show all
 	void hdrDvFilterChanged(const QSet<QString>& labels);   // empty = show all; see DolbyVisionInfo::filterLabels()
 	void audioFormatFilterChanged(const QSet<QString>& labels);   // empty = show all; see AudioFormatInfo::filterLabels()
@@ -126,6 +130,12 @@ private:
 	QToolButton*  m_redundantChip = nullptr;
 	int           m_redundantGroupCount = 0;
 	bool          m_groupModeActive = false;
+
+	// "N collections" toggle — visible only while GroupedByCollection is active
+	// AND at least one collection has 2+ movies in the library.
+	QToolButton*  m_collectionChip = nullptr;
+	int           m_collectionCount = 0;
+	bool          m_collectionModeActive = false;
 
 	McMultiCheckDropdown* m_editionDropdown = nullptr;
 	McMultiCheckDropdown* m_hdrDvDropdown = nullptr;

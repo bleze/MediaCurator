@@ -1525,6 +1525,8 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	        m_model, &McJobListModel::onPosterReady);
 	connect(&PosterManager::instance(), &PosterManager::fanartReady,
 	        m_model, &McJobListModel::onFanartReady);
+	connect(&PosterManager::instance(), &PosterManager::logoReady,
+	        m_model, &McJobListModel::onLogoReady);
 	connect(&PosterManager::instance(), &PosterManager::imdbIdSaved,
 	        m_model, &McJobListModel::updateImdbId);
 	connect(&PosterManager::instance(), &PosterManager::tmdbIdSaved,
@@ -1539,6 +1541,12 @@ void McJobPanel::setTmdbConfigured(bool configured)
 {
 	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))
 		d->setTmdbConfigured(configured);
+}
+
+void McJobPanel::setClearLogosEnabled(bool enabled)
+{
+	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))
+		d->setClearLogosEnabled(enabled);
 }
 
 void McJobPanel::setMultiGroupBadgeEnabled(bool enabled)

@@ -81,6 +81,7 @@ private:
 	QPushButton* m_btnBrowseStagingDir;
 	QLineEdit*   m_editTmdbKey;
 	QCheckBox*   m_chkWriteNfo;
+	QCheckBox*   m_chkClearLogos;
 	QCheckBox*   m_chkDownloadSceneNfo;
 	QCheckBox*   m_chkAutoDownloadSceneNfo;
 	QCheckBox*   m_chkDeepDolbyVisionScan;

@@ -42,6 +42,7 @@ public:
 	QString    selectedPosterPath()       const;
 	QByteArray selectedImageData()        const;
 	QString    selectedFanartPath()       const;  // TMDB backdrop path; empty if none selected
+	QString    selectedLogoPath()         const;  // TMDB clear logo path; empty unless the user picked one
 	QString    selectedOriginalLanguage() const;  // ISO 639-1 from TMDB; empty if not available
 	double     selectedVoteAverage()      const;
 	int        selectedVoteCount()        const;
@@ -59,6 +60,10 @@ public:
 	// ISO 639-2 codes (e.g. "eng", "dan") — used to request poster images in
 	// languages the user understands. Call before exec().
 	void setUnderstoodLanguages(const QStringList& langs) { m_understoodLanguages = langs; }
+
+	// Shows the clear logo picker under the fanart gallery (UserProfile::showClearLogos).
+	// Call before exec().
+	void setShowLogos(bool show);
 
 	// Adds "Skip" and "Cancel all" buttons and shows progress in the title.
 	// Call before exec(). current/total are 1-based (e.g. "3 of 10").
@@ -128,10 +133,19 @@ private:
 	QList<QJsonObject>             m_allBackdrops;
 	QString                        m_selectedFanartPath;
 
+	// Clear logo gallery — only shown when clear logos are enabled in Settings.
+	QWidget*                       m_logoSide = nullptr;
+	QListWidget*                   m_logoGallery = nullptr;
+	QHash<QNetworkReply*, QString> m_logoThumbReplies;
+	QHash<QString, QByteArray>     m_logoThumbData;
+	QList<QJsonObject>             m_allLogos;
+	QString                        m_selectedLogoPath;
+
 	// kind: "movie" or "tv" — selects the TMDB images endpoint.
 	void fetchPosterImages(int tmdbId, const QString& origLang, const QString& kind = QStringLiteral("movie"));
 	void populateGallery();
 	void populateFanartGallery();
+	void populateLogoGallery();
 
 	QStringList            m_understoodLanguages;
 	QString                m_selectedTitle;
@@ -148,6 +162,8 @@ private:
 	bool    m_userHasSearched     = false;
 	bool    m_userSelectedPoster  = false;
 	bool    m_userSelectedFanart  = false;
+	bool    m_userSelectedLogo    = false;
+	bool    m_showLogos           = false;
 };
 
 } // namespace Mc

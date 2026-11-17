@@ -449,12 +449,16 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_jobQueue->setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 		PosterManager::instance().setWriteNfoFiles(m_profile->writeNfoFiles());
+		PosterManager::instance().setClearLogosEnabled(m_profile->showClearLogos());
 		PosterManager::instance().setUnderstoodLanguages(m_profile->understoodLanguages());
 		PosterManager::instance().setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
 		const bool tmdbConfigured = !m_profile->tmdbApiKey().isEmpty();
-		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate())) {
 			d->setTmdbConfigured(tmdbConfigured);
+			d->setClearLogosEnabled(m_profile->showClearLogos());
+		}
 		m_jobPanel->setTmdbConfigured(tmdbConfigured);
+		m_jobPanel->setClearLogosEnabled(m_profile->showClearLogos());
 		m_jobPanel->setDownloadSceneNfoEnabled(m_profile->downloadSceneNfoEnabled());
 		SubtitleManager::instance().setCredentials(m_profile->openSubtitlesApiKey(),
 		                                            m_profile->openSubtitlesUsername(),
@@ -731,6 +735,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	auto& pm = PosterManager::instance();
 	pm.start(m_profile->tmdbApiKey());
 	pm.setWriteNfoFiles(m_profile->writeNfoFiles());
+	pm.setClearLogosEnabled(m_profile->showClearLogos());
 	pm.setUnderstoodLanguages(m_profile->understoodLanguages());
 	pm.setRetryCooldownDays(m_profile->subtitleRetryCooldownDays());
 	connect(&pm, &PosterManager::posterReady,
@@ -755,6 +760,10 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onReleaseDatesReady);
 	connect(&pm, &PosterManager::trailerReady,
 	        m_listModel, &McFileListModel::onTrailerReady);
+	connect(&pm, &PosterManager::collectionReady,
+	        m_listModel, &McFileListModel::onCollectionReady);
+	connect(&pm, &PosterManager::logoReady,
+	        m_listModel, &McFileListModel::onLogoReady);
 	// Keep job-card media types (and category pills) current during enrichment.
 	connect(&pm, &PosterManager::tmdbDataReady, this,
 	        [this](qint64 fileId, const QString& title, int year, double, const QString& mediaType) {
@@ -1014,6 +1023,7 @@ void McMainWindow::setupUi()
 
 	m_listView->setItemDelegate(fileDelegate);
 	fileDelegate->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
+	fileDelegate->setClearLogosEnabled(m_profile->showClearLogos());
 	fileDelegate->setMultiGroupBadgeEnabled(StorageGroupSettings::multipleGroupsInUse());
 	fileDelegate->setFanartOpacity(
 	    AppSettings::instance().value("library/fanartOpacity", 5).toInt() / 100.0);
@@ -1057,6 +1067,7 @@ void McMainWindow::setupUi()
 		const QString    exFanart  = idx.data(McFileListModel::FanartRole).toString();
 		ImdbSearchDialog dlg(file.path, suggested, existing, m_profile->tmdbApiKey(), this, exPoster, exFanart);
 		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
+		dlg.setShowLogos(m_profile->showClearLogos());
 		if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
@@ -1075,6 +1086,8 @@ void McMainWindow::setupUi()
 				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
+				if (!dlg.selectedLogoPath().isEmpty())
+					PosterManager::instance().setUserLogo(file.id, dlg.selectedTmdbId(), id, dlg.selectedLogoPath());
 				if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(file.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(file.id, dlg.selectedVoteAverage());
@@ -1163,7 +1176,7 @@ void McMainWindow::setupUi()
 					const bool hasTmdb = idx.data(McFileListModel::TmdbRole).toInt() > 0;
 					hitStreamIdx = del->hitTestBadgeStream(vpPos, m_listView->visualRect(idx),
 					                                        streams, m_listView->font(),
-					                                        hasImdb, hasTmdb);
+					                                        hasImdb, hasTmdb, idx);
 				}
 			}
 			const StreamRecord* hitStream = nullptr;
@@ -1496,6 +1509,7 @@ void McMainWindow::setupUi()
 					ImdbSearchDialog dlg(repFile.path, suggested, existing, m_profile->tmdbApiKey(), this,
 					                     exPoster, exFanart);
 					dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
+					dlg.setShowLogos(m_profile->showClearLogos());
 					if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 					if (dlg.exec() != QDialog::Accepted) return;
 					const QString imdbId = dlg.selectedImdbId();
@@ -1514,6 +1528,8 @@ void McMainWindow::setupUi()
 					PosterManager::instance().refresh(repFile.id, dlg.selectedPosterPath(), dlg.selectedImageData(),
 					                                 imdbId, dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 					                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
+					if (!dlg.selectedLogoPath().isEmpty())
+						PosterManager::instance().setUserLogo(repFile.id, dlg.selectedTmdbId(), imdbId, dlg.selectedLogoPath());
 					if (dlg.selectedVoteAverage() > 0) {
 						m_listModel->setRatingForFile(repFile.id, dlg.selectedVoteAverage());
 						m_jobPanel->setRatingForFile(repFile.id, dlg.selectedVoteAverage());
@@ -1856,6 +1872,7 @@ void McMainWindow::setupUi()
 				if (existing.isEmpty()) existing = NfoParser::readImdbId(f.path);
 				ImdbSearchDialog dlg(f.path, suggested, existing, m_profile->tmdbApiKey(), this, exPoster, exFanart);
 				dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
+				dlg.setShowLogos(m_profile->showClearLogos());
 				if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 				if (total > 1) dlg.setBatchMode(i + 1, total);
 				const int result = dlg.exec();
@@ -1877,6 +1894,8 @@ void McMainWindow::setupUi()
 				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
+				if (!dlg.selectedLogoPath().isEmpty())
+					PosterManager::instance().setUserLogo(f.id, dlg.selectedTmdbId(), imdbId, dlg.selectedLogoPath());
 				if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(f.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(f.id, dlg.selectedVoteAverage());
@@ -2099,6 +2118,10 @@ void McMainWindow::setupUi()
 	        m_listModel, &McFileListModel::setRedundantOnlyFilter);
 	connect(m_listModel, &McFileListModel::redundantGroupCountChanged,
 	        m_filterPanel, &McFilterPanel::setRedundantGroupCount);
+	connect(m_filterPanel, &McFilterPanel::collectionOnlyFilterChanged,
+	        m_listModel, &McFileListModel::setCollectionOnlyFilter);
+	connect(m_listModel, &McFileListModel::collectionCountChanged,
+	        m_filterPanel, &McFilterPanel::setCollectionCount);
 	// Hide Movies/TV/Docs/Misc until the library has at least one classified type.
 	connect(m_listModel, &McFileListModel::mediaCategoriesAvailabilityChanged,
 	        m_filterPanel, &McFilterPanel::setMediaCategoryFiltersVisible);
@@ -2167,6 +2190,7 @@ void McMainWindow::setupUi()
 	m_jobPanel = new McJobPanel(this);
 	m_jobPanel->setJobQueue(m_jobQueue);
 	m_jobPanel->setTmdbConfigured(!m_profile->tmdbApiKey().isEmpty());
+	m_jobPanel->setClearLogosEnabled(m_profile->showClearLogos());
 	m_jobPanel->setDownloadSceneNfoEnabled(m_profile->downloadSceneNfoEnabled());
 	m_jobPanel->setMultiGroupBadgeEnabled(StorageGroupSettings::multipleGroupsInUse());
 	m_jobPanel->setFanartOpacity(
@@ -2249,6 +2273,7 @@ void McMainWindow::setupUi()
 		                     existingId,
 		                     m_profile->tmdbApiKey(), this, exPoster, exFanart);
 		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
+		dlg.setShowLogos(m_profile->showClearLogos());
 		if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
@@ -2267,6 +2292,8 @@ void McMainWindow::setupUi()
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
+				if (!dlg.selectedLogoPath().isEmpty())
+					PosterManager::instance().setUserLogo(fileId, dlg.selectedTmdbId(), id, dlg.selectedLogoPath());
 			if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
@@ -2319,6 +2346,7 @@ void McMainWindow::setupUi()
 			                     existingId,
 			                     m_profile->tmdbApiKey(), this, exPoster, exFanart);
 			dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
+			dlg.setShowLogos(m_profile->showClearLogos());
 			if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 			dlg.setBatchMode(i + 1, total);
 
@@ -2342,6 +2370,8 @@ void McMainWindow::setupUi()
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath(), dlg.selectedTmdbId());
+				if (!dlg.selectedLogoPath().isEmpty())
+					PosterManager::instance().setUserLogo(fileId, dlg.selectedTmdbId(), id, dlg.selectedLogoPath());
 			if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());

@@ -1046,6 +1046,18 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_chkWriteNfo->setChecked(profile->writeNfoFiles());
 	enrichLayout->addWidget(m_chkWriteNfo);
 
+	m_chkClearLogos = new QCheckBox(tr("Show clear logos on library cards"), enrichGroup);
+	m_chkClearLogos->setToolTip(tr(
+		"Replaces the plain-text title on each library card with the movie's clear logo —\n"
+		"its title artwork from TMDB, the same kind Plex shows on its hero screens.\n"
+		"Cards grow a little taller to fit it; a movie without a logo keeps its text title.\n\n"
+		"Logos are picked by your Understood Languages, the same way titles are. You can\n"
+		"choose a different one under Edit Movie Metadata, next to posters and fanart.\n\n"
+		"Turning this on downloads one small image per matched movie in the background.\n\n"
+		"Off by default."));
+	m_chkClearLogos->setChecked(profile->showClearLogos());
+	enrichLayout->addWidget(m_chkClearLogos);
+
 	auto* tmdbHint = new QLabel(
 		tr("Get a free key at <a href=\"https://www.themoviedb.org/settings/api\">themoviedb.org</a>."),
 		enrichGroup);
@@ -1347,6 +1359,7 @@ void McSettingsDialog::accept()
 	m_profile->setLocalStagingDir(QDir::fromNativeSeparators(m_editStagingDir->text().trimmed()));
 	m_profile->setTmdbApiKey(m_editTmdbKey->text().trimmed());
 	m_profile->setWriteNfoFiles(m_chkWriteNfo->isChecked());
+	m_profile->setShowClearLogos(m_chkClearLogos->isChecked());
 	m_profile->setDownloadSceneNfoEnabled(m_chkDownloadSceneNfo->isChecked());
 	m_profile->setAutoDownloadSceneNfo(m_chkAutoDownloadSceneNfo->isChecked());
 	m_profile->setDeepDolbyVisionScanEnabled(m_chkDeepDolbyVisionScan->isChecked());

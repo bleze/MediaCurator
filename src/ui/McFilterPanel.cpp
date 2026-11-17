@@ -109,6 +109,15 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	});
 	lay->addWidget(m_redundantChip);
 
+	// "N collections" toggle — the GroupedByCollection counterpart of the above.
+	m_collectionChip = makeFilterPill(tr("0 collections"), QColor(0x2e, 0x6d, 0xb4), this);
+	m_collectionChip->setToolTip(tr("Show only movie collections you own two or more films of"));
+	m_collectionChip->setVisible(false);
+	connect(m_collectionChip, &QToolButton::toggled, this, [this](bool on) {
+		emit collectionOnlyFilterChanged(on);
+	});
+	lay->addWidget(m_collectionChip);
+
 	// ── Status filter ─────────────────────────────────────────────────────────
 	m_statusCombo = new QComboBox(this);
 	m_statusCombo->setItemDelegate(new McFlatComboDelegate(m_statusCombo));
@@ -305,6 +314,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	m_sortCombo->addItem(tr("Physical release"), SortByPhysicalNewest);
 	m_sortCombo->addItem(tr("View"),             QVariant());          // group header
 	m_sortCombo->addItem(tr("Group by Movie"),   GroupedByEdition);
+	m_sortCombo->addItem(tr("Group by Collection"), GroupedByCollection);
 	if (auto* m = qobject_cast<QStandardItemModel*>(m_sortCombo->model())) {
 		for (int i = 0; i < m->rowCount(); ++i)
 			if (!m_sortCombo->itemData(i).isValid())
@@ -324,7 +334,10 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		const int order = data.toInt();
 		if (order != GroupedByEdition && m_redundantChip->isChecked())
 			m_redundantChip->setChecked(false);   // also fires redundantOnlyFilterChanged(false)
-		m_groupModeActive = (order == GroupedByEdition);
+		if (order != GroupedByCollection && m_collectionChip->isChecked())
+			m_collectionChip->setChecked(false);  // also fires collectionOnlyFilterChanged(false)
+		m_groupModeActive      = (order == GroupedByEdition);
+		m_collectionModeActive = (order == GroupedByCollection);
 		updateRedundantChipVisibility();
 		emit sortOrderChanged(order);
 	});
@@ -333,6 +346,14 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 void McFilterPanel::updateRedundantChipVisibility()
 {
 	m_redundantChip->setVisible(m_groupModeActive && m_redundantGroupCount > 0);
+	m_collectionChip->setVisible(m_collectionModeActive && m_collectionCount > 0);
+}
+
+void McFilterPanel::setCollectionCount(int count)
+{
+	m_collectionCount = count;
+	m_collectionChip->setText(count == 1 ? tr("1 collection") : tr("%1 collections").arg(count));
+	updateRedundantChipVisibility();
 }
 
 void McFilterPanel::setRedundantGroupCount(int count)
@@ -367,6 +388,7 @@ void McFilterPanel::clearFilters(bool showIgnored)
 	}
 
 	m_redundantChip->setChecked(false);   // emits redundantOnlyFilterChanged if it was on
+	m_collectionChip->setChecked(false);  // emits collectionOnlyFilterChanged if it was on
 
 	bool storageGroupChanged = false;
 	for (McStorageGroupChipToggle* chip : m_storageGroupChips) {

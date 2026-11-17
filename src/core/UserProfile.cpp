@@ -121,6 +121,14 @@ void UserProfile::setWriteJobLog(bool v)
 	}
 }
 
+void UserProfile::setShowClearLogos(bool v)
+{
+	if (m_showClearLogos != v) {
+		m_showClearLogos = v;
+		emit profileChanged();
+	}
+}
+
 void UserProfile::setWriteNfoFiles(bool v)
 {
 	if (m_writeNfoFiles != v) {
@@ -380,6 +388,7 @@ QJsonObject UserProfile::toJson() const
 	o["download_scene_nfo_enabled"]      = m_downloadSceneNfoEnabled;
 	o["auto_download_scene_nfo"]         = m_autoDownloadSceneNfo;
 	o["deep_dolby_vision_scan_enabled"]  = m_deepDolbyVisionScanEnabled;
+	o["show_clear_logos"]                = m_showClearLogos;
 	o["use_local_staging"]               = m_useLocalStaging;
 	o["local_staging_dir"]               = m_localStagingDir;
 	o["tmdb_api_key"]                    = m_tmdbApiKey;
@@ -427,6 +436,7 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_downloadSceneNfoEnabled    = json["download_scene_nfo_enabled"].toBool(false);
 	m_autoDownloadSceneNfo       = json["auto_download_scene_nfo"].toBool(false);
 	m_deepDolbyVisionScanEnabled = json["deep_dolby_vision_scan_enabled"].toBool(false);
+	m_showClearLogos             = json["show_clear_logos"].toBool(false);
 	m_useLocalStaging            = json["use_local_staging"].toBool(false);
 	m_localStagingDir            = json["local_staging_dir"].toString();
 	m_tmdbApiKey                 = json["tmdb_api_key"].toString();

@@ -384,6 +384,30 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	m_fanartGallery->setFrameShape(QFrame::NoFrame);
 	fanartSideL->addWidget(m_fanartGallery, 1);
 
+	// Clear logo picker, under the backdrops. Hidden unless setShowLogos(true).
+	// Dark backing so the many white/light logos stay visible.
+	m_logoSide = new QWidget(fanartSide);
+	auto* logoSideL = new QVBoxLayout(m_logoSide);
+	logoSideL->setContentsMargins(0, 6, 0, 0);
+	logoSideL->setSpacing(2);
+	logoSideL->addWidget(new QLabel(tr("Clear logo:"), m_logoSide));
+	m_logoGallery = new NoMarginListWidget(m_logoSide);
+	m_logoGallery->setViewMode(QListView::IconMode);
+	m_logoGallery->setIconSize({150, 56});
+	m_logoGallery->setGridSize({158, 78});
+	m_logoGallery->setResizeMode(QListView::Adjust);
+	m_logoGallery->setMovement(QListView::Static);
+	m_logoGallery->setUniformItemSizes(true);
+	m_logoGallery->setWordWrap(false);
+	m_logoGallery->setSpacing(0);
+	m_logoGallery->setFrameShape(QFrame::NoFrame);
+	m_logoGallery->setMinimumHeight(84);
+	m_logoGallery->setStyleSheet(QStringLiteral(
+		"QListWidget { background: #2b2b2b; color: #d0d0d0; }"));
+	logoSideL->addWidget(m_logoGallery, 1);
+	fanartSideL->addWidget(m_logoSide, 0);
+	m_logoSide->setVisible(false);
+
 
 	m_gallerySplitter->addWidget(posterSide);
 	m_gallerySplitter->addWidget(fanartSide);
@@ -453,6 +477,12 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 						               Qt::SmoothTransformation)));
 			}
 		}
+	});
+	connect(m_logoGallery, &QListWidget::currentItemChanged,
+	        this, [this](QListWidgetItem* item) {
+		if (!item) return;  // gallery clearing
+		m_selectedLogoPath = item->data(Qt::UserRole).toString();
+		m_userSelectedLogo = true;
 	});
 	connect(m_fanartGallery, &QListWidget::currentItemChanged,
 	        this, [this](QListWidgetItem* item) {
@@ -541,6 +571,9 @@ ImdbSearchDialog::~ImdbSearchDialog()
 	for (auto it = m_fanartThumbReplies.begin(); it != m_fanartThumbReplies.end(); ++it)
 		it.key()->disconnect(this);
 	m_fanartThumbReplies.clear();
+	for (auto it = m_logoThumbReplies.begin(); it != m_logoThumbReplies.end(); ++it)
+		it.key()->disconnect(this);
+	m_logoThumbReplies.clear();
 	for (QNetworkReply* r : std::as_const(m_thumbReplyByRow)) r->disconnect(this);
 	m_thumbReplyByRow.clear();
 	for (QNetworkReply* r : std::as_const(m_backdropReplyByRow)) r->disconnect(this);
@@ -611,6 +644,15 @@ QString    ImdbSearchDialog::selectedFanartPath() const
 	// Only return a path if the user explicitly picked a backdrop; otherwise the
 	// caller should leave the existing fanart intact (worker checks before overwriting).
 	return m_userSelectedFanart ? m_selectedFanartPath : QString{};
+}
+QString    ImdbSearchDialog::selectedLogoPath() const
+{
+	return (m_showLogos && m_userSelectedLogo) ? m_selectedLogoPath : QString{};
+}
+void ImdbSearchDialog::setShowLogos(bool show)
+{
+	m_showLogos = show;
+	m_logoSide->setVisible(show);
 }
 QByteArray ImdbSearchDialog::selectedImageData()  const
 {
@@ -1139,6 +1181,7 @@ void ImdbSearchDialog::onResultSelectionChanged()
 
 	m_userSelectedPoster = false;
 	m_userSelectedFanart = false;
+	m_userSelectedLogo   = false;
 	m_selectedTitle      = item->data(Qt::UserRole + 1).toString();
 	m_selectedYear       = item->data(Qt::UserRole + 2).toInt();
 	m_selectedPosterPath = item->data(Qt::UserRole + 3).toString();
@@ -1221,6 +1264,14 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang, co
 	m_allBackdrops.clear();
 	m_fanartGallery->clear();
 	m_selectedFanartPath.clear();
+	for (auto it = m_logoThumbReplies.begin(); it != m_logoThumbReplies.end(); ++it)
+		it.key()->disconnect(this);
+	m_logoThumbReplies.clear();
+	m_logoThumbData.clear();
+	m_allLogos.clear();
+	m_logoGallery->clear();
+	m_selectedLogoPath.clear();
+	m_userSelectedLogo = false;
 	m_langFilter->blockSignals(true);
 	m_langFilter->clear();
 	m_langFilter->addItem(tr("All"), QString{});
@@ -1261,6 +1312,12 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang, co
 		const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
 		const QJsonArray posters   = root[QStringLiteral("posters")].toArray();
 		const QJsonArray backdrops = root[QStringLiteral("backdrops")].toArray();
+		const QJsonArray logos     = root[QStringLiteral("logos")].toArray();
+
+		m_allLogos.clear();
+		m_allLogos.reserve(logos.size());
+		for (const auto& v : logos)
+			m_allLogos.append(v.toObject());
 
 		m_allPosters.clear();
 		m_allPosters.reserve(posters.size());
@@ -1312,7 +1369,58 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang, co
 
 		populateGallery();
 		populateFanartGallery();
+		if (m_showLogos)
+			populateLogoGallery();
 	});
+}
+
+void ImdbSearchDialog::populateLogoGallery()
+{
+	m_logoGallery->blockSignals(true);
+	m_logoGallery->clear();
+	m_logoGallery->blockSignals(false);
+
+	for (const auto& l : std::as_const(m_allLogos)) {
+		const QString path    = l[QStringLiteral("file_path")].toString();
+		const double  voteAvg = l[QStringLiteral("vote_average")].toDouble();
+		const QString lang    = l[QStringLiteral("iso_639_1")].isNull()
+		                        ? tr("Textless")
+		                        : l[QStringLiteral("iso_639_1")].toString().toUpper();
+		if (path.isEmpty()) continue;
+
+		auto* item = new QListWidgetItem(lang, m_logoGallery);
+		item->setData(Qt::UserRole, path);
+		item->setSizeHint({158, 78});
+		item->setToolTip(QStringLiteral("%1  \xe2\x98\x85 %2").arg(lang).arg(voteAvg, 0, 'f', 1));
+
+		if (m_logoThumbData.contains(path)) {
+			QPixmap px;
+			if (px.loadFromData(m_logoThumbData[path]))
+				item->setIcon(QIcon(px.scaled(150, 56, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+			continue;
+		}
+		const QUrl thumbUrl(QStringLiteral("https://image.tmdb.org/t/p/w185%1").arg(path));
+		QNetworkRequest thumbReq(thumbUrl);
+		thumbReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+		QNetworkReply* r = m_nam->get(thumbReq);
+		m_logoThumbReplies[r] = path;
+		connect(r, &QNetworkReply::finished, r, &QObject::deleteLater);
+		connect(r, &QNetworkReply::finished, this, [this, r, path]() {
+			m_logoThumbReplies.remove(r);
+			if (r->error() != QNetworkReply::NoError) return;
+			const QByteArray bytes = r->readAll();
+			m_logoThumbData[path] = bytes;
+			QPixmap px;
+			if (!px.loadFromData(bytes)) return;
+			const QIcon icon(px.scaled(150, 56, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+			for (int i = 0; i < m_logoGallery->count(); ++i) {
+				if (m_logoGallery->item(i)->data(Qt::UserRole).toString() == path) {
+					m_logoGallery->item(i)->setIcon(icon);
+					break;
+				}
+			}
+		});
+	}
 }
 
 void ImdbSearchDialog::populateFanartGallery()
