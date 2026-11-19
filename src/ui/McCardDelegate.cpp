@@ -490,8 +490,14 @@ int McCardDelegate::collectionBannerH(const QModelIndex& index) const
 	return index.data(McFileListModel::CollectionBannerRole).toString().isEmpty() ? 0 : kCollectionBannerH;
 }
 
-void McCardDelegate::paintCollectionBanner(QPainter* painter, const QRect& banner, const CardData& d,
-                                           const QStyleOptionViewItem& option) const
+int McCardDelegate::collectionFooterH(const QModelIndex& index) const
+{
+	if (m_mode != Mode::Library || !index.isValid()) return 0;
+	return index.data(McFileListModel::CollectionFooterRole).toBool() ? kCollectionFooterH : 0;
+}
+
+void McCardDelegate::paintCollectionBackdrop(QPainter* painter, const QRect& band, const CardData& d,
+                                             const QStyleOptionViewItem& option) const
 {
 	const QPalette& pal = option.palette;
 	const qreal dpr = painter->device()->devicePixelRatioF();
@@ -499,20 +505,20 @@ void McCardDelegate::paintCollectionBanner(QPainter* painter, const QRect& banne
 	const QColor base = pal.color(QPalette::Window);
 
 	painter->save();
-	painter->setClipRect(banner);
-	painter->fillRect(banner, base.darker(darkTheme ? 140 : 110));
+	painter->setClipRect(band);
+	painter->fillRect(band, base.darker(darkTheme ? 140 : 110));
 
-	// Backdrop: the first film's fanart, cropped to the band from its upper
-	// third (where the interesting part of a backdrop usually is).
+	// This card's fanart, cropped to the band from its upper third (where the
+	// interesting part of a backdrop usually is).
 	QPixmap raw = s_fanartRawCache.value(d.fanartPath);
 	if (raw.isNull() && !d.fanartPath.isEmpty() && m_view && m_view->viewport())
 		requestAsyncFanart(d.fanartPath, m_view->viewport());
 	if (!raw.isNull()) {
 		const QString key = QStringLiteral("colbanner:%1:%2:%3:%4")
-		                        .arg(d.fanartPath).arg(banner.width()).arg(banner.height()).arg(dpr);
+		                        .arg(d.fanartPath).arg(band.width()).arg(band.height()).arg(dpr);
 		QPixmap bg;
 		if (!QPixmapCache::find(key, &bg)) {
-			const QSize dev(qRound(banner.width() * dpr), qRound(banner.height() * dpr));
+			const QSize dev(qRound(band.width() * dpr), qRound(band.height() * dpr));
 			const QPixmap scaled = raw.scaledToWidth(dev.width(), Qt::SmoothTransformation);
 			const int y = qBound(0, scaled.height() / 3 - dev.height() / 2, qMax(0, scaled.height() - dev.height()));
 			bg = scaled.copy(0, y, dev.width(), qMin(dev.height(), scaled.height()));
@@ -520,23 +526,48 @@ void McCardDelegate::paintCollectionBanner(QPainter* painter, const QRect& banne
 			QPixmapCache::insert(key, bg);
 		}
 		painter->setOpacity(0.55);
-		painter->drawPixmap(banner.topLeft(), bg);
+		painter->drawPixmap(band.topLeft(), bg);
 		painter->setOpacity(1.0);
 	}
 
 	// Legibility gradient: solid behind the posters/text, clearing to the right.
-	QLinearGradient shade(banner.topLeft(), banner.topRight());
+	QLinearGradient shade(band.topLeft(), band.topRight());
 	QColor c0 = base.darker(darkTheme ? 160 : 105); c0.setAlpha(240);
 	QColor c1 = c0; c1.setAlpha(170);
 	QColor c2 = c0; c2.setAlpha(30);
 	shade.setColorAt(0.0, c0);
 	shade.setColorAt(0.35, c1);
 	shade.setColorAt(1.0, c2);
-	painter->fillRect(banner, shade);
+	painter->fillRect(band, shade);
 
-	// Same thin separator the cards use, so the banner sits in the list like a row.
+	// Same thin separator the cards use, so the band sits in the list like a row.
 	painter->setPen(QPen(pal.color(QPalette::Mid), 1));
-	painter->drawLine(banner.bottomLeft(), banner.bottomRight());
+	painter->drawLine(band.bottomLeft(), band.bottomRight());
+	painter->restore();
+}
+
+void McCardDelegate::paintCollectionFooter(QPainter* painter, const QRect& footer, const CardData& d,
+                                           const QStyleOptionViewItem& option) const
+{
+	paintCollectionBackdrop(painter, footer, d, option);
+	// Top edge too — the card above it has no separator of its own here.
+	painter->save();
+	painter->setPen(QPen(option.palette.color(QPalette::Mid), 1));
+	painter->drawLine(footer.topLeft(), footer.topRight());
+	painter->restore();
+}
+
+void McCardDelegate::paintCollectionBanner(QPainter* painter, const QRect& banner, const CardData& d,
+                                           const QStyleOptionViewItem& option) const
+{
+	const QPalette& pal = option.palette;
+	const qreal dpr = painter->device()->devicePixelRatioF();
+	const bool darkTheme = pal.color(QPalette::Window).lightnessF() < 0.5;
+
+	paintCollectionBackdrop(painter, banner, d, option);
+
+	painter->save();
+	painter->setClipRect(banner);
 
 	// Poster strip — every film in the collection, slightly overlapping.
 	painter->setRenderHint(QPainter::Antialiasing, true);
@@ -739,6 +770,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 			d.collectionBannerInfo    = index.data(McFileListModel::CollectionBannerInfoRole).toString();
 			d.collectionBannerPosters = index.data(McFileListModel::CollectionBannerPostersRole).toStringList();
 		}
+		d.collectionFooter  = d.collectionMember && index.data(McFileListModel::CollectionFooterRole).toBool();
 		if (const auto* m = qobject_cast<const McFileListModel*>(index.model()))
 			d.checked = m->isChecked(file.id);
 	} else {
@@ -1443,7 +1475,7 @@ bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect
                                           bool hasImdb, bool hasTmdb,
                                           const QModelIndex& index, bool hasNfo) const
 {
-	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -kPadBottom);
+	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -bottomPad(index));
 	if (index.isValid() && index.data(McFileListModel::IsGroupCardRole).toBool()) {
 		if (hasImdb && imdbButtonRect(titleRow(content, index)).contains(pos)) return true;
 		if (hasTmdb && tmdbButtonRect(titleRow(content, index), hasImdb).contains(pos)) return true;
@@ -1526,7 +1558,7 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
                                         bool hasTmdb,
                                         const QModelIndex& index) const
 {
-	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -kPadBottom);
+	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -bottomPad(index));
 	QFont badgeFont = baseFont;
 	badgeFont.setPointSizeF(baseFont.pointSizeF() * 0.82);
 	const QFontMetrics fm(badgeFont);
@@ -1543,7 +1575,7 @@ qint64 McCardDelegate::hitTestGroupMember(const QPoint& pos, const QRect& itemRe
                                            const QModelIndex& index) const
 {
 	if (!index.data(McFileListModel::IsGroupCardRole).toBool()) return -1;
-	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -kPadBottom);
+	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -bottomPad(index));
 	const auto members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
 	QFont badgeFont = m_view ? m_view->font() : QFont{};
 	badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
@@ -1563,7 +1595,7 @@ McCardDelegate::GroupMemberBadgeHit McCardDelegate::hitTestGroupMemberBadgeStrea
 	GroupMemberBadgeHit result;
 	if (!index.data(McFileListModel::IsGroupCardRole).toBool()) return result;
 
-	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -kPadBottom);
+	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -bottomPad(index));
 	const auto  members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
 	QFont badgeFont = m_view ? m_view->font() : QFont{};
 	badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
@@ -1638,7 +1670,8 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 				? cur.data(McFileListModel::FileRole).value<FileRecord>().hasSceneNfo
 				: cur.data(McJobListModel::HasSceneNfoRole).toBool();
 
-			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb, hasTmdb, cur, hasNfo);
+			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb, hasTmdb, cur, hasNfo)
+			                    || hitTestChips(pos, m_view->visualRect(cur), cur) != ChipHit::None;
 			if (!overInteractive && m_mode == Mode::JobQueue
 			    && (cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
 			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued")
@@ -1681,11 +1714,35 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 	return false;
 }
 
+qint64 McCardDelegate::itemIdFor(const QModelIndex& index) const
+{
+	return m_mode == Mode::Library ? index.data(McFileListModel::FileIdRole).toLongLong()
+	                               : index.data(McJobListModel::JobIdRole).toLongLong();
+}
+
+McCardDelegate::ChipHit McCardDelegate::hitTestChips(const QPoint& pos, const QRect& itemRect,
+                                                     const QModelIndex& index) const
+{
+	if (m_mode != Mode::Library || !index.isValid()) return ChipHit::None;
+	const auto it = m_chipRects.constFind(itemIdFor(index));
+	if (it == m_chipRects.cend()) return ChipHit::None;
+	if (!it->collection.isNull() && it->collection.translated(itemRect.topLeft()).contains(pos))
+		return ChipHit::Collection;
+	if (!it->status.isNull() && it->status.translated(itemRect.topLeft()).contains(pos))
+		return ChipHit::Status;
+	return ChipHit::None;
+}
+
 bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
                                   const QFont& viewFont, const QModelIndex& index)
 {
 	if (!index.isValid()) return false;
-	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -kPadBottom);
+	switch (hitTestChips(pos, itemRect, index)) {
+	case ChipHit::Collection: emit collectionChipClicked(index); return true;
+	case ChipHit::Status:     emit statusPillClicked(index);     return true;
+	case ChipHit::None:       break;
+	}
+	const QRect content = itemRect.adjusted(leftContentInset(), topPad(index), -kPadH, -bottomPad(index));
 
 	if (index.data(McFileListModel::IsGroupCardRole).toBool()) {
 		const bool hasImdb = !index.data(McFileListModel::ImdbRole).toString().isEmpty();
@@ -1796,7 +1853,26 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 	if (event->type() != QEvent::ToolTip)
 		return QStyledItemDelegate::helpEvent(event, view, option, index);
 
-	const QRect content = option.rect.adjusted(leftContentInset(), topPad(index), -kPadH, -kPadBottom);
+	switch (hitTestChips(event->pos(), option.rect, index)) {
+	case ChipHit::Collection:
+		QToolTip::showText(event->globalPos(), tr("Show in Group by Collection"), view);
+		return true;
+	case ChipHit::Status:
+		QToolTip::showText(event->globalPos(), tr("Show in job queue"), view);
+		return true;
+	case ChipHit::None:
+		break;
+	}
+
+	// Clear logo → the text title it replaced (stylized logos can be hard to read).
+	if (const auto it = m_chipRects.constFind(itemIdFor(index));
+	    it != m_chipRects.cend() && !it->logo.isNull()
+	    && it->logo.translated(option.rect.topLeft()).contains(event->pos())) {
+		QToolTip::showText(event->globalPos(), it->logoTitle, view);
+		return true;
+	}
+
+	const QRect content = option.rect.adjusted(leftContentInset(), topPad(index), -kPadH, -bottomPad(index));
 	const CardData d = fetchData(index);
 
 	// IMDb button tooltip
@@ -2110,8 +2186,9 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 		const QRect pseudoContent(0, 0, totalContentW, 0);
 		const auto  layout = layoutGroupCard(pseudoContent, d.groupMembers, fm);
 		const int banner  = collectionBannerH(index);
-		const int natural = kPadV + banner + kFolderH + kFolderGap + layout.totalContentH + kPadBottom;
-		const int h = qMax(natural, minRowH() + banner);
+		const int footer  = collectionFooterH(index);
+		const int natural = kPadV + banner + kFolderH + kFolderGap + layout.totalContentH + kPadBottom + footer;
+		const int h = qMax(natural, minRowH() + banner + footer);
 		const QSize result{w, h};
 		m_sizeCache.insert(itemId, result);
 		m_logoExtraCache.insert(itemId, d.logoPath.isEmpty() ? 0 : logoExtraFor(h, natural));
@@ -2159,8 +2236,9 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	// floor; cards with more rows than 3 simply grow to show them all.
 	const int trackH = qMax(totalRows, 3) * (kBadgeH + kRowGap);
 	const int banner  = collectionBannerH(index);
-	const int natural = kPadV + banner + kFolderH + kFolderGap + kHeaderH + kSepGap + trackH + kPadBottom;
-	const int h       = qMax(natural, minRowH() + banner);
+	const int footer  = collectionFooterH(index);
+	const int natural = kPadV + banner + kFolderH + kFolderGap + kHeaderH + kSepGap + trackH + kPadBottom + footer;
+	const int h       = qMax(natural, minRowH() + banner + footer);
 	const QSize result{w, h};
 	m_sizeCache.insert(itemId, result);
 	m_logoExtraCache.insert(itemId, d.logoPath.isEmpty() ? 0 : logoExtraFor(h, natural));
@@ -2370,7 +2448,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	// Collapsed to 0 when TMDB isn't configured, since no poster will ever
 	// arrive — see setTmdbConfigured.
 	const int   bannerH  = d.collectionBanner.isEmpty() ? 0 : kCollectionBannerH;
-	const QRect cardRect = option.rect.adjusted(0, bannerH, 0, 0);
+	const int   footerH  = d.collectionFooter ? kCollectionFooterH : 0;
+	const QRect cardRect = option.rect.adjusted(0, bannerH, 0, -footerH);
 	const QRect posterRect(cardRect.left(), cardRect.top(),
 	                       posterColumnWidth(), cardRect.height());
 	if (m_tmdbConfigured && !d.posterPath.isEmpty()) {
@@ -2409,7 +2488,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 
 	// ── Content area ─────────────────────────────────────────────────────────
-	const QRect content = option.rect.adjusted(leftContentInset(), topPad(index), -kPadH, -kPadBottom);
+	const QRect content = option.rect.adjusted(leftContentInset(), topPad(index), -kPadH, -bottomPad(index));
 	const QColor textColor = sel ? pal.color(QPalette::HighlightedText) : pal.color(QPalette::Text);
 	const QColor dimColor  = sel ? textColor.darker(140) : pal.color(QPalette::PlaceholderText);
 
@@ -2426,6 +2505,9 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		if (bannerH > 0)
 			paintCollectionBanner(painter, QRect(option.rect.left(), option.rect.top(), option.rect.width(), bannerH),
 			                      d, option);
+		if (footerH > 0)
+			paintCollectionFooter(painter, QRect(option.rect.left(), option.rect.bottom() + 1 - footerH,
+			                                     option.rect.width(), footerH), d, option);
 		painter->restore();
 	}
 
@@ -2557,6 +2639,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		// TMDB collection chip (short name, owned collections only) — same filled
 		// style as the media-type chip; hidden in Group by Collection, where the
 		// banner + stripe already say it. Elided so a long name can't crowd the title.
+		const qint64 chipKey = m_mode == Mode::Library ? itemIdFor(index) : -1;
+		if (chipKey >= 0) m_chipRects[chipKey].collection = QRect();
 		if (!d.collectionName.isEmpty() && !d.collectionMember) {
 			QFont chipFont = option.font;
 			chipFont.setPointSizeF(option.font.pointSizeF() * 0.80);
@@ -2581,6 +2665,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 				painter->drawText(chipRect.left() + chipPadX, metaBase, label);
 				painter->restore();
 				rightEdge = chipRect.left() - 6;
+				if (chipKey >= 0) m_chipRects[chipKey].collection = chipRect.translated(-option.rect.topLeft());
 			}
 		}
 
@@ -2597,10 +2682,14 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			return clearLogoPixmap(d.logoPath, QSize(qMin(titleW, qMax(160, content.width() * 2 / 5)), bandH - 2),
 			                       pal.color(QPalette::Base), painter->device()->devicePixelRatioF());
 		}() : QPixmap();
+		ChipRects& logoHit = m_chipRects[itemIdFor(index)];
+		logoHit.logo = QRect();
 		if (!logo.isNull()) {
 			const QSizeF logical = logo.deviceIndependentSize();
 			const int ly = folderRect.top() + (folderRect.height() - qRound(logical.height())) / 2;
 			painter->drawPixmap(QPoint(folderRect.left(), ly), logo);
+			logoHit.logo = QRect(QPoint(folderRect.left(), ly), logical.toSize()).translated(-option.rect.topLeft());
+			logoHit.logoTitle = smartTitle;
 		} else if (titleW > 20) {
 			const QRect titleRect(folderRect.left(), folderRect.top(), titleW, folderRect.height());
 			painter->setFont(titleFont);
@@ -2872,6 +2961,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		// Library mode only ever has a non-empty d.status when the file has an
 		// active (proposed/queued/running) job — see JobStatusRole above — so a
 		// plain non-empty check is enough to gate the Library card's own pill.
+		const qint64 pillKey = m_mode == Mode::Library ? itemIdFor(index) : -1;
+		if (pillKey >= 0) m_chipRects[pillKey].status = QRect();
 		if (m_mode == Mode::JobQueue || !d.status.isEmpty()) {
 			QFont pillFont = option.font;
 			pillFont.setPointSizeF(option.font.pointSizeF() * 0.80);
@@ -2906,6 +2997,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			const int pillY = hdr.top() + (hdr.height() - kBadgeH) / 2;
 			drawBadge(painter, pillX, pillY, kBadgeH,
 			          pillText, statusColor(d.status), pillFont);
+			if (pillKey >= 0)
+				m_chipRects[pillKey].status = QRect(pillX, pillY, pillW, kBadgeH).translated(-option.rect.topLeft());
 
 			rightEdgeForFilename = pillX;
 		}

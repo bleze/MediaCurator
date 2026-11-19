@@ -30,6 +30,7 @@ qt_standard_project_setup()
 
 set(HOTDAMN_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 add_subdirectory("${HOTDAMN_REPO_ROOT}/libs/nfoview" "${CMAKE_BINARY_DIR}/nfoview")
+add_subdirectory("${HOTDAMN_REPO_ROOT}/libs/donate" "${CMAKE_BINARY_DIR}/donate")
 
 set(HOTDAMN_SOURCES
     src/main.cpp
@@ -47,7 +48,7 @@ qt_add_executable(HotDamn WIN32 ${HOTDAMN_SOURCES})
 
 target_include_directories(HotDamn PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_definitions(HotDamn PRIVATE HOTDAMN_VERSION="${PROJECT_VERSION}")
-target_link_libraries(HotDamn PRIVATE nfoview)
+target_link_libraries(HotDamn PRIVATE nfoview donate)
 if(MSVC)
     target_compile_options(HotDamn PRIVATE /W4 /WX-)
 endif()

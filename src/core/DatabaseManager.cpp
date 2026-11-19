@@ -529,7 +529,7 @@ bool DatabaseManager::initSchema()
 	// logic instead of leaving their stale label in place forever. Same pattern as
 	// poster_scan_version above — bump kEditionDetectorVersion on the next such change.
 	{
-		static constexpr const char* kEditionDetectorVersion = "8"; // "8": Kodi {edition-...} tags now normalize through editionTokens too (e.g. "Extended" -> "Extended Cut")
+		static constexpr const char* kEditionDetectorVersion = "9"; // "9": default tokens gained German/Legacy Cut and "Alternative Cut" spelling
 		QSqlQuery pv(connection());
 		pv.exec("SELECT value FROM preferences WHERE key='edition_detector_version'");
 		const QString currentVersion = pv.next() ? pv.value(0).toString() : QString();

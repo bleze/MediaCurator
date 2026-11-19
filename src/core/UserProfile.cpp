@@ -275,7 +275,10 @@ QStringList UserProfile::defaultEditionTokens()
 		"Rich Mahogany|Rich Mahogany Edition",   // Anchorman's extended cut
 		"Scratch Free",   // Planet Terror's clean (Grindhouse damage removed) cut
 		"Remastered", "Restored", "Redux",
-		"Final Cut", "Assembly Cut", "Alternate Cut", "International Cut",
+		"Final Cut", "Assembly Cut", "International Cut",
+		"Alternate Cut|Alternative Cut",
+		"Legacy Cut",    // Alien 3
+		"German Cut",
 		"Ulysses Cut",   // Waterworld's extended cut
 		"Rogue Cut",     // X-Men: Days of Future Past's extended cut
 		"Workprint", "Fan Edit",

@@ -3,6 +3,7 @@
 #include "core/AppSettings.h"
 #include "ui/ImdbSearchDialog.h"
 #include "ui/McFilterPanel.h"
+#include "donate/McDonateDialog.h"
 #include "ui/McDownloadQueueBand.h"
 #include "ui/McDownloadQueueDialog.h"
 #include "ui/McHighscoreBand.h"
@@ -1010,6 +1011,24 @@ void McMainWindow::setupUi()
 		if (art.isEmpty()) return;
 
 		(new McSceneNfoDialog(path, art, this))->show();
+	});
+	// Collection chip → switch to Group by Collection and land on this film.
+	connect(fileDelegate, &McFileCardDelegate::collectionChipClicked,
+	        this, [this](const QModelIndex& idx) {
+		const qint64 fileId = idx.data(McFileListModel::FileIdRole).toLongLong();
+		QComboBox* sort = m_filterPanel->sortCombo();
+		const int   i   = sort->findData(int(McFilterPanel::GroupedByCollection));
+		if (i >= 0) sort->setCurrentIndex(i);   // emits sortOrderChanged → model re-groups synchronously
+		// Defer the scroll one turn so the list view has laid out the regrouped rows.
+		QTimer::singleShot(0, this, [this, fileId] { revealFileInLibrary(fileId); });
+	});
+	// Status pill (proposed/queued/running) → same as context menu "Find in Queue".
+	connect(fileDelegate, &McFileCardDelegate::statusPillClicked,
+	        this, [this](const QModelIndex& idx) {
+		const qint64 fileId = idx.data(McFileListModel::FileIdRole).toLongLong();
+		updateJobPanelVisibility(/*forceShow=*/true);
+		if (!m_jobPanel->revealJob(fileId))
+			m_statusLabel->setText(tr("This file is not in the job queue"));
 	});
 	connect(fileDelegate, &McFileCardDelegate::streamToggleRequested,
 	        this, [this](const QModelIndex& idx, int streamIndex) {
@@ -2242,23 +2261,10 @@ void McMainWindow::setupUi()
 	        this, [this](qint64 fileId) {
 		const auto fOpt = DatabaseManager::instance().fileById(fileId);
 		const QString name = fOpt ? fOpt->filename : tr("File");
-		int row = m_listModel->rowForFile(fileId);
-		if (row < 0) {
-			bool ignored = false;
-			if (m_listModel->hasFile(fileId, &ignored)) {
-				m_filterPanel->clearFilters(ignored);
-				row = m_listModel->rowForFile(fileId);
-			}
-		}
-		if (row < 0) {
+		if (revealFileInLibrary(fileId))
+			m_statusLabel->setText(tr("Found %1 in the library").arg(name));
+		else
 			m_statusLabel->setText(tr("%1 is not in the library view").arg(name));
-			return;
-		}
-		const QModelIndex idx = m_listModel->index(row);
-		m_listView->selectionModel()->setCurrentIndex(idx, QItemSelectionModel::ClearAndSelect);
-		m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
-		m_listView->setFocus(Qt::OtherFocusReason);
-		m_statusLabel->setText(tr("Found %1 in the library").arg(name));
 	});
 
 	connect(m_jobPanel, &McJobPanel::playRequested,
@@ -4987,6 +4993,24 @@ void McMainWindow::updateActionStates()
 	m_actSimulate->setEnabled(hasFiles);
 }
 
+bool McMainWindow::revealFileInLibrary(qint64 fileId)
+{
+	int row = m_listModel->rowForFile(fileId);
+	if (row < 0) {
+		bool ignored = false;
+		if (m_listModel->hasFile(fileId, &ignored)) {
+			m_filterPanel->clearFilters(ignored);
+			row = m_listModel->rowForFile(fileId);
+		}
+	}
+	if (row < 0) return false;
+	const QModelIndex idx = m_listModel->index(row);
+	m_listView->selectionModel()->setCurrentIndex(idx, QItemSelectionModel::ClearAndSelect);
+	m_listView->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+	m_listView->setFocus(Qt::OtherFocusReason);
+	return true;
+}
+
 void McMainWindow::updateJobPanelVisibility(bool forceShow)
 {
 	const bool hasJobs = !DatabaseManager::instance().allJobsForPanel().isEmpty();
@@ -5506,145 +5530,12 @@ void McMainWindow::onAbout()
 
 void McMainWindow::onDonate()
 {
-	auto* dlg = new QDialog(this);
-	dlg->setWindowTitle(tr("Support MediaCurator"));
-	dlg->setAttribute(Qt::WA_DeleteOnClose);
-	dlg->setFixedWidth(460);
-
-	auto* layout = new QVBoxLayout(dlg);
-	layout->setSpacing(10);
-	layout->setContentsMargins(16, 16, 16, 16);
-
-	auto* intro = new QLabel(
-		tr("If MediaCurator saves you money on storage or just makes managing "
-		   "your media library less painful, consider saying thanks or supporting "
-		   "continued development."), dlg);
-	intro->setWordWrap(true);
-	layout->addWidget(intro);
-
-	layout->addSpacing(8);
-
-	auto* columns = new QHBoxLayout;
-	columns->setSpacing(16);
-
-	// Build the badge first so we can measure its exact height for PayPal alignment
-	auto* preferredBadge = new QLabel(tr("★  Preferred"), dlg);
-	preferredBadge->setStyleSheet(QStringLiteral(
-		"color: white; background-color: #F7931A; border-radius: 4px;"
-		" padding: 3px 12px; font-weight: bold; border: none;"));
-	preferredBadge->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-	preferredBadge->ensurePolished();
-	// PayPal title must start at: badge height + 1px panel border + 8px panel top margin
-	const int paypalTopOffset = preferredBadge->sizeHint().height() + 1 + 8;
-
-	// ---- PayPal column ----
-	auto* paypalCol = new QVBoxLayout;
-	paypalCol->setSpacing(0);
-	paypalCol->addSpacing(paypalTopOffset);
-
-	auto* paypalLabel = new QLabel(tr("PayPal"), dlg);
-	paypalLabel->setStyleSheet("font-weight: bold;");
-	paypalLabel->setAlignment(Qt::AlignHCenter);
-	paypalCol->addWidget(paypalLabel);
-	paypalCol->addSpacing(6);
-
-	auto* paypalQrLabel = new QLabel(dlg);
-	{
-		QPixmap qr(":/icons/paypal_qr.png");
-		if (!qr.isNull())
-			paypalQrLabel->setPixmap(qr.scaled(180, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-	}
-	paypalQrLabel->setAlignment(Qt::AlignHCenter);
-	paypalCol->addWidget(paypalQrLabel);
-	paypalCol->addSpacing(6);
-
-	const QString paypalUrl = QStringLiteral("https://paypal.me/blezedk");
-	auto* paypalRow = new QHBoxLayout;
-	auto* paypalEdit = new QLineEdit(QStringLiteral("paypal.me/blezedk"), dlg);
-	paypalEdit->setReadOnly(true);
-	paypalEdit->setFrame(false);
-	paypalEdit->setStyleSheet("background: transparent;");
-	paypalRow->addWidget(paypalEdit, 1);
-	auto* paypalCopyBtn = new QPushButton(svgIcon(":/icons/copy.svg"), QString{}, dlg);
-	paypalCopyBtn->setFixedSize(32, 26);
-	paypalCopyBtn->setToolTip(tr("Copy to clipboard"));
-	connect(paypalCopyBtn, &QPushButton::clicked, [paypalUrl]() {
-		QApplication::clipboard()->setText(paypalUrl);
-	});
-	paypalRow->addWidget(paypalCopyBtn);
-	auto* paypalOpenBtn = new QPushButton(svgIcon(":/icons/link.svg"), QString{}, dlg);
-	paypalOpenBtn->setFixedSize(32, 26);
-	paypalOpenBtn->setToolTip(tr("Open in browser"));
-	connect(paypalOpenBtn, &QPushButton::clicked, [paypalUrl]() {
-		QDesktopServices::openUrl(QUrl(paypalUrl));
-	});
-	paypalRow->addWidget(paypalOpenBtn);
-	paypalCol->addLayout(paypalRow);
-	paypalCol->addStretch();
-
-	columns->addLayout(paypalCol, 1);
-
-	// ---- Lightning column (preferred) ----
-	// Badge sits directly above the panel with 0 spacing → appears to rest on the border
-	auto* lightningOuter = new QVBoxLayout;
-	lightningOuter->setSpacing(0);
-
-	auto* badgeRow = new QHBoxLayout;
-	badgeRow->addStretch();
-	badgeRow->addWidget(preferredBadge);
-	badgeRow->addStretch();
-	lightningOuter->addLayout(badgeRow);
-
-	auto* lightningPanel = new QWidget(dlg);
-	lightningPanel->setObjectName("lightningPanel");
-	lightningPanel->setStyleSheet(
-		"#lightningPanel { border: 1px solid #F7931A; border-radius: 8px; }");
-
-	auto* lightningCol = new QVBoxLayout(lightningPanel);
-	lightningCol->setSpacing(6);
-	lightningCol->setContentsMargins(8, 8, 8, 8);
-
-	auto* lightningLabel = new QLabel(tr("⚡ Lightning"), lightningPanel);
-	lightningLabel->setStyleSheet("font-weight: bold; border: none;");
-	lightningLabel->setAlignment(Qt::AlignHCenter);
-	lightningCol->addWidget(lightningLabel);
-
-	auto* qrLabel = new QLabel(lightningPanel);
-	{
-		QPixmap qr(":/icons/lightning_qr.png");
-		qrLabel->setPixmap(qr.scaled(180, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-	}
-	qrLabel->setAlignment(Qt::AlignHCenter);
-	lightningCol->addWidget(qrLabel);
-
-	auto* lightningRow = new QHBoxLayout;
-	auto* lightningEdit = new QLineEdit(QStringLiteral("bleze@cake.cash"), lightningPanel);
-	lightningEdit->setReadOnly(true);
-	lightningEdit->setFrame(false);
-	lightningEdit->setStyleSheet("background: transparent; border: none;");
-	lightningRow->addWidget(lightningEdit, 1);
-	auto* lightningCopyBtn = new QPushButton(svgIcon(":/icons/copy.svg"), QString{}, lightningPanel);
-	lightningCopyBtn->setFixedSize(32, 26);
-	lightningCopyBtn->setToolTip(tr("Copy to clipboard"));
-	connect(lightningCopyBtn, &QPushButton::clicked, [lightningEdit]() {
-		QApplication::clipboard()->setText(lightningEdit->text());
-	});
-	lightningRow->addWidget(lightningCopyBtn);
-	lightningCol->addLayout(lightningRow);
-	lightningCol->addStretch();
-
-	lightningOuter->addWidget(lightningPanel, 1);
-	columns->addLayout(lightningOuter, 1);
-
-	layout->addLayout(columns);
-	layout->addStretch();
-
-	auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
-	connect(btnBox, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
-	layout->addWidget(btnBox);
-
-	btnBox->button(QDialogButtonBox::Close)->setFocus();
-	dlg->exec();
+	McDonateDialog dlg(QStringLiteral("MediaCurator"),
+	                   tr("If MediaCurator saves you money on storage or just makes managing "
+	                      "your media library less painful, consider saying thanks or supporting "
+	                      "continued development."),
+	                   this, svgIcon(":/icons/copy.svg"), svgIcon(":/icons/link.svg"));
+	dlg.exec();
 }
 
 void McMainWindow::onCheckForUpdates()

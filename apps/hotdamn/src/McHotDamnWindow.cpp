@@ -1,6 +1,7 @@
 #include "McHotDamnWindow.h"
 #include "McHotDamnUpdater.h"
 #include "HotDamnSettings.h"
+#include "donate/McDonateDialog.h"
 #include "nfoview/McNfoView.h"
 #include "nfoview/NfoText.h"
 
@@ -158,6 +159,13 @@ void McHotDamnWindow::buildMenus()
 
 	QMenu* help = menuBar()->addMenu(tr("&Help"));
 	m_checkUpdatesAct = help->addAction(tr("Check for &Updates..."), this, &McHotDamnWindow::checkForUpdates);
+	help->addAction(tr("&Donate..."), this, [this]() {
+		McDonateDialog dlg(tr("Hot DAMN NFO Viewer"),
+		                   tr("If Hot DAMN NFO Viewer made your NFOs look the way they were meant to, "
+		                      "consider saying thanks or supporting continued development."),
+		                   this);
+		dlg.exec();
+	});
 	help->addSeparator();
 	help->addAction(tr("&About Hot DAMN NFO Viewer"), this, &McHotDamnWindow::showAbout);
 }

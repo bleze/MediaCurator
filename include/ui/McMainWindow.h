@@ -173,6 +173,9 @@ private:
 	void updateSavedLabel();
 	void updateActionStates();         // enable/disable scan-lib and analyze based on roots + file count
 	void updateJobPanelVisibility(bool forceShow = false);   // show/hide job panel based on whether any jobs exist
+	// Selects + centers the file's library card (or its mega card), clearing library
+	// filters only if they hide it. Returns false if the file isn't in the library.
+	bool revealFileInLibrary(qint64 fileId);
 	void updateRemuxStatusBar();
 	void updateHighscoreVisibility();
 	void updateDownloadQueueVisibility();

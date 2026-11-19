@@ -279,6 +279,7 @@ target_link_libraries(MediaCurator PRIVATE
     nlohmann_json::nlohmann_json
     cld2::cld2
     nfoview
+    donate
 )
 
 if(WIN32)
@@ -310,8 +311,6 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/vlc.svg
         resources/icons/youtube.svg
         resources/icons/dollar.svg
-        resources/icons/lightning_qr.png
-        resources/icons/paypal_qr.png
         resources/icons/block.svg
         resources/icons/visibility_off.svg
         resources/icons/legend_toggle.svg

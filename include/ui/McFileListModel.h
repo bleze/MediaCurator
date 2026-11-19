@@ -116,6 +116,7 @@ public:
 		CollectionBannerInfoRole = Qt::UserRole + 30,  // QString — "4 films · 1987–1998 · 186 GB"
 		CollectionMemberRole     = Qt::UserRole + 31,  // bool — GroupedByCollection and part of an owned collection
 		CollectionBannerPostersRole = Qt::UserRole + 32, // QStringList — banner row only: member posters, release order
+		CollectionFooterRole     = Qt::UserRole + 33,  // bool — last visible film of a collection followed by a non-collection row
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter

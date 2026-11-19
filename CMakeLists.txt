@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(MediaCurator
-    VERSION 2.8.2
+    VERSION 2.8.3
     DESCRIPTION "Smart media library curator — scan, filter, and clean your video collection"
     HOMEPAGE_URL "https://github.com/bleze/MediaCurator"
     LANGUAGES CXX
@@ -151,6 +151,7 @@ add_library(cld2::cld2 ALIAS cld2)
 # NFO Viewer. That app is its own CMake project (apps/hotdamn) with its own
 # version and installer, so it is deliberately not added here.
 add_subdirectory(libs/nfoview)
+add_subdirectory(libs/donate)   # "Support" dialog, also shared with Hot DAMN
 add_subdirectory(src)
 
 # ── CPack installer config ────────────────────────────────────────────────────

@@ -179,6 +179,10 @@ signals:
 	// than the index since a mega card's checkbox belongs to one specific member,
 	// not the row as a whole; McMainWindow forwards it to McFileListModel::toggleChecked.
 	void checkToggleRequested(qint64 fileId);
+	// Library mode only — the TMDB collection chip in the title row was clicked.
+	void collectionChipClicked(const QModelIndex& index);
+	// Library mode only — the job-status pill (proposed/queued/running) was clicked.
+	void statusPillClicked(const QModelIndex& index);
 
 public:
 	int  hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
@@ -239,6 +243,7 @@ private:
 		QString             collectionBanner;       // non-empty: draw the collection banner above this card
 		QString             collectionBannerInfo;   // banner subtitle ("4 films · 1987–1998 · 186 GB")
 		QStringList         collectionBannerPosters; // member posters for the banner strip, release order
+		bool                collectionFooter = false; // draw the collection footer below this card
 		QList<StreamRecord> allStreams;
 		QList<StreamRecord> videoStreams;
 		QList<StreamRecord> audioStreams;
@@ -389,6 +394,13 @@ private:
 	// strip, collection name and stats. Drawn into the top kCollectionBannerH px.
 	void paintCollectionBanner(QPainter* painter, const QRect& banner, const CardData& d,
 	                           const QStyleOptionViewItem& option) const;
+	// Fill + fanart + shade shared by the banner and the footer.
+	void paintCollectionBackdrop(QPainter* painter, const QRect& band, const CardData& d,
+	                             const QStyleOptionViewItem& option) const;
+	// Slim backdrop-only band closing a collection that's followed by unrelated
+	// films (a following collection's banner already does that job otherwise).
+	void paintCollectionFooter(QPainter* painter, const QRect& footer, const CardData& d,
+	                           const QStyleOptionViewItem& option) const;
 
 	// Clear logos never change a card's height. A card with a logo takes the
 	// slack between its own content and minRowH() (up to kLogoBandMaxExtra) as
@@ -403,8 +415,11 @@ private:
 	static inline const QColor kCollectionAccent{0x2e, 0x6d, 0xb4};
 	static constexpr int kLogoBandMaxExtra  = 30;
 	static constexpr int kCollectionBannerH = 56;
+	static constexpr int kCollectionFooterH = 22;
 	[[nodiscard]] bool logoBandActive() const { return m_clearLogos; }
 	[[nodiscard]] int  collectionBannerH(const QModelIndex& index) const;
+	[[nodiscard]] int  collectionFooterH(const QModelIndex& index) const;
+	[[nodiscard]] int  bottomPad(const QModelIndex& index) const { return kPadBottom + collectionFooterH(index); }
 	// Minimum card height: tall enough for the whole poster (2:3 at column width)
 	// whenever there's a poster column, so a normal card never crops or leaves a
 	// gap under it. Only cards with extra badge rows grow past it.
@@ -475,6 +490,17 @@ private:
 	mutable QFontMetrics      m_badgeFm      { QFont{} };
 
 	mutable QHash<qint64, SizeBarAnim> m_sizeBarAnim;
+
+	// Where paint() last drew the collection chip / status pill (Library mode) and
+	// the clear logo (both modes) on each card, relative to the card's top-left
+	// (null = not drawn). Their positions depend on everything else in the row, so
+	// recording them beats mirroring that layout again for hit-testing (see
+	// helpEvent). logoTitle is the text title the logo stands in for.
+	struct ChipRects { QRect collection; QRect status; QRect logo; QString logoTitle; };
+	mutable QHash<qint64, ChipRects> m_chipRects;   // itemIdFor() → rects
+	qint64 itemIdFor(const QModelIndex& index) const;
+	enum class ChipHit { None, Collection, Status };
+	ChipHit hitTestChips(const QPoint& pos, const QRect& itemRect, const QModelIndex& index) const;
 
 	static constexpr int kPadH      = 10; // horizontal inset from card edge to poster and content
 	static constexpr int kPadV      = 4;  // vertical padding above the folder row

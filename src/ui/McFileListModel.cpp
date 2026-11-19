@@ -1205,6 +1205,13 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	}
 	case CollectionMemberRole:
 		return m_sortOrder == GroupedByCollection && e.inOwnedCollection;
+	case CollectionFooterRole: {
+		// Only before a non-collection row — a following collection opens with its
+		// own banner, which already closes this one off. Nothing after the last row.
+		if (m_sortOrder != GroupedByCollection || !e.inOwnedCollection) return false;
+		const int next = index.row() + 1;
+		return next < m_entries.size() && !m_entries.at(next).inOwnedCollection;
+	}
 	case CollectionBannerRole:
 	case CollectionBannerInfoRole:
 	case CollectionBannerPostersRole: {
