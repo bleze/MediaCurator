@@ -2195,7 +2195,12 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 		const int banner  = collectionBannerH(index);
 		const int footer  = collectionFooterH(index);
 		const int natural = kPadV + banner + kFolderH + kFolderGap + layout.totalContentH + kPadBottom + footer;
-		const int h = qMax(natural, minRowH() + banner + footer);
+		// A multi-version mega card outgrows minRowH(), leaving no slack for the
+		// logo band — so reserve the full band here, or its logo shrinks to the
+		// plain title row while single-file cards get the full-size one.
+		const int logoReserve = (m_clearLogos && !d.logoPath.isEmpty())
+		    ? kLogoBandMaxExtra - qMax(0, kRowGap + kPadBottom - kPosterGap) : 0;
+		const int h = qMax(natural + logoReserve, minRowH() + banner + footer);
 		const QSize result{w, h};
 		m_sizeCache.insert(itemId, result);
 		m_logoExtraCache.insert(itemId, d.logoPath.isEmpty() ? 0 : logoExtraFor(h, natural));

@@ -115,10 +115,18 @@ if(WIN32)
     # but far more useful for post-mortem debugging of a Qt/desktop app whose
     # relevant state usually isn't just on the crashing thread's stack.
     # DumpCount caps how many are kept per DumpFolder before old ones roll off.
+    #
+    # The desktop shortcut honours the "Create MediaCurator Desktop Icon"
+    # checkbox on the Install Options page (CPACK_NSIS_MODIFY_PATH): CPack's
+    # template reads it into $INSTALL_DESKTOP before these commands run. It was
+    # unconditional before, so unticking it did nothing. A silent install skips
+    # that page, leaving the var empty — no new desktop shortcut.
     set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
       CreateDirectory '$SMPROGRAMS\\\\MediaCurator'
       CreateShortCut  '$SMPROGRAMS\\\\MediaCurator\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'
-      CreateShortCut  '$DESKTOP\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'
+      StrCmp $INSTALL_DESKTOP '1' 0 mc_desktop_done
+        CreateShortCut  '$DESKTOP\\\\MediaCurator.lnk' '$INSTDIR\\\\MediaCurator.exe'
+      mc_desktop_done:
       WriteRegDWORD HKLM 'SOFTWARE\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\LocalDumps\\\\MediaCurator.exe' 'DumpType' 2
       WriteRegDWORD HKLM 'SOFTWARE\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\LocalDumps\\\\MediaCurator.exe' 'DumpCount' 5
       IfSilent 0 mc_run_done

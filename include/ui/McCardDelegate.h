@@ -411,7 +411,9 @@ private:
 	// above content.top()); titleRow() gives the rect the static title-row
 	// button helpers (imdbButtonRect etc.) must be handed so drawing and
 	// hit-testing agree. A card with no slack draws its logo in the plain
-	// title row. A GroupedByCollection banner adds to the top padding too.
+	// title row — except Group-by-Movie mega cards, which grow to reserve the
+	// full band so multi-version logos match single-file ones. A
+	// GroupedByCollection banner adds to the top padding too.
 	static inline const QColor kCollectionAccent{0x2e, 0x6d, 0xb4};
 	static constexpr int kLogoBandMaxExtra  = 30;
 	static constexpr int kCollectionBannerH = 56;
