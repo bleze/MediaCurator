@@ -87,7 +87,7 @@ public:
 
 signals:
 	void filterTextChanged(const QString& text);
-	void filterStatusChanged(int statusIndex);   // 0=all, 1=proposed, 2=missing-poster
+	void filterStatusChanged(int statusIndex);   // 0=all, 1=proposed, 2=missing-poster, 3=ignored, 4=missing-logo
 	void quickFiltersChanged(quint32 flags);
 	void sortOrderChanged(int order);
 	void ratingFilterChanged(double minRating, double maxRating);

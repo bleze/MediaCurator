@@ -48,6 +48,7 @@ set(MC_SOURCES
     ui/McSubtitleDownloadDialog.cpp
     ui/McSceneNfoDownloadDialog.cpp
     ui/McSceneNfoDialog.cpp
+    ui/McLogoExtractDialog.cpp
     ui/McCalibrationDialog.cpp
     ui/McHighscoreBand.cpp
     ui/McHighscoreDialog.cpp
@@ -73,6 +74,7 @@ set(MC_SOURCES
     engine/RemuxSafety.cpp
     engine/DeepDvScanWorker.cpp
     engine/PosterManager.cpp
+    engine/LogoExtractor.cpp
     engine/SubtitleManager.cpp
     engine/OpenSubtitlesClient.cpp
     engine/SrrdbClient.cpp
@@ -178,6 +180,8 @@ set(MC_HEADERS
     ../include/ui/McSubtitleDownloadDialog.h
     ../include/ui/McSceneNfoDownloadDialog.h
     ../include/ui/McSceneNfoDialog.h
+    ../include/ui/McLogoExtractDialog.h
+    ../include/engine/LogoExtractor.h
     ../include/ui/McCalibrationDialog.h
     ../include/ui/McHighscoreBand.h
     ../include/ui/McHighscoreDialog.h

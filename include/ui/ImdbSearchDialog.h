@@ -13,6 +13,7 @@ class QJsonArray;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 class QNetworkReply;
 class QRegularExpressionMatch;
@@ -42,7 +43,9 @@ public:
 	QString    selectedPosterPath()       const;
 	QByteArray selectedImageData()        const;
 	QString    selectedFanartPath()       const;  // TMDB backdrop path; empty if none selected
-	QString    selectedLogoPath()         const;  // TMDB clear logo path; empty unless the user picked one
+	// TMDB clear logo path, or a file:// URL of a logo cut out with the extractor
+	// (see PosterManager::setUserLogo); empty unless the user picked one.
+	QString    selectedLogoPath()         const;
 	QString    selectedOriginalLanguage() const;  // ISO 639-1 from TMDB; empty if not available
 	double     selectedVoteAverage()      const;
 	int        selectedVoteCount()        const;
@@ -145,12 +148,18 @@ private:
 	QHash<QString, QByteArray>     m_logoThumbData;
 	QList<QJsonObject>             m_allLogos;
 	QString                        m_selectedLogoPath;
+	QString                        m_extractedLogoKey;    // file:// URL of the current extracted logo; empty = none
+	QStringList                    m_extractedTempFiles;  // removed in the destructor
 
 	// kind: "movie" or "tv" — selects the TMDB images endpoint.
 	void fetchPosterImages(int tmdbId, const QString& origLang, const QString& kind = QStringLiteral("movie"));
 	void populateGallery();
 	void populateFanartGallery();
 	void populateLogoGallery();
+	// Opens the clear logo extractor on a TMDB poster/backdrop (file_path; empty =
+	// no source, the user opens a file) and puts the result first in the logo gallery.
+	void openLogoExtractor(const QString& tmdbImagePath);
+	QListWidgetItem* addExtractedLogoItem();
 	// Pushes the picked clear logo onto the current result row's mini card
 	// (replacing its title), and clears it from every other row.
 	void updateResultLogo();

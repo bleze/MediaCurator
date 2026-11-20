@@ -216,7 +216,7 @@ public slots:
 	void setFilterHasRemovals(bool on);
 	void setFilterMissingImdb(bool on);
 	void setFilterIgnoredOnly(bool on);   // true = show only ignored; false = hide ignored
-	void setStatusFilter(int statusIndex); // 0=all, 1=proposed, 2=missing-poster, 3=ignored
+	void setStatusFilter(int statusIndex); // 0=all, 1=proposed, 2=missing-poster, 3=ignored, 4=missing-logo
 	void setIgnoredBatch(const QList<qint64>& fileIds, bool ignored); // update flag in-place + refilter
 	void setQuickFilters(quint32 flags);
 	void setStorageGroupFilter(quint32 groupMask);   // bit (1<<group) per StorageGroupSettings group; 0 = show all
@@ -315,6 +315,7 @@ private:
 	bool                      m_filterHasRemovals  = false;
 	bool                      m_filterMissingImdb  = false;
 	bool                      m_filterIgnoredOnly  = false;
+	bool                      m_filterMissingLogo  = false;  // TMDB-matched, but no clear logo
 	quint32                   m_quickFilters       = QF_None;
 	quint32                   m_storageGroupMask   = 0;   // 0 = no storage-group filtering
 	QSet<QString>             m_editionFilter;             // empty = no edition filtering

@@ -56,6 +56,7 @@ A summary — see the [feature reference](docs/FEATURES.md) for the full detail 
 - **Group by Movie** — Collapses every edition of a title into one card, with a "duplicates" filter to spot accidental re-downloads.
 - **Group by Collection** — Puts the films of a TMDB collection (Star Wars, Indiana Jones, James Bond…) together in release order, with a filter that shows only the collections you own two or more films of.
 - **Clear logos** *(on by default, needs TMDB)* — Shows each movie's TMDB title artwork on its library card instead of plain text. Pick a different logo in Edit Movie Metadata, next to posters and fanart.
+- **Clear logo extractor** — No logo on TMDB? Cut one out of a poster or backdrop: drag a box around the title and the background is removed; for busy artwork, click the logo's colours instead. Touch up with a brush. Use it as the movie's logo, or save a transparent PNG to upload to TMDB.
 - **Editions, 3D & categories** — Detects the cut (Director's Cut, Extended, ...), the 3D format, and whether a file is a Movie, TV, Documentary, or Misc.
 - **Dolby Vision deep scan** *(opt-in)* — Tells you whether a Dolby Vision file's enhancement layer is FEL or MEL.
 - **Ignore files & play** — Hide extras from the library, and play any file in your system's default player.

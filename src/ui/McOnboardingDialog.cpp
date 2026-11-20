@@ -313,7 +313,8 @@ McOnboardingDialog::McOnboardingDialog(QWidget* parent)
 		   "movie's title artwork, shown on each library card in place of the plain-text "
 		   "title — and, if you turn it on, write Kodi-style .nfo files with the correct "
 		   "title, original title, year, and rating. Got the wrong match? Right-click a card "
-		   "to search and pick manually, or choose a different poster, fanart, or logo there.")));
+		   "to search and pick manually, or choose a different poster, fanart, or logo there "
+		   "— or cut a logo out of a poster yourself when TMDB has none.")));
 
 	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/translate.svg"), 56),
 		tr("Missing subtitles? Downloaded"),

@@ -70,6 +70,8 @@ public:
 	// Downloads the clear logo the user picked in the metadata dialog (TMDB
 	// file_path) and pins it for every file matched to tmdbId — automatic
 	// lookups never replace it unless the file is re-matched to another movie.
+	// logoTmdbPath may also be a file:// URL of a logo cut out with the clear
+	// logo extractor; it is copied into the logo cache before this returns.
 	void setUserLogo(qint64 fileId, int tmdbId, const QString& imdbId, const QString& logoTmdbPath);
 
 	// Enqueue a newly-scanned file for poster lookup without resetting existing data.

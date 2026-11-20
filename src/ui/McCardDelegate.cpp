@@ -8,6 +8,7 @@
 #include "engine/TrackDecision.h"
 
 #include <QAbstractItemView>
+#include <cmath>
 #include <QApplication>
 #include <QScrollBar>
 #include <QDateTime>
@@ -633,9 +634,13 @@ void McCardDelegate::paintCollectionBanner(QPainter* painter, const QRect& banne
 
 // ── Clear logo ─────────────────────────────────────────────────────────────────
 
-// Mean luminance (0-1) of a logo's visible pixels, sampled on a coarse grid.
+// Mean perceived lightness (CIE L*, 0-1) of a logo's visible pixels, sampled on
+// a coarse grid. Luma weights applied to gamma-encoded RGB rate saturated reds
+// as dark (pure red ~0.21) and gave red logos a white halo on dark cards; L*
+// puts that red at ~0.53, where it reads fine without one.
 static double logoLuminance(const QImage& img)
 {
+	const auto toLinear = [](double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
 	double sum = 0.0;
 	int    n   = 0;
 	const int stepX = qMax(1, img.width() / 64), stepY = qMax(1, img.height() / 32);
@@ -643,7 +648,9 @@ static double logoLuminance(const QImage& img)
 		for (int x = 0; x < img.width(); x += stepX) {
 			const QColor c = img.pixelColor(x, y);
 			if (c.alpha() < 128) continue;
-			sum += (0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF());
+			const double lum = 0.2126 * toLinear(c.redF()) + 0.7152 * toLinear(c.greenF())
+			                 + 0.0722 * toLinear(c.blueF());
+			sum += lum > 0.008856 ? (116.0 * std::cbrt(lum) - 16.0) / 100.0 : lum * 9.033;
 			++n;
 		}
 	}

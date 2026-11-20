@@ -1062,8 +1062,12 @@ void McMainWindow::setupUi()
 	connect(m_listModel, &QAbstractItemModel::dataChanged, this,
 	        [this](const QModelIndex& topLeft, const QModelIndex&, const QList<int>& roles) {
 		if (!topLeft.isValid()) return;
+		// A logo arriving doesn't change the card's height, but sizeHint() also
+		// caches the logo band (logoExtra, 0 while there was no logo); left stale,
+		// a new logo is squeezed into the plain title row until the next relayout.
 		const bool affectsHeight = roles.contains(McFileListModel::StreamsRole)
-		    || roles.contains(McFileListModel::OverridesRole);
+		    || roles.contains(McFileListModel::OverridesRole)
+		    || roles.contains(McFileListModel::LogoPathRole);
 		if (!affectsHeight) return;
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate())) {
 			const auto file = topLeft.data(McFileListModel::FileRole).value<FileRecord>();

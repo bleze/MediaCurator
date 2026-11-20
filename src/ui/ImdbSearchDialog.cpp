@@ -3,10 +3,16 @@
 #include "core/DatabaseManager.h"
 #include "ui/McCardDelegate.h"
 #include "ui/McLanguageFlags.h"
+#include "ui/McLogoExtractDialog.h"
 #include "ui/McWindowGeometry.h"
 
 #include <QApplication>
+#include <QBuffer>
+#include <QDir>
+#include <QMenu>
+#include <QUuid>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QFileInfo>
@@ -280,6 +286,29 @@ public:
 };
 
 // QListWidget with no viewport top margin (setViewportMargins is protected).
+// "2000×3000" from a TMDB image object's width/height; empty if TMDB didn't say.
+QString imagePixelSize(const QJsonObject& o)
+{
+	const int w = o.value(QStringLiteral("width")).toInt(), h = o.value(QStringLiteral("height")).toInt();
+	return (w > 0 && h > 0) ? QStringLiteral("%1\u00d7%2").arg(w).arg(h) : QString{};
+}
+
+qint64 imageArea(const QJsonObject& o)
+{
+	return qint64(o.value(QStringLiteral("width")).toInt()) * o.value(QStringLiteral("height")).toInt();
+}
+
+// The largest image in a gallery gets a bold label — the best source for
+// extracting a clear logo, or for a sharp poster/backdrop.
+void markLargest(QListWidgetItem* item)
+{
+	QFont f = item->font();
+	f.setBold(true);
+	item->setFont(f);
+	item->setToolTip(item->toolTip() + QStringLiteral("\n")
+	                 + QCoreApplication::translate("ImdbSearchDialog", "Highest resolution"));
+}
+
 class NoMarginListWidget : public QListWidget {
 public:
 	explicit NoMarginListWidget(QWidget* parent = nullptr) : QListWidget(parent) {
@@ -403,7 +432,7 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	m_fanartGallery = new NoMarginListWidget(fanartSide);
 	m_fanartGallery->setViewMode(QListView::IconMode);
 	m_fanartGallery->setIconSize({150, 84});
-	m_fanartGallery->setGridSize({158, 88});
+	m_fanartGallery->setGridSize({158, 104});
 	m_fanartGallery->setResizeMode(QListView::Adjust);
 	m_fanartGallery->setMovement(QListView::Static);
 	m_fanartGallery->setUniformItemSizes(true);
@@ -418,7 +447,30 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	auto* logoSideL = new QVBoxLayout(m_logoSide);
 	logoSideL->setContentsMargins(0, 6, 0, 0);
 	logoSideL->setSpacing(2);
-	logoSideL->addWidget(new QLabel(tr("Clear logo:"), m_logoSide));
+	{
+		auto* logoHeader = new QHBoxLayout;
+		logoHeader->setContentsMargins(0, 0, 0, 0);
+		logoHeader->addWidget(new QLabel(tr("Clear logo:"), m_logoSide));
+		logoHeader->addStretch();
+		auto* btnExtract = new QPushButton(tr("Extract from artwork…"), m_logoSide);
+		btnExtract->setAutoDefault(false);
+		btnExtract->setToolTip(tr("Cut a clear logo out of the selected poster (or backdrop).\n"
+		                          "Tip: right-click any poster or backdrop to extract from that one."));
+		connect(btnExtract, &QPushButton::clicked, this, [this]() {
+			QString path;
+			if (auto* it = m_posterGallery->currentItem())
+				path = it->data(Qt::UserRole).toString();
+			else if (!m_selectedFanartPath.isEmpty())
+				path = m_selectedFanartPath;
+			else if (m_posterGallery->count() > 0)
+				path = m_posterGallery->item(0)->data(Qt::UserRole).toString();
+			else if (m_fanartGallery->count() > 0)
+				path = m_fanartGallery->item(0)->data(Qt::UserRole).toString();
+			openLogoExtractor(path);
+		});
+		logoHeader->addWidget(btnExtract);
+		logoSideL->addLayout(logoHeader);
+	}
 	m_logoGallery = new NoMarginListWidget(m_logoSide);
 	m_logoGallery->setViewMode(QListView::IconMode);
 	m_logoGallery->setIconSize({150, 56});
@@ -506,6 +558,18 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 			}
 		}
 	});
+	// Right-click a poster/backdrop → cut a clear logo out of it.
+	for (QListWidget* gallery : {static_cast<QListWidget*>(m_posterGallery), static_cast<QListWidget*>(m_fanartGallery)}) {
+		gallery->setContextMenuPolicy(Qt::CustomContextMenu);
+		connect(gallery, &QListWidget::customContextMenuRequested, this, [this, gallery](const QPoint& pos) {
+			QListWidgetItem* item = gallery->itemAt(pos);
+			if (!item || !m_showLogos) return;
+			const QString path = item->data(Qt::UserRole).toString();
+			QMenu menu(this);
+			menu.addAction(tr("Extract clear logo…"), this, [this, path]() { openLogoExtractor(path); });
+			menu.exec(gallery->viewport()->mapToGlobal(pos));
+		});
+	}
 	connect(m_logoGallery, &QListWidget::currentItemChanged,
 	        this, [this](QListWidgetItem* item) {
 		if (!item) return;  // gallery clearing
@@ -610,6 +674,10 @@ ImdbSearchDialog::~ImdbSearchDialog()
 	for (QNetworkReply* r : std::as_const(m_prefetchByRow)) r->disconnect(this);
 	m_prefetchByRow.clear();
 	// m_nam is a shared static — never destroyed.
+	// Extracted logos are handed over as temp PNGs; by now the caller has
+	// copied the chosen one into the logo cache (PosterManager::setUserLogo).
+	for (const QString& f : std::as_const(m_extractedTempFiles))
+		QFile::remove(f);
 }
 
 void ImdbSearchDialog::done(int result)
@@ -1285,6 +1353,7 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang, co
 	m_allLogos.clear();
 	m_logoGallery->clear();
 	m_selectedLogoPath.clear();
+	m_extractedLogoKey.clear();
 	m_userSelectedLogo = false;
 	updateResultLogo();  // the logo belonged to the previously selected result
 	m_langFilter->blockSignals(true);
@@ -1453,8 +1522,12 @@ void ImdbSearchDialog::populateLogoGallery()
 {
 	m_logoGallery->blockSignals(true);
 	m_logoGallery->clear();
+	if (!m_extractedLogoKey.isEmpty())
+		addExtractedLogoItem();
 	m_logoGallery->blockSignals(false);
 
+	qint64 largestLogo = 0;
+	for (const auto& l : std::as_const(m_allLogos)) largestLogo = std::max(largestLogo, imageArea(l));
 	for (const auto& l : std::as_const(m_allLogos)) {
 		const QString path    = l[QStringLiteral("file_path")].toString();
 		const double  voteAvg = l[QStringLiteral("vote_average")].toDouble();
@@ -1463,10 +1536,14 @@ void ImdbSearchDialog::populateLogoGallery()
 		                        : l[QStringLiteral("iso_639_1")].toString().toUpper();
 		if (path.isEmpty()) continue;
 
-		auto* item = new QListWidgetItem(lang, m_logoGallery);
+		const QString size = imagePixelSize(l);
+		auto* item = new QListWidgetItem(size.isEmpty() ? lang : QStringLiteral("%1 \u00b7 %2").arg(lang, size),
+		                                 m_logoGallery);
 		item->setData(Qt::UserRole, path);
 		item->setSizeHint({158, 78});
-		item->setToolTip(QStringLiteral("%1  \xe2\x98\x85 %2").arg(lang).arg(voteAvg, 0, 'f', 1));
+		item->setToolTip(QStringLiteral("%1  \xe2\x98\x85 %2").arg(lang).arg(voteAvg, 0, 'f', 1)
+		                 + (size.isEmpty() ? QString{} : QStringLiteral("\n%1 px").arg(size)));
+		if (imageArea(l) > 0 && imageArea(l) == largestLogo) markLargest(item);
 
 		if (m_logoThumbData.contains(path)) {
 			QPixmap px;
@@ -1500,18 +1577,76 @@ void ImdbSearchDialog::populateLogoGallery()
 	}
 }
 
+void ImdbSearchDialog::openLogoExtractor(const QString& tmdbImagePath)
+{
+	const QString title = selectedTitle();
+	const QString label = title.isEmpty() ? QString{}
+		: (m_selectedYear > 0 ? QStringLiteral("%1 (%2)").arg(title).arg(m_selectedYear) : title);
+	McLogoExtractDialog dlg(label, m_nam, this);
+	if (!tmdbImagePath.isEmpty())
+		dlg.loadUrl(QUrl(QStringLiteral("https://image.tmdb.org/t/p/original%1").arg(tmdbImagePath)));
+	if (dlg.exec() != QDialog::Accepted) return;
+	const QImage logo = dlg.resultImage();
+	if (logo.isNull()) return;
+
+	QByteArray png;
+	{
+		QBuffer buf(&png);
+		buf.open(QIODevice::WriteOnly);
+		if (!logo.save(&buf, "PNG")) return;
+	}
+	const QString tmp = QDir::temp().filePath(
+		QStringLiteral("MediaCurator-logo-%1.png").arg(QUuid::createUuid().toString(QUuid::Id128)));
+	QFile f(tmp);
+	if (!f.open(QIODevice::WriteOnly) || f.write(png) != png.size()) return;
+	f.close();
+	m_extractedTempFiles << tmp;
+
+	m_extractedLogoKey = QUrl::fromLocalFile(tmp).toString();
+	m_logoThumbData[m_extractedLogoKey] = png;
+	m_logoGallery->blockSignals(true);
+	for (int i = m_logoGallery->count() - 1; i >= 0; --i)
+		if (m_logoGallery->item(i)->data(Qt::UserRole + 1).toBool())
+			delete m_logoGallery->takeItem(i);
+	m_logoGallery->blockSignals(false);
+	QListWidgetItem* item = addExtractedLogoItem();
+	m_logoGallery->setCurrentItem(item);  // → m_selectedLogoPath, updateResultLogo()
+	m_logoGallery->scrollToItem(item);
+}
+
+QListWidgetItem* ImdbSearchDialog::addExtractedLogoItem()
+{
+	auto* item = new QListWidgetItem(tr("Extracted"));
+	item->setData(Qt::UserRole, m_extractedLogoKey);
+	item->setData(Qt::UserRole + 1, true);
+	item->setSizeHint({158, 78});
+	item->setToolTip(tr("Cut out with Extract from artwork — saved as this movie's clear logo when you click Save"));
+	QPixmap px;
+	if (px.loadFromData(m_logoThumbData.value(m_extractedLogoKey))) {
+		item->setText(QStringLiteral("%1 \u00b7 %2\u00d7%3").arg(tr("Extracted")).arg(px.width()).arg(px.height()));
+		item->setIcon(QIcon(px.scaled(150, 56, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+	}
+	m_logoGallery->insertItem(0, item);
+	return item;
+}
+
 void ImdbSearchDialog::populateFanartGallery()
 {
 	m_fanartGallery->clear();
 
+	qint64 largest = 0;
+	for (const auto& b : std::as_const(m_allBackdrops)) largest = std::max(largest, imageArea(b));
 	for (const auto& b : std::as_const(m_allBackdrops)) {
 		const QString path    = b[QStringLiteral("file_path")].toString();
 		const double  voteAvg = b[QStringLiteral("vote_average")].toDouble();
+		const QString size    = imagePixelSize(b);
 
-		auto* item = new QListWidgetItem(m_fanartGallery);
+		auto* item = new QListWidgetItem(size, m_fanartGallery);
 		item->setData(Qt::UserRole, path);
-		item->setSizeHint({158, 88});
-		item->setToolTip(QStringLiteral("\xe2\x98\x85 %1").arg(voteAvg, 0, 'f', 1));
+		item->setSizeHint({158, 104});
+		item->setToolTip(QStringLiteral("\xe2\x98\x85 %1").arg(voteAvg, 0, 'f', 1)
+		                 + (size.isEmpty() ? QString{} : QStringLiteral("\n%1 px").arg(size)));
+		if (imageArea(b) > 0 && imageArea(b) == largest) markLargest(item);
 
 		if (m_fanartThumbData.contains(path)) {
 			QPixmap px;
@@ -1557,12 +1692,22 @@ void ImdbSearchDialog::populateFanartGallery()
 
 void ImdbSearchDialog::populateGallery()
 {
-	// In "All" mode, show language labels — keep full-height grid cells.
-	// In filtered mode, there's nothing useful to label, so shrink cells to recover space.
+	// Every poster shows its pixel size; in "All" mode the language goes on a
+	// line above it (taller cells), filtered to one language it's size only.
 	const bool showLabels = m_galleryFilter.isEmpty();
+	const QSize cell = showLabels ? QSize(100, 174) : QSize(100, 158);
 	m_posterGallery->blockSignals(true);
-	m_posterGallery->setGridSize(showLabels ? QSize(100, 158) : QSize(100, 140));
+	m_posterGallery->setGridSize(cell);
 	m_posterGallery->clear();
+
+	const auto shown = [this](const QJsonObject& p) {
+		const QString lang = p[QStringLiteral("iso_639_1")].isNull() ? QStringLiteral("null")
+		                                                            : p[QStringLiteral("iso_639_1")].toString();
+		return m_galleryFilter.isEmpty() || lang == m_galleryFilter;
+	};
+	qint64 largest = 0;
+	for (const auto& p : std::as_const(m_allPosters))
+		if (shown(p)) largest = std::max(largest, imageArea(p));
 
 	for (const auto& p : std::as_const(m_allPosters)) {
 		const QString lang = p[QStringLiteral("iso_639_1")].isNull()
@@ -1577,10 +1722,16 @@ void ImdbSearchDialog::populateGallery()
 			? (lang == QLatin1String("null") ? tr("Textless") : lang.toUpper())
 			: QString{};
 
-		auto* item = new QListWidgetItem(langLabel, m_posterGallery);
+		const QString size = imagePixelSize(p);
+		const QString text = showLabels && !size.isEmpty() ? langLabel + QStringLiteral("\n") + size
+		                   : showLabels                    ? langLabel
+		                                                   : size;
+		auto* item = new QListWidgetItem(text, m_posterGallery);
 		item->setData(Qt::UserRole, path);
-		item->setSizeHint(showLabels ? QSize(100, 158) : QSize(100, 140));
-		item->setToolTip(QStringLiteral("%1  \xe2\x98\x85 %2").arg(langLabel).arg(voteAvg, 0, 'f', 1));
+		item->setSizeHint(cell);
+		item->setToolTip(QStringLiteral("%1  \xe2\x98\x85 %2").arg(langLabel).arg(voteAvg, 0, 'f', 1).trimmed()
+		                 + (size.isEmpty() ? QString{} : QStringLiteral("\n%1 px").arg(size)));
+		if (imageArea(p) > 0 && imageArea(p) == largest) markLargest(item);
 
 		if (m_galleryThumbData.contains(path)) {
 			QPixmap px;

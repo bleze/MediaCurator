@@ -6,6 +6,8 @@
 #include "scanner/ScanWorker.h"
 #include "ui/McLanguageFlags.h"
 
+#include <QBuffer>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QUrl>
 #include <utility>
@@ -1573,11 +1575,49 @@ void PosterManager::setClearLogosEnabled(bool enabled)
 void PosterManager::setUserLogo(qint64 fileId, int tmdbId, const QString& imdbId,
                                 const QString& logoTmdbPath)
 {
-	if (tmdbId <= 0 || logoTmdbPath.isEmpty() || !m_nam) return;
+	if (tmdbId <= 0 || logoTmdbPath.isEmpty()) return;
 	const QString logoDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
 	                        + "/logos";
 	QDir().mkpath(logoDir);
 	const QString stem    = imdbId.isEmpty() ? QStringLiteral("tmdb_%1").arg(tmdbId) : imdbId;
+	// Every file of the same movie shares the cached image, so they all get
+	// the pick — otherwise a sibling's later auto lookup could overwrite it.
+	const auto applyToMovie = [this, fileId, tmdbId](const QString& path) {
+		QList<qint64> ids = DatabaseManager::instance().fileIdsForTmdbId(tmdbId);
+		if (!ids.contains(fileId)) ids << fileId;
+		for (qint64 id : ids) {
+			DatabaseManager::instance().updateLogo(id, tmdbId, path, true);
+			emit logoReady(id, path);
+		}
+	};
+
+	// A logo cut out with the extractor arrives as a local file (file:// URL).
+	// Read synchronously: the caller's dialog deletes the temp file afterwards.
+	if (logoTmdbPath.startsWith(QLatin1String("file:"))) {
+		const QImage img(QUrl(logoTmdbPath).toLocalFile());
+		if (img.isNull()) return;
+		// Content-addressed name: re-extracting gives a new file, so the card's
+		// path-keyed pixmap cache can't serve the old image.
+		QByteArray png;
+		{
+			QBuffer buf(&png);
+			buf.open(QIODevice::WriteOnly);
+			img.save(&buf, "PNG");
+		}
+		const QString hash = QString::fromLatin1(
+			QCryptographicHash::hash(png, QCryptographicHash::Sha1).toHex().left(12));
+		const QString outPath = logoDir + "/" + stem + "_extracted_" + hash + ".png";
+		QFile out(outPath);
+		if (!out.open(QIODevice::WriteOnly) || out.write(png) != png.size()) {
+			qWarning() << "PosterManager: couldn't write extracted logo" << outPath;
+			return;
+		}
+		out.close();
+		applyToMovie(outPath);
+		return;
+	}
+
+	if (!m_nam) return;
 	// Named per TMDB image — see resolveExtras() for why.
 	const QString outPath = logoDir + "/" + stem + "_" + QFileInfo(logoTmdbPath).completeBaseName() + ".png";
 	QNetworkRequest req(QUrl(QStringLiteral("https://image.tmdb.org/t/p/w500%1").arg(logoTmdbPath)));
@@ -1585,7 +1625,7 @@ void PosterManager::setUserLogo(qint64 fileId, int tmdbId, const QString& imdbId
 	req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
 	                 QNetworkRequest::NoLessSafeRedirectPolicy);
 	QNetworkReply* r = m_nam->get(req);
-	connect(r, &QNetworkReply::finished, this, [this, r, fileId, tmdbId, outPath]() {
+	connect(r, &QNetworkReply::finished, this, [r, outPath, applyToMovie]() {
 		r->deleteLater();
 		if (r->error() != QNetworkReply::NoError) {
 			qWarning() << "PosterManager: logo download failed:" << r->errorString();
@@ -1593,14 +1633,7 @@ void PosterManager::setUserLogo(qint64 fileId, int tmdbId, const QString& imdbId
 		}
 		QImage img;
 		if (!img.loadFromData(r->readAll()) || !img.save(outPath, "PNG")) return;
-		// Every file of the same movie shares the cached image, so they all get
-		// the pick — otherwise a sibling's later auto lookup could overwrite it.
-		QList<qint64> ids = DatabaseManager::instance().fileIdsForTmdbId(tmdbId);
-		if (!ids.contains(fileId)) ids << fileId;
-		for (qint64 id : ids) {
-			DatabaseManager::instance().updateLogo(id, tmdbId, outPath, true);
-			emit logoReady(id, outPath);
-		}
+		applyToMovie(outPath);
 	});
 }
 

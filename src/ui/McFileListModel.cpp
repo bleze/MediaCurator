@@ -175,6 +175,9 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 		return false;
 	if (m_filterMissingImdb && m_posterPaths.contains(e.file.id))
 		return false;
+	// Unmatched files can't have a logo yet — they belong under "Missing poster".
+	if (m_filterMissingLogo && (m_tmdbIds.value(e.file.id, 0) <= 0 || m_logoPaths.contains(e.file.id)))
+		return false;
 
 	// ── Quick-filter pills ────────────────────────────────────────────────────
 	if (m_quickFilters != QF_None) {
@@ -985,6 +988,10 @@ void McFileListModel::onLogoReady(qint64 fileId, const QString& logoPath)
 {
 	if (logoPath.isEmpty()) m_logoPaths.remove(fileId);
 	else                    m_logoPaths[fileId] = logoPath;
+	if (m_filterMissingLogo) {
+		applyFilter();  // a movie that just got its logo leaves the list
+		return;
+	}
 	for (int row = 0; row < m_entries.size(); ++row) {
 		if (m_entries.at(row).file.id == fileId) {
 			const QModelIndex idx = index(row);
@@ -1013,12 +1020,14 @@ void McFileListModel::setStatusFilter(int statusIndex)
 	const bool hasRemovals  = (statusIndex == 1);
 	const bool missingImdb  = (statusIndex == 2);
 	const bool ignoredOnly  = (statusIndex == 3);
+	const bool missingLogo  = (statusIndex == 4);
 	if (m_filterHasRemovals == hasRemovals && m_filterMissingImdb == missingImdb
-	    && m_filterIgnoredOnly == ignoredOnly)
+	    && m_filterIgnoredOnly == ignoredOnly && m_filterMissingLogo == missingLogo)
 		return;
 	m_filterHasRemovals = hasRemovals;
 	m_filterMissingImdb = missingImdb;
 	m_filterIgnoredOnly = ignoredOnly;
+	m_filterMissingLogo = missingLogo;
 	applyFilter();
 }
 
