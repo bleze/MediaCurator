@@ -73,7 +73,7 @@ private:
 	void rebuildChips();
 	void updateHint();
 	void onPick(QPoint previewPos, bool shift);
-	void onStroke(QPoint fromPreview, QPoint toPreview, int radiusPreview);
+	void onStroke(QPoint fromPreview, QPoint toPreview, double radiusPreview);
 	void saveToFile();
 	void useAsLogo();
 
@@ -109,6 +109,9 @@ private:
 	QSpinBox*     m_speckArea     = nullptr;
 	QButtonGroup* m_tools         = nullptr;
 	QSlider*      m_brushSize     = nullptr;
+	QAbstractButton* m_brushSquare = nullptr;  // checked = square brush
+	QSlider*      m_brushAngle    = nullptr;   // square rotation, 0-89 degrees
+	QLabel*       m_zoomLabel     = nullptr;
 	QAbstractButton* m_showOriginal = nullptr;
 	QButtonGroup* m_previewBgGroup = nullptr;
 	QToolButton*  m_btnUndo       = nullptr;

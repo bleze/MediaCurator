@@ -41,6 +41,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <numbers>
 
 namespace Mc {
 
@@ -94,6 +95,28 @@ void stampDisk(QImage& img, QPointF c, double r, uchar value)
 		for (int x = x0; x <= x1; ++x) {
 			const double dx = x + 0.5 - c.x(), dy = y + 0.5 - c.y();
 			if (dx * dx + dy * dy <= rr) line[x] = value;
+		}
+	}
+}
+
+// Fills a square of half-side r, rotated by angleDeg around c, into a Grayscale8 image.
+void stampSquare(QImage& img, QPointF c, double r, double angleDeg, uchar value)
+{
+	const double rad = angleDeg * std::numbers::pi / 180.0;
+	const double cs = std::cos(rad), sn = std::sin(rad);
+	const double ext = r * (std::abs(cs) + std::abs(sn));
+	const int x0 = std::max(0, int(std::floor(c.x() - ext)));
+	const int x1 = std::min(img.width() - 1, int(std::ceil(c.x() + ext)));
+	const int y0 = std::max(0, int(std::floor(c.y() - ext)));
+	const int y1 = std::min(img.height() - 1, int(std::ceil(c.y() + ext)));
+	for (int y = y0; y <= y1; ++y) {
+		uchar* line = img.scanLine(y);
+		const double dy = y + 0.5 - c.y();
+		for (int x = x0; x <= x1; ++x) {
+			const double dx = x + 0.5 - c.x();
+			// Into the square's own axes.
+			const double u = dx * cs + dy * sn, v = -dx * sn + dy * cs;
+			if (std::abs(u) <= r && std::abs(v) <= r) line[x] = value;
 		}
 	}
 }
@@ -250,25 +273,56 @@ class BrushDot : public QWidget {
 public:
 	explicit BrushDot(QWidget* parent) : QWidget(parent) { setFixedSize(34, 34); }
 	void setRadius(int r) { m_r = r; update(); }
+	void setShape(bool square, int angleDeg)
+	{
+		m_square = square;
+		m_angle = angleDeg;
+		update();
+	}
 
 protected:
 	void paintEvent(QPaintEvent*) override
 	{
 		QPainter p(this);
 		p.setRenderHint(QPainter::Antialiasing);
-		const double r = std::min(15.0, 1.5 + m_r * 0.2);
+		// A rotated square reaches ~1.41x further — keep it inside the widget.
+		const double r = std::min(m_square ? 10.5 : 15.0, 1.5 + m_r * 0.2);
 		const QColor c = palette().color(QPalette::ButtonText);
-		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(c.red(), c.green(), c.blue(), 60));
-		p.drawEllipse(QRectF(rect()).center(), r, r);
+		p.translate(QRectF(rect()).center());
+		if (m_square) p.rotate(m_angle);
+		const QRectF shape(-r, -r, 2 * r, 2 * r);
 		p.setPen(QPen(c, 1.2));
-		p.setBrush(Qt::NoBrush);
-		p.drawEllipse(QRectF(rect()).center(), r, r);
+		p.setBrush(QColor(c.red(), c.green(), c.blue(), 60));
+		if (m_square) p.drawRect(shape);
+		else          p.drawEllipse(shape);
 	}
 
 private:
-	int m_r = 12;
+	int  m_r = 12;
+	bool m_square = false;
+	int  m_angle = 0;
 };
+
+// Small round/square glyph for the brush-shape toggle.
+QIcon brushShapeIcon(bool square, const QPalette& pal, qreal dpr)
+{
+	QIcon icon;
+	for (const auto& [state, role] : {std::pair{QIcon::Off, QPalette::ButtonText}, std::pair{QIcon::On, QPalette::HighlightedText}}) {
+		QPixmap pm(QSize(16, 16) * dpr);
+		pm.setDevicePixelRatio(dpr);
+		pm.fill(Qt::transparent);
+		QPainter p(&pm);
+		p.setRenderHint(QPainter::Antialiasing);
+		const QColor c = pal.color(role);
+		p.setPen(QPen(c, 1.4));
+		p.setBrush(QColor(c.red(), c.green(), c.blue(), 90));
+		if (square) p.drawRect(QRectF(2.5, 2.5, 11, 11));
+		else        p.drawEllipse(QRectF(2, 2, 12, 12));
+		p.end();
+		icon.addPixmap(pm, QIcon::Normal, state);
+	}
+	return icon;
+}
 
 } // namespace LogoExtractUi
 
@@ -619,14 +673,18 @@ private:
 };
 
 // The cut-out (or the original crop) over a choice of backgrounds; click to
-// pick colours, drag to paint keep/erase overrides. Coordinates passed to the
-// callbacks are in the displayed (preview) image's pixels.
+// pick colours, drag to paint keep/erase overrides. The mouse wheel zooms
+// around the cursor (past ~3 screen px per image px it shows crisp pixels),
+// right/middle-drag pans. Coordinates passed to the callbacks are in the
+// displayed (preview) image's pixels; the brush size is in screen pixels, so
+// zooming in makes it finer on the image.
 class ResultView : public QWidget {
 public:
 	std::function<void(QPoint, bool)>      onPick;
 	std::function<void()>                  onStrokeBegin;
-	std::function<void(QPoint, QPoint, int)> onStroke;
+	std::function<void(QPoint, QPoint, double)> onStroke;
 	std::function<void()>                  onStrokeEnd;
+	std::function<void(double)>            onZoomChanged;  // 1 = fit
 
 	explicit ResultView(QWidget* parent) : QWidget(parent)
 	{
@@ -635,8 +693,10 @@ public:
 	}
 	void setImages(const QImage& result, const QImage& original)
 	{
+		const QSize before = shownSize();
 		m_result = result;
 		m_original = original;
+		if (shownSize() != before) resetView();  // a new crop; recomputes keep the zoom
 		update();
 	}
 	// The displayed result, edited in place by brush strokes (the view holds
@@ -645,11 +705,10 @@ public:
 	// ...followed by a repaint of just the changed part (image pixels).
 	void resultChanged(const QRect& imageRect)
 	{
-		const QRectF tr = target();
-		if (tr.isEmpty() || m_result.isNull()) return;
-		const double s = tr.width() / m_result.width();
-		update(QRectF(tr.left() + imageRect.x() * s, tr.top() + imageRect.y() * s,
-		              imageRect.width() * s, imageRect.height() * s).toAlignedRect().adjusted(-2, -2, 2, 2));
+		if (m_result.isNull()) return;
+		const QPointF a = toWidgetF(QPointF(imageRect.topLeft()));
+		const QPointF b = toWidgetF(QPointF(imageRect.x() + imageRect.width(), imageRect.y() + imageRect.height()));
+		update(QRectF(a, b).normalized().toAlignedRect().adjusted(-2, -2, 2, 2));
 	}
 	void setMessage(const QString& msg)
 	{
@@ -665,6 +724,32 @@ public:
 		update();
 	}
 	void setBrushRadius(int r) { m_brushRadius = r; update(); }
+	void setBrushShape(bool square, int angleDeg)
+	{
+		m_square = square;
+		m_angle = angleDeg;
+		update();
+	}
+	void resetView()
+	{
+		m_zoom = 1.0;
+		const QSize s = shownSize();
+		m_center = QPointF(s.width() / 2.0, s.height() / 2.0);
+		update();
+		if (onZoomChanged) onZoomChanged(m_zoom);
+	}
+	// Zoom by factor around a widget point (the view centre if null).
+	void zoomBy(double factor, QPointF around = QPointF(-1, -1))
+	{
+		if (shownSize().isEmpty()) return;
+		if (around.x() < 0) around = QRectF(rect()).center();
+		const QPointF anchor = toImageF(around);
+		m_zoom = qBound(1.0, m_zoom * factor, 32.0);
+		m_center = anchor - (around - QRectF(rect()).center()) / viewScale();
+		clampCenter();
+		update();
+		if (onZoomChanged) onZoomChanged(m_zoom);
+	}
 
 protected:
 	void paintEvent(QPaintEvent* e) override
@@ -678,39 +763,72 @@ protected:
 			p.drawText(rect().adjusted(12, 12, -12, -12), Qt::AlignCenter | Qt::TextWordWrap, m_message);
 			return;
 		}
-		const QRectF tr = target();
+		const QRectF ir = imageRect();
+		const QRectF visible = ir.intersected(QRectF(rect()));
 		switch (m_bg) {
-		case PreviewBg::Checker: paintChecker(p, tr, e->rect()); break;
-		case PreviewBg::Black:   p.fillRect(tr, Qt::black); break;
-		case PreviewBg::White:   p.fillRect(tr, Qt::white); break;
-		case PreviewBg::Grey:    p.fillRect(tr, QColor(0x55, 0x55, 0x55)); break;
+		case PreviewBg::Checker: paintChecker(p, visible, e->rect()); break;
+		case PreviewBg::Black:   p.fillRect(visible, Qt::black); break;
+		case PreviewBg::White:   p.fillRect(visible, Qt::white); break;
+		case PreviewBg::Grey:    p.fillRect(visible, QColor(0x55, 0x55, 0x55)); break;
 		}
-		p.setRenderHint(QPainter::SmoothPixmapTransform);
-		p.drawImage(tr, img);
-		if (m_tool != Tool::Pick && m_hover && rect().contains(m_hoverPos.toPoint())) {
-			// Brush cursor: tinted disc of exactly the area it will paint, a
-			// dark+coloured double ring so it shows on any background, and a
-			// small crosshair at the centre.
+		// Zoomed in far enough to judge single pixels: show them crisp.
+		p.setRenderHint(QPainter::SmoothPixmapTransform, viewScale() < 3.0);
+		p.drawImage(ir, img);
+		if (m_tool != Tool::Pick && m_hover && !m_panning && rect().contains(m_hoverPos.toPoint())) {
+			// Brush cursor: tinted shape of exactly the area it will paint, a
+			// dark+coloured double outline so it shows on any background, and
+			// a small crosshair at the centre.
 			const QColor c = m_tool == Tool::Keep ? QColor(0x3c, 0xc8, 0x5a) : QColor(0xf0, 0x55, 0x55);
 			const double r = m_brushRadius;
 			p.setRenderHint(QPainter::Antialiasing);
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor(c.red(), c.green(), c.blue(), 55));
-			p.drawEllipse(m_hoverPos, r, r);
-			p.setBrush(Qt::NoBrush);
-			p.setPen(QPen(QColor(0, 0, 0, 170), 3));
-			p.drawEllipse(m_hoverPos, r, r);
-			p.setPen(QPen(c, 1.5));
-			p.drawEllipse(m_hoverPos, r, r);
+			p.save();
+			p.translate(m_hoverPos);
+			if (m_square) p.rotate(m_angle);
+			const QRectF shape(-r, -r, 2 * r, 2 * r);
+			const auto draw = [&](const QPen& pen, const QBrush& brush) {
+				p.setPen(pen);
+				p.setBrush(brush);
+				if (m_square) p.drawRect(shape);
+				else          p.drawEllipse(shape);
+			};
+			draw(Qt::NoPen, QColor(c.red(), c.green(), c.blue(), 55));
+			draw(QPen(QColor(0, 0, 0, 170), 3), Qt::NoBrush);
+			draw(QPen(c, 1.5), Qt::NoBrush);
 			const double t = std::min(4.0, r * 0.5);
 			p.setPen(QPen(c, 1.2));
-			p.drawLine(m_hoverPos - QPointF(t, 0), m_hoverPos + QPointF(t, 0));
-			p.drawLine(m_hoverPos - QPointF(0, t), m_hoverPos + QPointF(0, t));
+			p.drawLine(QPointF(-t, 0), QPointF(t, 0));
+			p.drawLine(QPointF(0, -t), QPointF(0, t));
+			p.restore();
+		}
+		// Controls hint, bottom-left (same style as the source view's).
+		QFont f = font();
+		f.setPointSizeF(f.pointSizeF() * 0.85);
+		p.setFont(f);
+		const QString hint = m_zoom > 1.0001 ? tr("Scroll to zoom \u00b7 right-drag to pan \u00b7 Ctrl+0 to fit")
+		                                     : tr("Scroll to zoom in for detail");
+		const QRect hr = QFontMetrics(f).boundingRect(hint).adjusted(-6, -3, 6, 3);
+		const QRect box(QPoint(8, height() - hr.height() - 8), hr.size());
+		if (box.intersects(e->rect())) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(QColor(0, 0, 0, 150));
+			p.drawRoundedRect(box, 4, 4);
+			p.setPen(QColor(0xe0, 0xe0, 0xe0));
+			p.drawText(box, Qt::AlignCenter, hint);
 		}
 	}
+	void resizeEvent(QResizeEvent*) override { clampCenter(); }
 	void mousePressEvent(QMouseEvent* e) override
 	{
-		if (m_result.isNull() || e->button() != Qt::LeftButton) return;
+		if (m_result.isNull()) return;
+		if (e->button() == Qt::RightButton || e->button() == Qt::MiddleButton) {
+			m_panning   = true;
+			m_panFrom   = e->position();
+			m_panCenter = m_center;
+			setCursor(Qt::ClosedHandCursor);
+			update(cursorRect(m_hoverPos));
+			return;
+		}
+		if (e->button() != Qt::LeftButton) return;
 		const QPoint ip = toImage(e->position());
 		if (m_tool == Tool::Pick) {
 			if (onPick && QRect(QPoint(0, 0), m_result.size()).contains(ip))
@@ -724,6 +842,12 @@ protected:
 	}
 	void mouseMoveEvent(QMouseEvent* e) override
 	{
+		if (m_panning) {
+			m_center = m_panCenter - (e->position() - m_panFrom) / viewScale();
+			clampCenter();
+			update();
+			return;
+		}
 		const QPointF old = m_hoverPos;
 		const bool    wasHover = m_hover;
 		m_hover = true;
@@ -739,11 +863,25 @@ protected:
 			update(cursorRect(m_hoverPos));
 		}
 	}
-	void mouseReleaseEvent(QMouseEvent*) override
+	void mouseReleaseEvent(QMouseEvent* e) override
 	{
-		if (!m_painting) return;
+		if (m_panning && (e->button() == Qt::RightButton || e->button() == Qt::MiddleButton)) {
+			m_panning = false;
+			setCursor(m_tool == Tool::Pick ? Qt::CrossCursor : Qt::BlankCursor);
+			update(cursorRect(m_hoverPos));
+			return;
+		}
+		if (!m_painting || e->button() != Qt::LeftButton) return;
 		m_painting = false;
 		if (onStrokeEnd) onStrokeEnd();
+	}
+	void wheelEvent(QWheelEvent* e) override
+	{
+		const double steps = e->angleDelta().y() / 120.0;
+		if (steps == 0 || m_result.isNull()) return;
+		zoomBy(std::pow(1.25, steps), e->position());
+		m_hoverPos = e->position();
+		e->accept();
 	}
 	void leaveEvent(QEvent*) override
 	{
@@ -752,26 +890,43 @@ protected:
 	}
 
 private:
-	[[nodiscard]] QRectF target() const
+	[[nodiscard]] QSize shownSize() const { return m_result.isNull() ? m_original.size() : m_result.size(); }
+	[[nodiscard]] double fitScale() const
 	{
-		const QImage& img = m_result.isNull() ? m_original : m_result;
-		return fitRect(img.size(), QRectF(rect()).adjusted(8, 8, -8, -8));
+		const QSize s = shownSize();
+		if (s.isEmpty()) return 1.0;
+		const QRectF box = QRectF(rect()).adjusted(8, 8, -8, -8);
+		return std::max(1e-6, std::min(box.width() / s.width(), box.height() / s.height()));
 	}
-	[[nodiscard]] double scale() const
-	{
-		const QRectF tr = target();
-		return tr.isEmpty() ? 1.0 : m_result.width() / tr.width();
-	}
+	// Screen pixels per image pixel.
+	[[nodiscard]] double viewScale() const { return fitScale() * m_zoom; }
+	[[nodiscard]] QPointF toWidgetF(QPointF img) const { return QRectF(rect()).center() + (img - m_center) * viewScale(); }
+	[[nodiscard]] QPointF toImageF(QPointF w) const { return m_center + (w - QRectF(rect()).center()) / viewScale(); }
 	[[nodiscard]] QPoint toImage(QPointF w) const
 	{
-		const QRectF tr = target();
-		const double s = scale();
-		return QPoint(int((w.x() - tr.left()) * s), int((w.y() - tr.top()) * s));
+		const QPointF f = toImageF(w);
+		return QPoint(int(std::floor(f.x())), int(std::floor(f.y())));
 	}
-	[[nodiscard]] int imageRadius() const { return std::max(1, int(std::lround(m_brushRadius * scale()))); }
+	[[nodiscard]] QRectF imageRect() const
+	{
+		const QSize s = shownSize();
+		return QRectF(toWidgetF(QPointF(0, 0)), toWidgetF(QPointF(s.width(), s.height())));
+	}
+	void clampCenter()
+	{
+		const QSize s = shownSize();
+		if (m_zoom <= 1.0001) {
+			m_center = QPointF(s.width() / 2.0, s.height() / 2.0);
+			return;
+		}
+		m_center.setX(qBound(0.0, m_center.x(), double(s.width())));
+		m_center.setY(qBound(0.0, m_center.y(), double(s.height())));
+	}
+	// Brush radius in image pixels: screen-sized, so finer when zoomed in.
+	[[nodiscard]] double imageRadius() const { return std::max(0.5, m_brushRadius / viewScale()); }
 	[[nodiscard]] QRect cursorRect(QPointF c) const
 	{
-		const int r = m_brushRadius + 3;
+		const int r = int(std::ceil(m_brushRadius * (m_square ? 1.42 : 1.0))) + 3;
 		return QRect(int(c.x()) - r, int(c.y()) - r, 2 * r + 2, 2 * r + 2);
 	}
 
@@ -782,10 +937,17 @@ private:
 	PreviewBg m_bg = PreviewBg::Checker;
 	Tool      m_tool = Tool::Pick;
 	int       m_brushRadius = 12;
+	bool      m_square = false;
+	int       m_angle = 0;
 	bool      m_painting = false;
 	bool      m_hover = false;
 	QPointF   m_hoverPos;
 	QPoint    m_last;
+	double    m_zoom = 1.0;
+	QPointF   m_center;
+	bool      m_panning = false;
+	QPointF   m_panFrom;
+	QPointF   m_panCenter;
 };
 
 } // namespace LogoExtractUi
@@ -873,6 +1035,17 @@ McLogoExtractDialog::McLogoExtractDialog(const QString& movieLabel, QNetworkAcce
 		showOriginal->setToolTip(tr("Show the untouched crop instead of the cut-out (to see what you're picking or painting)"));
 		m_showOriginal = showOriginal;
 		bar->addWidget(showOriginal);
+		bar->addSpacing(8);
+		auto* fit = new QToolButton(resultSide);
+		fit->setProperty("mcFlat", true);
+		fit->setText(tr("Fit"));
+		fit->setToolTip(tr("Fit the whole cut-out in view (Ctrl+0)"));
+		m_zoomLabel = new QLabel(QStringLiteral("100%"), resultSide);
+		m_zoomLabel->setToolTip(tr("Zoom (mouse wheel over the preview; Ctrl+= / Ctrl+- zoom in/out)"));
+		m_zoomLabel->setMinimumWidth(QFontMetrics(m_zoomLabel->font()).horizontalAdvance(QStringLiteral("3200%")) + 4);
+		bar->addWidget(fit);
+		bar->addWidget(m_zoomLabel);
+		connect(fit, &QToolButton::clicked, m_resultView, &ResultView::resetView);
 		bar->addStretch();
 		m_sizeLabel = new QLabel(resultSide);
 		QPalette sp = m_sizeLabel->palette();
@@ -1068,6 +1241,64 @@ McLogoExtractDialog::McLogoExtractDialog(const QString& movieLabel, QNetworkAcce
 		connect(m_brushSize, &QSlider::valueChanged, dot, [dot](int v) { dot->setRadius(v); });
 		sizeRow->addWidget(dot);
 		l->addLayout(sizeRow);
+
+		// Shape (round/square) and, for the square, its rotation — a square
+		// tilted to the slant of the lettering clears artifacts tight to an
+		// edge without biting into the letter.
+		auto* shapeRow = new QHBoxLayout;
+		shapeRow->setSpacing(0);
+		auto* round  = new QToolButton(card);
+		auto* square = new QToolButton(card);
+		round->setIcon(brushShapeIcon(false, palette(), dpr));
+		square->setIcon(brushShapeIcon(true, palette(), dpr));
+		round->setToolTip(tr("Round brush (S toggles)"));
+		square->setToolTip(tr("Square brush — rotate it with the slider or R / Shift+R (S toggles)"));
+		for (QToolButton* b : {round, square}) {
+			b->setProperty("mcSeg", true);
+			b->setCheckable(true);
+			b->setAutoExclusive(true);
+			shapeRow->addWidget(b);
+		}
+		round->setProperty("mcSegPos", QStringLiteral("left"));
+		square->setProperty("mcSegPos", QStringLiteral("right"));
+		round->setChecked(true);
+		m_brushSquare = square;
+		shapeRow->addSpacing(10);
+		m_brushAngle = new QSlider(Qt::Horizontal, card);
+		m_brushAngle->setRange(0, 89);  // a square repeats every 90 degrees
+		m_brushAngle->setValue(0);
+		m_brushAngle->setToolTip(tr("Square brush rotation (R / Shift+R: \u00b115\u00b0)"));
+		m_brushAngle->setEnabled(false);
+		shapeRow->addWidget(m_brushAngle, 1);
+		auto* angleLabel = new QLabel(QStringLiteral("0\u00b0"), card);
+		angleLabel->setMinimumWidth(QFontMetrics(angleLabel->font()).horizontalAdvance(QStringLiteral("00\u00b0")) + 4);
+		angleLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		shapeRow->addSpacing(6);
+		shapeRow->addWidget(angleLabel);
+		l->addLayout(shapeRow);
+
+		const auto shapeChanged = [this, dot, angleLabel]() {
+			const bool sq = m_brushSquare->isChecked();
+			m_brushAngle->setEnabled(sq);
+			angleLabel->setEnabled(sq);
+			angleLabel->setText(QStringLiteral("%1\u00b0").arg(m_brushAngle->value()));
+			dot->setShape(sq, m_brushAngle->value());
+			m_resultView->setBrushShape(sq, m_brushAngle->value());
+		};
+		connect(square, &QToolButton::toggled, this, shapeChanged);
+		connect(m_brushAngle, &QSlider::valueChanged, this, shapeChanged);
+		auto* toggleShape = new QShortcut(QKeySequence(Qt::Key_S), this);
+		connect(toggleShape, &QShortcut::activated, this, [round, square]() {
+			(square->isChecked() ? round : square)->setChecked(true);
+		});
+		const auto rotate = [this](int delta) {
+			if (!m_brushSquare->isChecked()) m_brushSquare->setChecked(true);
+			m_brushAngle->setValue(((m_brushAngle->value() + delta) % 90 + 90) % 90);
+		};
+		auto* rotCw  = new QShortcut(QKeySequence(Qt::Key_R), this);
+		auto* rotCcw = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_R), this);
+		connect(rotCw, &QShortcut::activated, this, [rotate]() { rotate(15); });
+		connect(rotCcw, &QShortcut::activated, this, [rotate]() { rotate(-15); });
 		auto* smaller = new QShortcut(QKeySequence(Qt::Key_BracketLeft), this);
 		auto* bigger  = new QShortcut(QKeySequence(Qt::Key_BracketRight), this);
 		connect(smaller, &QShortcut::activated, this, [this]() { m_brushSize->setValue(m_brushSize->value() * 4 / 5); });
@@ -1134,7 +1365,20 @@ McLogoExtractDialog::McLogoExtractDialog(const QString& movieLabel, QNetworkAcce
 		m_strokeBackup = m_overrides;  // shared until the first stamp detaches it
 		m_strokeDirty  = {};
 	};
-	m_resultView->onStroke = [this](QPoint a, QPoint b, int r) { onStroke(a, b, r); };
+	m_resultView->onStroke = [this](QPoint a, QPoint b, double r) { onStroke(a, b, r); };
+	m_resultView->onZoomChanged = [this](double z) {
+		m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100)));
+	};
+	{
+		auto* fitKey = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
+		auto* inKey  = new QShortcut(QKeySequence::ZoomIn, this);
+		auto* outKey = new QShortcut(QKeySequence::ZoomOut, this);
+		auto* inKey2 = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Equal), this);
+		connect(fitKey, &QShortcut::activated, m_resultView, &ResultView::resetView);
+		connect(inKey, &QShortcut::activated, this, [this]() { m_resultView->zoomBy(1.25); });
+		connect(inKey2, &QShortcut::activated, this, [this]() { m_resultView->zoomBy(1.25); });
+		connect(outKey, &QShortcut::activated, this, [this]() { m_resultView->zoomBy(0.8); });
+	}
 	m_resultView->onStrokeEnd = [this]() {
 		// Undo keeps only the part of the mask this stroke touched.
 		if (!m_strokeDirty.isEmpty()) {
@@ -1435,15 +1679,20 @@ void McLogoExtractDialog::onPick(QPoint previewPos, bool shift)
 	scheduleRecompute();
 }
 
-void McLogoExtractDialog::onStroke(QPoint fromPreview, QPoint toPreview, int radiusPreview)
+void McLogoExtractDialog::onStroke(QPoint fromPreview, QPoint toPreview, double radiusPreview)
 {
-	const Tool  tool = Tool(m_tools->checkedId());
-	const uchar value = tool == Tool::Keep ? LogoOverride::Keep : LogoOverride::Erase;
-	const auto stampSegment = [value](QImage& img, QPointF a, QPointF b, double r) {
+	const Tool   tool   = Tool(m_tools->checkedId());
+	const uchar  value  = tool == Tool::Keep ? LogoOverride::Keep : LogoOverride::Erase;
+	const bool   square = m_brushSquare->isChecked();
+	const double angle  = m_brushAngle->value();
+	const auto stampSegment = [value, square, angle](QImage& img, QPointF a, QPointF b, double r) {
 		const double dist  = std::hypot(b.x() - a.x(), b.y() - a.y());
-		const int    steps = std::max(1, int(std::ceil(dist / std::max(1.0, r / 2))));
-		for (int i = 0; i <= steps; ++i)
-			stampDisk(img, a + (b - a) * (double(i) / steps), r, value);
+		const int    steps = std::max(1, int(std::ceil(dist / std::max(0.5, r / 2))));
+		for (int i = 0; i <= steps; ++i) {
+			const QPointF c = a + (b - a) * (double(i) / steps);
+			if (square) stampSquare(img, c, r, angle, value);
+			else        stampDisk(img, c, r, value);
+		}
 	};
 	// Full resolution (the final image) and preview size (what's shown) —
 	// painting the preview copy directly avoids rescaling the full mask per move.
@@ -1453,12 +1702,13 @@ void McLogoExtractDialog::onStroke(QPoint fromPreview, QPoint toPreview, int rad
 	const double  rSrc    = radiusPreview / m_previewScale;
 	stampSegment(m_overrides, fromSrc, toSrc, rSrc);
 	stampSegment(m_previewOverrides, QPointF(fromPreview), QPointF(toPreview), radiusPreview);
-	const int pad = int(std::ceil(rSrc)) + 1;
+	const double reach = square ? 1.4143 : 1.0;  // a rotated square's corners reach further
+	const int pad = int(std::ceil(rSrc * reach)) + 1;
 	m_strokeDirty |= QRectF(fromSrc, toSrc).normalized().toAlignedRect()
 	                     .adjusted(-pad, -pad, pad, pad).intersected(m_overrides.rect());
 
-	const QRect dirty = QRect(fromPreview, toPreview).normalized()
-	                        .adjusted(-radiusPreview - 1, -radiusPreview - 1, radiusPreview + 1, radiusPreview + 1);
+	const int   padPv = int(std::ceil(radiusPreview * reach)) + 1;
+	const QRect dirty = QRect(fromPreview, toPreview).normalized().adjusted(-padPv, -padPv, padPv, padPv);
 	if (m_previewBase.isNull()) return;
 	m_previewExtractor.applyOverrides(m_resultView->result(), m_previewBase, m_previewOverrides, dirty);
 	m_resultView->resultChanged(dirty);
